@@ -162,8 +162,8 @@ def passed_names(common_dir: Path, tree: str) -> list[str]:
 def missed_records(common_dir: Path, tree: str) -> list[dict[str, Any]]:
     """List the gates that ran on a tree without passing, for reporting what would run.
 
-    A gate that also has a pass marker on the tree is left out, since a later pass
-    supersedes the miss.
+    A gate whose marker exists on the tree is left out, since a later pass supersedes the
+    miss. This holds for markers without JSON content too, because those still skip.
 
     Args:
         common_dir: Absolute path to the git common directory.
@@ -172,13 +172,48 @@ def missed_records(common_dir: Path, tree: str) -> list[dict[str, Any]]:
     Returns:
         Each miss record's JSON content, sorted by gate name.
     """
-    passed = set(passed_names(common_dir, tree))
     records = [
         record
         for record in _records(common_dir, tree, suffix=MISS_SUFFIX)
-        if record["name"] not in passed
+        if not marker_exists(marker_path(common_dir, tree, record["name"]))
     ]
     return sorted(records, key=lambda record: record["name"])
+
+
+def miss_record(common_dir: Path, tree: str, name: str) -> dict[str, Any] | None:
+    """Read one gate's miss record on a tree.
+
+    Args:
+        common_dir: Absolute path to the git common directory.
+        tree: Git tree hash.
+        name: Gate name.
+
+    Returns:
+        The record's JSON content, or None when it is missing, unreadable, or does not
+        match the tree and name.
+    """
+    path = miss_path(common_dir, tree, name)
+    data = _read_record(path)
+    if data is None or data.get("tree") != tree or data.get("name") != name:
+        return None
+    return data
+
+
+def marker_exists(path: Path) -> bool:
+    """Return True only when the path is known to exist."""
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _read_record(path: Path) -> dict[str, Any] | None:
+    """Parse a JSON object from a record file, or return None when it is not one."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _records(common_dir: Path, tree: str, *, suffix: str) -> list[dict[str, Any]]:
@@ -189,13 +224,10 @@ def _records(common_dir: Path, tree: str, *, suffix: str) -> list[dict[str, Any]
         return []
     records: list[dict[str, Any]] = []
     for entry in entries:
-        if entry.name.startswith(TEMP_PREFIX):
+        if entry.name.startswith(TEMP_PREFIX) or not entry.name.endswith(suffix):
             continue
-        try:
-            data = json.loads(entry.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, ValueError):
-            continue
-        if not isinstance(data, dict):
+        data = _read_record(entry)
+        if data is None:
             continue
         name = data.get("name")
         if (

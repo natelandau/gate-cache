@@ -12,8 +12,10 @@ from nclutils import pp
 from gate_cache.console import say
 from gate_cache.markers import (
     clear_markers,
+    marker_exists,
     marker_path,
     miss_path,
+    miss_record,
     missed_records,
     passed_names,
     prune_markers,
@@ -95,14 +97,6 @@ def marker_max_age_days(environ: Mapping[str, str] | None = None) -> int:
     return days
 
 
-def _marker_exists(path: Path) -> bool:
-    """Return True only when the marker is known to exist."""
-    try:
-        return path.exists()
-    except OSError:
-        return False
-
-
 def _run_uncached(reason: str, command: Sequence[str]) -> int:
     """Explain why caching is off, then run the command."""
     say(f"{reason}, running without cache")
@@ -170,7 +164,7 @@ def run_gate(name: str, command: Sequence[str]) -> int:
     if common_dir is None:
         return _run_uncached(_NO_COMMON_DIR_REASON, command)
 
-    if _marker_exists(marker_path(common_dir, tree, name)):
+    if marker_exists(marker_path(common_dir, tree, name)):
         say(f"{name} already passed on tree {tree[:12]}, skipping")
         return 0
 
@@ -210,7 +204,12 @@ def gate_status(name: str | None = None, *, as_json: bool = False) -> int:
     reason = disabled_reason()
     if reason is not None:
         if as_json:
-            _print_json({"enabled": False, "reason": reason, "tree": None})
+            empty = (
+                {"name": name, "marker": None, "result": "miss", "last_run": None}
+                if name is not None
+                else {"passed": [], "missed": []}
+            )
+            _print_json({"enabled": False, "tree": None, "reason": reason, **empty})
         else:
             say(reason)
         return 1
@@ -249,15 +248,13 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
     """Print whether one gate would skip on the snapshot's tree."""
     tree = snapshot.tree
     path: Path | None = None
+    hit = False
     last_run: dict[str, Any] | None = None
     if tree is not None and common_dir is not None:
         path = marker_path(common_dir, tree, name)
-    hit = path is not None and _marker_exists(path)
-    if not hit and tree is not None and common_dir is not None:
-        last_run = next(
-            (_miss_summary(r) for r in missed_records(common_dir, tree) if r["name"] == name),
-            None,
-        )
+        hit = marker_exists(path)
+        record = None if hit else miss_record(common_dir, tree, name)
+        last_run = _miss_summary(record) if record is not None else None
     reason = _unknown_reason(snapshot, common_dir)
 
     if as_json:
@@ -274,12 +271,15 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
         )
         return 0 if hit else 1
 
-    marker = str(path) if path is not None else "none"
-    if tree is not None and common_dir is None:
-        marker = f"none: {_NO_COMMON_DIR_REASON}"
+    if path is not None:
+        marker = str(path)
+    elif tree is not None:
+        marker = f"none: {reason}"
+    else:
+        marker = "none"
     rows = {
         "name": name,
-        "tree": tree if tree is not None else f"unknown: {snapshot.reason}",
+        "tree": tree if tree is not None else f"unknown: {reason}",
         "marker": marker,
         "result": "hit" if hit else "miss",
     }
@@ -325,7 +325,9 @@ def _list_gates(snapshot: Snapshot, common_dir: Path | None, *, as_json: bool) -
     if passed:
         rows["passed"] = ", ".join(passed)
     if missed:
-        rows["missed"] = ", ".join(f"{m['name']} ({m['reason']})" for m in missed)
+        rows["missed"] = ", ".join(
+            f"{m['name']} ({m['reason']})" if m["reason"] else m["name"] for m in missed
+        )
     pp.kv(rows)
     return code
 
