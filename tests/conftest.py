@@ -26,11 +26,12 @@ def git_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolate git from user and system config; return the temp HOME."""
     home = tmp_path / "home"
     home.mkdir()
-    empty_config = tmp_path / "empty.gitconfig"
-    empty_config.write_text("")
+    global_config = tmp_path / "global.gitconfig"
+    # Commits spawn detached auto-maintenance, which races tests that inspect .git.
+    global_config.write_text("[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_config))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
     # platformdirs rejects a runtime dir that is not private, then falls back to the real one.
     runtime = tmp_path / "run"
     runtime.mkdir(mode=0o700)
