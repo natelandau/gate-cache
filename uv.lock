@@ -409,7 +409,6 @@ name = "gate-cache"
 version = "0.5.0"
 source = { editable = "." }
 dependencies = [
-    { name = "nclutils" },
     { name = "platformdirs" },
 ]
 
@@ -437,10 +436,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "nclutils", specifier = ">=3.4.4,<4.0.0" },
-    { name = "platformdirs", specifier = ">=4.13.0,<5.0.0" },
-]
+requires-dist = [{ name = "platformdirs", specifier = ">=4.13.0,<5.0.0" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -642,19 +638,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
-]
-
-[[package]]
-name = "nclutils"
-version = "3.4.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "questionary" },
-    { name = "rich" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7e/f0/95349210d681bc1a36e188cbb1e1763c5334e819f0939da065fc38712a2d/nclutils-3.4.4.tar.gz", hash = "sha256:51caa14b9db06fe4097a8a7ca463dee05c51d40e5b6d5425e7717763452acad2", size = 62085, upload-time = "2026-08-15T13:26:23.374Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/ef/f1ffddfb00ed54ebc05dbb0843d342ab98695ca962e20f085901db3daa48/nclutils-3.4.4-py3-none-any.whl", hash = "sha256:0183795883b2b35523e3746a151fb8dc296323c663fa093a2ed52b85a04d93c7", size = 72732, upload-time = "2026-08-15T13:26:22.158Z" },
 ]
 
 [[package]]

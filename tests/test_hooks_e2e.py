@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from nclutils.sh import which
 
 from tests.conftest import Counter, git
 
@@ -21,7 +20,7 @@ _CI = os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _require(runner: str) -> None:
-    if which(runner) is not None:
+    if shutil.which(runner) is not None:
         return
     # A missing runner must not silently shrink CI coverage.
     if _CI:
