@@ -51,6 +51,7 @@
     annotated_tag              = true
     bump_message               = "bump(release): v$current_version → v$new_version"
     changelog_merge_prerelease = true
+    major_version_zero         = true
     tag_format                 = "v$version"
     update_changelog_on_bump   = true
     version_files              = ["src/gate_cache/__init__.py:__version__"]
