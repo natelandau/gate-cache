@@ -65,6 +65,50 @@ The hook runs in its own virtual environment, and the wrapped command inherits t
 
 Hooks, agents, and your terminal all read and write the same markers. When one of them runs `gate-cache --name pytest -- uv run pytest` and it passes, the others skip that name on the same content.
 
+## Examples
+
+These examples show gate-cache inside the task runner of a project. When a recipe holds the wrapped command, everything that runs the recipe uses the same name and the same markers.
+
+### justfile
+
+```just
+test:
+    gate-cache --name test -- uv run pytest
+
+lint:
+    gate-cache --name lint -- uv run ruff check .
+```
+
+After `just test` passes, the next `just test` on the same content skips pytest.
+
+### Makefile
+
+```make
+test:
+	gate-cache --name test -- uv run pytest
+
+lint:
+	gate-cache --name lint -- uv run ruff check .
+```
+
+### A hook that calls the recipe
+
+A local hook can run the recipe instead of the gate-cache hook repository:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: test
+        name: test
+        entry: just test
+        language: system
+        pass_filenames: false
+        stages: [pre-commit, pre-push]
+```
+
+With this hook, a commit, a push, an agent, and your terminal all run `just test` and share its markers. The recipe runs in the project environment, so `uv run` prints no `VIRTUAL_ENV` warning. This form needs `gate-cache` and `just` on the `PATH`.
+
 ## See what already passed
 
 `gate-cache status` lists every name that passed on the current content:

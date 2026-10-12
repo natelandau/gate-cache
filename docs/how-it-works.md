@@ -26,6 +26,8 @@ A command that exits 0 but changes the tree does not get a marker. Examples are 
 
 Both `--name` and `--` are required, and only `--name` can come before `--`. gate-cache passes everything after `--` to the command without changes.
 
+The name alone identifies the command. A recipe such as `test *args` that passes extra arguments to the wrapped command runs every variant under the same name, so a pass with `-k unit` writes the same marker as a pass of the full suite.
+
 | Situation                                                   | Exit code                    |
 | ----------------------------------------------------------- | ---------------------------- |
 | The command ran                                             | The exit code of the command |
