@@ -18,10 +18,9 @@ _INFO_FLAGS = {"-h", "--help", "--version"}
 
 _HELP = """\
 Skip a lint or test command that already passed on the same git tree. gate-cache runs
-the command, records a pass keyed on the git tree of the tracked files (the index, when
-the working copy matches it), and skips the command next time the tree is identical.
-With unstaged changes or untracked files the command runs without caching and nothing
-is recorded.
+the command, records a pass keyed on the git tree of the working copy (tracked and
+untracked, non-ignored files), and skips the command next time the tree is identical.
+A pass on uncommitted work therefore skips when the same content is committed.
 
 Both --name and -- are required, and only --name may come before --. Everything after
 -- is the command, verbatim.
@@ -75,7 +74,7 @@ def run(
     On a skip, prints one line to stderr and exits 0 without running anything. Otherwise
     runs the command and exits with its exit code. The command runs without caching
     (and nothing is recorded) when GATE_CACHE_DISABLE or CI turns caching off, the tree
-    has unstaged changes or untracked files, or this is not a git repository. A pass is recorded only
+    is unknown (for example an unmerged index), or this is not a git repository. A pass is recorded only
     when the command exits 0 and the run leaves the tree unchanged.
 
     Parameters
