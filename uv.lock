@@ -444,6 +444,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cyclopts" },
     { name = "nclutils" },
+    { name = "platformdirs" },
 ]
 
 [package.dev-dependencies]
@@ -473,6 +474,7 @@ dev = [
 requires-dist = [
     { name = "cyclopts", specifier = ">=5.2.0,<6.0.0" },
     { name = "nclutils", specifier = ">=3.4.4,<4.0.0" },
+    { name = "platformdirs", specifier = ">=4.13.0,<5.0.0" },
 ]
 
 [package.metadata.requires-dev]

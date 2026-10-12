@@ -1,5 +1,7 @@
 """Shared fixtures that isolate git from the developer's configuration."""
 
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +31,10 @@ def git_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_config))
+    # platformdirs rejects a runtime dir that is not private, then falls back to the real one.
+    runtime = tmp_path / "run"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
     # CI and GATE_CACHE_DISABLE turn caching off, which would hide every cache hit.
     for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "CI", "GATE_CACHE_DISABLE"):
         monkeypatch.delenv(var, raising=False)
@@ -92,3 +98,40 @@ class Counter:
 def counter(tmp_path: Path) -> Counter:
     """Provide a counting gate command whose files never make the repo dirty."""
     return Counter(tmp_path / "bin")
+
+
+def add_submodule(repo: Path, tmp_path: Path, name: str = "sub") -> Path:
+    """Commit a submodule cloned from a local repo and return its checkout path."""
+    upstream = tmp_path / f"{name}-upstream"
+    upstream.mkdir()
+    git("init", "-q", "-b", "main", cwd=upstream)
+    git(
+        "-c", "user.name=Test", "-c", "user.email=test@example.com",
+        "commit", "-q", "--allow-empty", "-m", "one",
+        cwd=upstream,
+    )  # fmt: skip
+    # Git refuses to clone a submodule from a local path unless the file protocol is allowed.
+    git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(upstream), name, cwd=repo)
+    git("commit", "-q", "-m", "add submodule", cwd=repo)
+    return repo / name
+
+
+def expected_tree(repo: Path) -> str:
+    """Return the tree `git add -A` would produce, without touching the real index."""
+    index = repo / git("rev-parse", "--git-path", "index", cwd=repo)
+    scratch = index.with_name("expected-index")
+    if index.exists():
+        shutil.copy2(index, scratch)
+    env = {**os.environ, "GIT_INDEX_FILE": str(scratch)}
+    try:
+        subprocess.run(["git", "add", "-A"], cwd=repo, env=env, check=True)  # noqa: S607
+        return subprocess.run(
+            ["git", "write-tree"],  # noqa: S607
+            cwd=repo,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    finally:
+        scratch.unlink(missing_ok=True)
