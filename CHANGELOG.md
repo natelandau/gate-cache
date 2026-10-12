@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.0 (2026-10-12)
+
+### Feat
+
+- **cli**: default the gate name to the command (#3)
+
 ## v0.4.0 (2026-10-12)
 
 ### Feat
