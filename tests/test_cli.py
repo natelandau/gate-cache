@@ -86,7 +86,7 @@ def test_status_and_clear_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "gate_status", status)
     monkeypatch.setattr(cli, "clear_cache", clear)
     assert invoke(monkeypatch, "status", "--name", "x") == 1
-    status.assert_called_once_with("x")
+    status.assert_called_once_with("x", as_json=False)
     assert invoke(monkeypatch, "clear") == 0
     clear.assert_called_once_with()
 
@@ -96,7 +96,15 @@ def test_status_without_name_lists_gates(monkeypatch: pytest.MonkeyPatch) -> Non
     status = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "gate_status", status)
     assert invoke(monkeypatch, "status") == 0
-    status.assert_called_once_with(None)
+    status.assert_called_once_with(None, as_json=False)
+
+
+def test_status_json_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify --json is passed through to the status report."""
+    status = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "gate_status", status)
+    assert invoke(monkeypatch, "status", "--json") == 0
+    status.assert_called_once_with(None, as_json=True)
 
 
 def test_help_is_self_describing(

@@ -1,5 +1,6 @@
 """Tests for the cached gate flow, status, and clear."""
 
+import json
 import os
 import re
 import subprocess
@@ -10,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from gate_cache.gate import clear_cache, disabled_reason, gate_status, marker_max_age_days, run_gate
-from gate_cache.markers import marker_dir
+from gate_cache.markers import MISS_SUFFIX, marker_dir
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot
 from tests.conftest import Counter, git
@@ -19,9 +20,17 @@ NAME = "pytest"
 
 
 def markers(repo: Path) -> list[Path]:
-    """Return the files in the repo's marker directory."""
+    """Return the pass markers in the repo's marker directory."""
     directory = marker_dir(repo / ".git")
-    return sorted(directory.iterdir()) if directory.is_dir() else []
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.iterdir() if path.suffix != MISS_SUFFIX)
+
+
+def misses(repo: Path) -> list[Path]:
+    """Return the miss records in the repo's marker directory."""
+    directory = marker_dir(repo / ".git")
+    return sorted(directory.glob(f"*{MISS_SUFFIX}")) if directory.is_dir() else []
 
 
 def commit_change(repo: Path, content: str) -> None:
@@ -679,7 +688,8 @@ def test_status_without_name_lists_passed_gates(
     assert gate_status(None) == 0
     out = capfd.readouterr().out
     assert git("write-tree", cwd=git_repo) in out
-    assert re.search(r"gates:\s+api-lint, pytest", out)
+    assert re.search(r"passed:\s+api-lint, pytest", out)
+    assert "missed" not in out
 
 
 def test_status_without_name_ignores_other_trees(
@@ -763,3 +773,160 @@ def test_derived_work_tree_is_not_passed_to_the_command(
     probe = f"import os; open({str(seen)!r}, 'w').write(os.environ.get('GIT_WORK_TREE', 'unset'))"
     assert run_gate(NAME, [sys.executable, "-c", probe]) == 0
     assert seen.read_text() == "unset"
+
+
+def test_failing_run_records_miss_and_status_lists_it(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a failed gate is listed as missed with its exit code next to the passed gates."""
+    run_gate("pytest", counter.argv())
+    run_gate("ruff", counter.argv(exit_code=3))
+    capfd.readouterr()
+    assert gate_status(None) == 0
+    out = capfd.readouterr().out
+    assert re.search(r"passed:\s+pytest", out)
+    assert re.search(r"missed:\s+ruff \(exit code 3\)", out)
+
+
+def test_status_lists_missed_gates_when_none_passed(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify missed gates are listed, and status exits 1, when nothing passed."""
+    run_gate("ruff", counter.argv(exit_code=1))
+    capfd.readouterr()
+    assert gate_status(None) == 1
+    out = capfd.readouterr().out
+    assert re.search(r"missed:\s+ruff \(exit code 1\)", out)
+    assert "passed" not in out
+    assert "No gates match" not in out
+
+
+def test_tree_changing_run_is_listed_as_missed(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a pass that changed the tree is reported as missed, not passed."""
+    run_gate(NAME, counter.argv(touch=git_repo / "a.txt"))
+    git("checkout", "a.txt", cwd=git_repo)
+    capfd.readouterr()
+    assert gate_status(None) == 1
+    assert re.search(r"missed:\s+pytest \(files changed during the run\)", capfd.readouterr().out)
+
+
+def test_pass_after_miss_removes_miss(git_repo: Path, counter: Counter) -> None:
+    """Verify a later pass on the same tree deletes the miss record."""
+    run_gate(NAME, counter.argv(exit_code=1))
+    assert len(misses(git_repo)) == 1
+    run_gate(NAME, counter.argv())
+    assert misses(git_repo) == []
+    assert len(markers(git_repo)) == 1
+
+
+def test_interrupted_failure_records_no_miss(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify an interrupted run leaves no miss record, since it did not finish."""
+    monkeypatch.setattr(
+        "gate_cache.gate.run_child", lambda _argv: ChildResult(130, interrupted=True)
+    )
+    assert run_gate(NAME, ["true"]) == 130
+    assert misses(git_repo) == []
+
+
+def test_unwritable_miss_keeps_exit_code(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify a miss record that cannot be written only warns."""
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr("gate_cache.gate.write_miss", fail)
+    assert run_gate(NAME, counter.argv(exit_code=4)) == 4
+    assert (
+        "warning: could not record miss: [Errno 30] Read-only file system" in capfd.readouterr().err
+    )
+
+
+def test_named_status_reports_last_failed_run(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status --name shows how the last run on this tree failed."""
+    run_gate(NAME, counter.argv(exit_code=2))
+    capfd.readouterr()
+    assert gate_status(NAME) == 1
+    out = capfd.readouterr().out
+    assert re.search(r"result:\s+miss", out)
+    assert re.search(r"last run:\s+exit code 2", out)
+
+
+def test_named_status_json_hit(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status --name --json prints a parseable hit report on stdout."""
+    run_gate(NAME, counter.argv())
+    capfd.readouterr()
+    assert gate_status(NAME, as_json=True) == 0
+    data = json.loads(capfd.readouterr().out)
+    assert data["enabled"] is True
+    assert data["name"] == NAME
+    assert data["tree"] == git("write-tree", cwd=git_repo)
+    assert data["reason"] is None
+    assert data["marker"] == str(markers(git_repo)[0])
+    assert data["result"] == "hit"
+    assert data["last_run"] is None
+
+
+def test_named_status_json_miss_with_last_run(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status --name --json reports the failed run's exit code and reason."""
+    run_gate(NAME, counter.argv(exit_code=5))
+    capfd.readouterr()
+    assert gate_status(NAME, as_json=True) == 1
+    data = json.loads(capfd.readouterr().out)
+    assert data["result"] == "miss"
+    assert data["last_run"]["exit_code"] == 5
+    assert data["last_run"]["reason"] == "exit code 5"
+    assert data["last_run"]["timestamp"]
+
+
+def test_list_status_json(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status --json lists passed and missed gates."""
+    run_gate("pytest", counter.argv())
+    run_gate("ruff", counter.argv(exit_code=1))
+    capfd.readouterr()
+    assert gate_status(None, as_json=True) == 0
+    data = json.loads(capfd.readouterr().out)
+    assert data["tree"] == git("write-tree", cwd=git_repo)
+    assert data["reason"] is None
+    assert data["passed"] == ["pytest"]
+    assert [(m["name"], m["exit_code"]) for m in data["missed"]] == [("ruff", 1)]
+
+
+def test_status_json_unknown_tree(git_repo: Path, capfd: pytest.CaptureFixture[str]) -> None:
+    """Verify status --json gives the reason when the tree is unknown."""
+    (git_repo / "new.py").write_text("x")
+    assert gate_status(None, as_json=True) == 1
+    data = json.loads(capfd.readouterr().out)
+    assert data["tree"] is None
+    assert data["reason"] == "untracked file: new.py"
+    assert data["passed"] == []
+    assert data["missed"] == []
+
+
+def test_status_json_when_disabled(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status --json reports disabled caching on stdout only."""
+    monkeypatch.setenv("GATE_CACHE_DISABLE", "1")
+    assert gate_status(NAME, as_json=True) == 1
+    captured = capfd.readouterr()
+    assert captured.err == ""
+    data = json.loads(captured.out)
+    assert data["enabled"] is False
+    assert data["reason"] == "caching disabled by GATE_CACHE_DISABLE"

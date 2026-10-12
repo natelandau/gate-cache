@@ -14,7 +14,7 @@ Each time it runs, gate-cache does these steps in this sequence:
 4. If git cannot find the git directory that holds the markers, run the command without the cache and write no marker.
 5. If a marker for the tree and the name exists, print a skip line and exit 0.
 6. Run the command.
-7. If the command exits 0 and the tree did not change during the run, write the marker.
+7. If the command exits 0 and the tree did not change during the run, write the marker. Otherwise, write a miss record that `gate-cache status` reports.
 
 Every uncertain case runs the command. gate-cache can run a command that it did not need to run, but it skips a command only when a marker proves that the same gate passed on the same content.
 
@@ -107,3 +107,5 @@ marker="$(git rev-parse --git-common-dir)/gate-cache/$key"
 On Linux systems without `shasum`, `sha256sum` gives the same digest.
 
 The existence of the marker file is the signal. gate-cache writes a small JSON object with `tree`, `name`, `command`, and `timestamp` keys. `gate-cache status` without `--name` reads this JSON to list the gates, so it does not list a marker that another tool wrote without that content. Such a marker still makes its gate skip.
+
+When a command fails, or exits 0 but changes the tree, gate-cache writes a miss record at `<key>.miss` in the same directory. The record holds the same JSON keys as a marker, plus `exit_code` and `reason`. A miss record never makes a gate skip. Only `gate-cache status` reads it, to list the missed gates. A pass of the same name on the same tree deletes the miss record. A run that a signal to gate-cache stopped, such as Ctrl-C, writes no miss record. Pruning and `gate-cache clear` delete miss records with the markers.

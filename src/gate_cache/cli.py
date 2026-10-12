@@ -30,7 +30,7 @@ Exit codes:
   run     the command's own exit code, or 0 when a recorded pass lets it skip.
           Usage errors exit 2.
   status  0 when the named gate, or any gate without --name, passed on the
-          current tree. 1 otherwise.
+          current tree. 1 otherwise. --json prints one JSON object instead.
   clear   0 on success, 1 on failure.
 
 GATE_CACHE_DISABLE and CI are on when the value is not empty, 0, or false (any
@@ -54,7 +54,7 @@ app = App(
     help_format="plaintext",
     usage=(
         "Usage: gate-cache --name NAME -- COMMAND [ARGS...]\n"
-        "       gate-cache status [--name NAME]\n"
+        "       gate-cache status [--name NAME] [--json]\n"
         "       gate-cache clear"
     ),
     result_action="return_int_as_exit_code_else_zero",
@@ -92,21 +92,28 @@ def run(
 
 
 @app.command
-def status(*, name: str | None = None) -> int:
+def status(
+    *,
+    name: str | None = None,
+    as_json: Annotated[bool, Parameter(name="--json", negative="")] = False,
+) -> int:
     """Report whether gates would skip, without running anything.
 
     With --name, print the tree hash (or why it is unknown), the marker path,
-    and hit or miss. Exit 0 on a hit, 1 otherwise.
+    hit or miss, and how the last run on this tree failed when it did. Exit 0 on a
+    hit, 1 otherwise.
 
-    Without --name, list every gate that passed on the current tree.
-    Exit 0 when at least one gate matches, 1 otherwise.
+    Without --name, list the gates that passed on the current tree and the gates
+    that ran on it without passing. Exit 0 when at least one gate passed, 1 otherwise.
 
     Parameters
     ----------
     name
-        Gate name to look up. Omit it to list every gate that passed on this tree.
+        Gate name to look up. Omit it to list every gate that ran on this tree.
+    as_json
+        Print one JSON object to stdout instead of text. Exit codes are unchanged.
     """
-    return gate_status(name)
+    return gate_status(name, as_json=as_json)
 
 
 @app.command

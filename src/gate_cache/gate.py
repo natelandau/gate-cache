@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nclutils import pp
 
@@ -11,16 +13,21 @@ from gate_cache.console import say
 from gate_cache.markers import (
     clear_markers,
     marker_path,
+    miss_path,
+    missed_records,
     passed_names,
     prune_markers,
     write_marker,
+    write_miss,
 )
 from gate_cache.runner import run_child
-from gate_cache.snapshot import Snapshot, git_common_dir, take_snapshot
+from gate_cache.snapshot import git_common_dir, take_snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
+
+    from gate_cache.snapshot import Snapshot
 
 DISABLE_ENV = "GATE_CACHE_DISABLE"
 CI_ENV = "CI"
@@ -29,6 +36,7 @@ DEFAULT_MAX_AGE_DAYS = 30
 _DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
 _CI_REASON = f"caching disabled in CI ({DISABLE_ENV}=0 keeps it on)"
 _NO_COMMON_DIR_REASON = "could not locate git directory"
+_FILES_CHANGED = "files changed during the run"
 
 
 def _flag_on(value: str) -> bool:
@@ -101,23 +109,42 @@ def _run_uncached(reason: str, command: Sequence[str]) -> int:
     return run_child(command).exit_code
 
 
-def _record_pass(path: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
-    """Write the marker and prune old ones; a failure only warns."""
+def _record_pass(common_dir: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
+    """Write the marker, drop any earlier miss, and prune old files; a failure only warns."""
+    path = marker_path(common_dir, tree, name)
     try:
         write_marker(path, tree=tree, name=name, command=command)
     except OSError as error:
         say(f"warning: could not record pass: {error}")
         return
+    with contextlib.suppress(OSError):
+        miss_path(common_dir, tree, name).unlink(missing_ok=True)
     prune_markers(path.parent, max_age_days=marker_max_age_days())
 
 
-def _record_if_unchanged(path: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
+def _record_miss(
+    common_dir: Path, *, tree: str, name: str, command: Sequence[str], exit_code: int, reason: str
+) -> None:
+    """Record that the gate ran on the tree without passing, so status can report it."""
+    # Reporting is best effort: nothing about a miss record may change the exit code.
+    try:
+        path = miss_path(common_dir, tree, name)
+        write_miss(path, tree=tree, name=name, command=command, exit_code=exit_code, reason=reason)
+        prune_markers(path.parent, max_age_days=marker_max_age_days())
+    except Exception as error:  # noqa: BLE001
+        say(f"warning: could not record miss: {error}")
+
+
+def _record_if_unchanged(common_dir: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
     """Record the pass only when the run left the tree it was keyed on untouched."""
     # A command that rewrote tracked files or left new files behind did not pass on `tree`.
     if take_snapshot().tree == tree:
-        _record_pass(path, tree=tree, name=name, command=command)
+        _record_pass(common_dir, tree=tree, name=name, command=command)
     else:
-        say("files changed during the run, not recording pass")
+        say(f"{_FILES_CHANGED}, not recording pass")
+        _record_miss(
+            common_dir, tree=tree, name=name, command=command, exit_code=0, reason=_FILES_CHANGED
+        )
 
 
 def run_gate(name: str, command: Sequence[str]) -> int:
@@ -143,29 +170,38 @@ def run_gate(name: str, command: Sequence[str]) -> int:
     if common_dir is None:
         return _run_uncached(_NO_COMMON_DIR_REASON, command)
 
-    path = marker_path(common_dir, tree, name)
-    if _marker_exists(path):
+    if _marker_exists(marker_path(common_dir, tree, name)):
         say(f"{name} already passed on tree {tree[:12]}, skipping")
         return 0
 
     result = run_child(command)
-    if result.interrupted or result.exit_code != 0:
+    if result.interrupted:
         return result.exit_code
-
-    # Recording is best effort: nothing after a passing run may change its exit code.
-    try:
-        _record_if_unchanged(path, tree=tree, name=name, command=command)
-    except Exception as error:  # noqa: BLE001
-        say(f"warning: could not record pass: {error}")
+    if result.exit_code != 0:
+        _record_miss(
+            common_dir,
+            tree=tree,
+            name=name,
+            command=command,
+            exit_code=result.exit_code,
+            reason=f"exit code {result.exit_code}",
+        )
+    else:
+        # Recording is best effort: nothing after a passing run may change its exit code.
+        try:
+            _record_if_unchanged(common_dir, tree=tree, name=name, command=command)
+        except Exception as error:  # noqa: BLE001
+            say(f"warning: could not record pass: {error}")
     return result.exit_code
 
 
-def gate_status(name: str | None = None) -> int:
-    """Print whether a gate would skip, or list every gate that would, without running.
+def gate_status(name: str | None = None, *, as_json: bool = False) -> int:
+    """Print whether a gate would skip, or list the gates that ran, without running anything.
 
     Args:
-        name: Gate name to look up. When None, list every gate with a recorded pass on
+        name: Gate name to look up. When None, list every gate that passed or missed on
             the current tree.
+        as_json: Print one JSON object to stdout instead of text.
 
     Returns:
         0 when a recorded pass exists for the gate, or for at least one gate when
@@ -173,52 +209,125 @@ def gate_status(name: str | None = None) -> int:
     """
     reason = disabled_reason()
     if reason is not None:
-        say(reason)
+        if as_json:
+            _print_json({"enabled": False, "reason": reason, "tree": None})
+        else:
+            say(reason)
         return 1
 
     snapshot = take_snapshot()
+    common_dir = git_common_dir() if snapshot.tree is not None else None
     if name is None:
-        return _list_passed(snapshot)
+        return _list_gates(snapshot, common_dir, as_json=as_json)
+    return _named_status(name, snapshot, common_dir, as_json=as_json)
 
+
+def _print_json(data: Mapping[str, Any]) -> None:
+    """Print a status report as JSON on stdout, unwrapped so it parses as is."""
+    print(json.dumps(data, indent=2))  # noqa: T201
+
+
+def _unknown_reason(snapshot: Snapshot, common_dir: Path | None) -> str | None:
+    """Return why markers cannot be looked up, or None when they can."""
+    if snapshot.tree is None:
+        return snapshot.reason or "tree unknown"
+    if common_dir is None:
+        return _NO_COMMON_DIR_REASON
+    return None
+
+
+def _miss_summary(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Pick the fields of a miss record that describe the run."""
+    return {
+        "exit_code": record.get("exit_code"),
+        "reason": record.get("reason"),
+        "timestamp": record.get("timestamp"),
+    }
+
+
+def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_json: bool) -> int:
+    """Print whether one gate would skip on the snapshot's tree."""
     tree = snapshot.tree
     path: Path | None = None
-    marker = "none"
-    if tree is not None:
-        common_dir = git_common_dir()
-        if common_dir is None:
-            marker = f"none: {_NO_COMMON_DIR_REASON}"
-        else:
-            path = marker_path(common_dir, tree, name)
-            marker = str(path)
+    last_run: dict[str, Any] | None = None
+    if tree is not None and common_dir is not None:
+        path = marker_path(common_dir, tree, name)
     hit = path is not None and _marker_exists(path)
+    if not hit and tree is not None and common_dir is not None:
+        last_run = next(
+            (_miss_summary(r) for r in missed_records(common_dir, tree) if r["name"] == name),
+            None,
+        )
+    reason = _unknown_reason(snapshot, common_dir)
 
-    pp.kv(
-        {
-            "name": name,
-            "tree": tree if tree is not None else f"unknown: {snapshot.reason}",
-            "marker": marker,
-            "result": "hit" if hit else "miss",
-        }
-    )
+    if as_json:
+        _print_json(
+            {
+                "enabled": True,
+                "name": name,
+                "tree": tree,
+                "reason": reason,
+                "marker": str(path) if path is not None else None,
+                "result": "hit" if hit else "miss",
+                "last_run": last_run,
+            }
+        )
+        return 0 if hit else 1
+
+    marker = str(path) if path is not None else "none"
+    if tree is not None and common_dir is None:
+        marker = f"none: {_NO_COMMON_DIR_REASON}"
+    rows = {
+        "name": name,
+        "tree": tree if tree is not None else f"unknown: {snapshot.reason}",
+        "marker": marker,
+        "result": "hit" if hit else "miss",
+    }
+    if last_run is not None:
+        rows["last run"] = str(last_run["reason"])
+    pp.kv(rows)
     return 0 if hit else 1
 
 
-def _list_passed(snapshot: Snapshot) -> int:
-    """Print the gates with a recorded pass on the snapshot's tree."""
-    if snapshot.tree is None:
+def _list_gates(snapshot: Snapshot, common_dir: Path | None, *, as_json: bool) -> int:
+    """Print the gates that passed or missed on the snapshot's tree."""
+    tree = snapshot.tree
+    passed: list[str] = []
+    missed: list[dict[str, Any]] = []
+    if tree is not None and common_dir is not None:
+        passed = passed_names(common_dir, tree)
+        missed = [{"name": r["name"], **_miss_summary(r)} for r in missed_records(common_dir, tree)]
+    code = 0 if passed else 1
+
+    if as_json:
+        _print_json(
+            {
+                "enabled": True,
+                "tree": tree,
+                "reason": _unknown_reason(snapshot, common_dir),
+                "passed": passed,
+                "missed": missed,
+            }
+        )
+        return code
+
+    if tree is None:
         pp.kv({"tree": f"unknown: {snapshot.reason}"})
         return 1
-    common_dir = git_common_dir()
     if common_dir is None:
-        pp.kv({"tree": snapshot.tree, "gates": f"unknown: {_NO_COMMON_DIR_REASON}"})
+        pp.kv({"tree": tree, "passed": f"unknown: {_NO_COMMON_DIR_REASON}"})
         return 1
-    names = passed_names(common_dir, snapshot.tree)
-    if not names:
-        pp.kv({"tree": snapshot.tree})
+    if not passed and not missed:
+        pp.kv({"tree": tree})
         pp.console().print("No gates match the current tree", markup=False, highlight=False)
         return 1
-    pp.kv({"tree": snapshot.tree, "gates": ", ".join(names)})
-    return 0
+    rows = {"tree": tree}
+    if passed:
+        rows["passed"] = ", ".join(passed)
+    if missed:
+        rows["missed"] = ", ".join(f"{m['name']} ({m['reason']})" for m in missed)
+    pp.kv(rows)
+    return code
 
 
 def clear_cache() -> int:

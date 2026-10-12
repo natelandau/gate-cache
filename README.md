@@ -145,31 +145,54 @@ GATE_CACHE_DISABLE=1 just test
 
 ## See what already passed
 
-`gate-cache status` lists every name that passed on the current content:
+`gate-cache status` lists the names that passed on the current content, and the names that ran on it without a pass:
 
 ```console
 $ gate-cache status
-  tree:  aaff74984cccd156a469afa7d9ab10e4777beb24
-  gates: pytest, ruff
+  tree:   aaff74984cccd156a469afa7d9ab10e4777beb24
+  passed: pytest
+  missed: ruff (exit code 1)
 ```
+
+A name is missed when its command failed, or when it exited 0 but changed the files. A later pass of the same name removes it from the `missed` line.
 
 With `--name`, it reports on one name:
 
 ```console
-$ gate-cache status --name pytest
-  name:   pytest
-  tree:   aaff74984cccd156a469afa7d9ab10e4777beb24
-  marker: /path/to/repo/.git/gate-cache/698af5f62774dab7babf59a4b8969fed12d8668428cee49ca89baf4aa392de6d
-  result: hit
+$ gate-cache status --name ruff
+  name:     ruff
+  tree:     aaff74984cccd156a469afa7d9ab10e4777beb24
+  marker:   /path/to/repo/.git/gate-cache/7d94ca2f57ec0a77f60d328fb405d339fb0c2a645991b97c042ac54403104e9e
+  result:   miss
+  last run: exit code 1
 ```
 
-`status` runs nothing. It exits 0 when a marker matches and 1 when none does. When gate-cache cannot match the content, for example because of uncommitted edits, the `tree` line gives the reason.
+The `last run` line shows only when the name ran on this content without a pass.
+
+`status` runs nothing. With `--name`, it exits 0 when a marker matches and 1 when none does. Without `--name`, it exits 0 when at least one name passed. When gate-cache cannot match the content, for example because of uncommitted edits, the `tree` line gives the reason.
+
+With `--json`, `status` writes one JSON object to stdout instead of text. The exit codes do not change:
+
+```console
+$ gate-cache status --json
+{
+  "enabled": true,
+  "tree": "aaff74984cccd156a469afa7d9ab10e4777beb24",
+  "reason": null,
+  "passed": ["pytest"],
+  "missed": [
+    {"name": "ruff", "exit_code": 1, "reason": "exit code 1", "timestamp": "2026-10-12T12:31:55Z"}
+  ]
+}
+```
+
+`reason` tells why gate-cache cannot match the content, and is `null` when it can. When caching is off, `enabled` is `false` and `reason` names the variable. With `--name`, the object has the `name`, `marker`, `result`, and `last_run` keys in place of `passed` and `missed`.
 
 ## Start fresh
 
 A marker records only the content of the tracked files. A new tool version, a changed environment variable, or a change to a service does not change that content, so the old markers still match.
 
-`gate-cache clear` deletes every marker for the repository:
+`gate-cache clear` deletes every marker for the repository, and the records of missed runs:
 
 ```console
 $ gate-cache clear

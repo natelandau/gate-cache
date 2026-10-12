@@ -14,9 +14,12 @@ from gate_cache.markers import (
     marker_dir,
     marker_key,
     marker_path,
+    miss_path,
+    missed_records,
     passed_names,
     prune_markers,
     write_marker,
+    write_miss,
 )
 
 TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -204,3 +207,49 @@ def test_passed_names_skips_unreadable_and_mismatched_files(tmp_path: Path) -> N
 def test_passed_names_missing_dir_is_empty(tmp_path: Path) -> None:
     """Verify a repo with no marker directory lists no gates."""
     assert passed_names(tmp_path, TREE) == []
+
+
+def test_missed_records_list_misses_without_a_pass(tmp_path: Path) -> None:
+    """Verify miss records for the tree are listed by name, minus gates that also passed."""
+    for name, code in (("ruff", 1), ("pytest", 2), ("ty", 3)):
+        write_miss(
+            miss_path(tmp_path, TREE, name),
+            tree=TREE,
+            name=name,
+            command=["x"],
+            exit_code=code,
+            reason=f"exit code {code}",
+        )
+    write_miss(
+        miss_path(tmp_path, OTHER_TREE, "other"),
+        tree=OTHER_TREE,
+        name="other",
+        command=["x"],
+        exit_code=1,
+        reason="exit code 1",
+    )
+    write_marker(marker_path(tmp_path, TREE, "ty"), tree=TREE, name="ty", command=["x"])
+    records = missed_records(tmp_path, TREE)
+    assert [(r["name"], r["exit_code"]) for r in records] == [("pytest", 2), ("ruff", 1)]
+    assert passed_names(tmp_path, TREE) == ["ty"]
+
+
+def test_miss_record_is_not_a_marker(tmp_path: Path) -> None:
+    """Verify a miss record never sits at the marker path, so it cannot cause a skip."""
+    assert miss_path(tmp_path, TREE, "pytest") != marker_path(tmp_path, TREE, "pytest")
+    assert miss_path(tmp_path, TREE, "pytest").name.startswith(marker_key(TREE, "pytest"))
+
+
+def test_clear_markers_removes_misses_without_counting_them(tmp_path: Path) -> None:
+    """Verify clear deletes miss records but reports only pass markers."""
+    write_marker(marker_path(tmp_path, TREE, "a"), tree=TREE, name="a", command=["x"])
+    write_miss(
+        miss_path(tmp_path, TREE, "b"),
+        tree=TREE,
+        name="b",
+        command=["x"],
+        exit_code=1,
+        reason="exit code 1",
+    )
+    assert clear_markers(tmp_path) == 1
+    assert not marker_dir(tmp_path).exists()

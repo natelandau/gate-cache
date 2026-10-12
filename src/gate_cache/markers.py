@@ -9,7 +9,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nclutils.utils import iso_timestamp
 
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 MARKER_DIRNAME = "gate-cache"
 TEMP_PREFIX = ".tmp-"
+MISS_SUFFIX = ".miss"
 
 
 def marker_key(tree: str, name: str) -> str:
@@ -62,6 +63,22 @@ def marker_path(common_dir: Path, tree: str, name: str) -> Path:
     return marker_dir(common_dir) / marker_key(tree, name)
 
 
+def miss_path(common_dir: Path, tree: str, name: str) -> Path:
+    """Return the path that records a gate run on a tree that did not pass.
+
+    The suffix keeps it apart from the marker, whose existence alone signals a pass.
+
+    Args:
+        common_dir: Absolute path to the git common directory.
+        tree: Git tree hash.
+        name: Gate name.
+
+    Returns:
+        The miss record path.
+    """
+    return marker_dir(common_dir) / f"{marker_key(tree, name)}{MISS_SUFFIX}"
+
+
 def write_marker(path: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
     """Atomically write a marker file.
 
@@ -74,13 +91,41 @@ def write_marker(path: Path, *, tree: str, name: str, command: Sequence[str]) ->
     Raises:
         OSError: If the marker cannot be written. Any temp file is removed.
     """
+    _write_json(path, {"tree": tree, "name": name, "command": list(command)})
+
+
+def write_miss(
+    path: Path, *, tree: str, name: str, command: Sequence[str], exit_code: int, reason: str
+) -> None:
+    """Atomically record that a gate ran on a tree and did not pass.
+
+    Args:
+        path: Destination miss record path; its parent directory is created if needed.
+        tree: Git tree hash the command ran on.
+        name: Gate name.
+        command: The command that ran.
+        exit_code: The command's exit code.
+        reason: Why the run did not record a pass.
+
+    Raises:
+        OSError: If the record cannot be written. Any temp file is removed.
+    """
+    _write_json(
+        path,
+        {
+            "tree": tree,
+            "name": name,
+            "command": list(command),
+            "exit_code": exit_code,
+            "reason": reason,
+        },
+    )
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    """Write a timestamped JSON record via a temp file and rename, so readers never see half."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "tree": tree,
-        "name": name,
-        "command": list(command),
-        "timestamp": iso_timestamp(),
-    }
+    payload = {**payload, "timestamp": iso_timestamp()}
     tmp_name: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -111,11 +156,38 @@ def passed_names(common_dir: Path, tree: str) -> list[str]:
     Returns:
         Sorted, unique gate names.
     """
-    names: set[str] = set()
+    return sorted({record["name"] for record in _records(common_dir, tree, suffix="")})
+
+
+def missed_records(common_dir: Path, tree: str) -> list[dict[str, Any]]:
+    """List the gates that ran on a tree without passing, for reporting what would run.
+
+    A gate that also has a pass marker on the tree is left out, since a later pass
+    supersedes the miss.
+
+    Args:
+        common_dir: Absolute path to the git common directory.
+        tree: Git tree hash to match.
+
+    Returns:
+        Each miss record's JSON content, sorted by gate name.
+    """
+    passed = set(passed_names(common_dir, tree))
+    records = [
+        record
+        for record in _records(common_dir, tree, suffix=MISS_SUFFIX)
+        if record["name"] not in passed
+    ]
+    return sorted(records, key=lambda record: record["name"])
+
+
+def _records(common_dir: Path, tree: str, *, suffix: str) -> list[dict[str, Any]]:
+    """Read the records for a tree whose filename is the key of their own name plus suffix."""
     try:
         entries = list(marker_dir(common_dir).iterdir())
     except OSError:
         return []
+    records: list[dict[str, Any]] = []
     for entry in entries:
         if entry.name.startswith(TEMP_PREFIX):
             continue
@@ -129,10 +201,10 @@ def passed_names(common_dir: Path, tree: str) -> list[str]:
         if (
             data.get("tree") == tree
             and isinstance(name, str)
-            and marker_key(tree, name) == entry.name
+            and f"{marker_key(tree, name)}{suffix}" == entry.name
         ):
-            names.add(name)
-    return sorted(names)
+            records.append(data)
+    return records
 
 
 def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None = None) -> None:
@@ -154,7 +226,7 @@ def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None 
 
 
 def clear_markers(common_dir: Path) -> int:
-    """Delete every marker and the marker directory.
+    """Delete every marker and miss record, and the marker directory.
 
     Files that vanish mid-clear and leftover subdirectories are tolerated, so a concurrent
     writer cannot make clearing fail.
@@ -181,7 +253,7 @@ def clear_markers(common_dir: Path) -> int:
             entry.unlink()
         except FileNotFoundError:
             continue
-        if not entry.name.startswith(TEMP_PREFIX):
+        if not entry.name.startswith(TEMP_PREFIX) and not entry.name.endswith(MISS_SUFFIX):
             count += 1
     try:
         directory.rmdir()
