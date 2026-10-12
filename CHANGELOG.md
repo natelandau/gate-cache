@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.6.0 (2026-10-12)
+
+### Feat
+
+- support python 3.15 (#4)
+
+### Refactor
+
+- **deps**: replace nclutils with stdlib helpers (#6)
+- **cli**: replace cyclopts with argparse (#5)
+
 ## v0.5.0 (2026-10-12)
 
 ### Feat
