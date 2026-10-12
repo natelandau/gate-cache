@@ -1,0 +1,162 @@
+"""Run a gate command, skipping it when it already passed on the same tree."""
+
+from __future__ import annotations
+
+import os
+from typing import TYPE_CHECKING
+
+from nclutils import pp
+
+from gate_cache.console import say
+from gate_cache.markers import clear_markers, marker_path, prune_markers, write_marker
+from gate_cache.runner import run_child
+from gate_cache.snapshot import git_common_dir, take_snapshot
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
+
+DISABLE_ENV = "GATE_CACHE_DISABLE"
+_DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
+_NO_COMMON_DIR_REASON = "could not locate git directory"
+
+
+def cache_disabled(environ: Mapping[str, str] | None = None) -> bool:
+    """Report whether GATE_CACHE_DISABLE turns caching off.
+
+    Args:
+        environ: Environment to read; defaults to the process environment.
+
+    Returns:
+        True when the variable is set to any non-empty value other than `0`.
+    """
+    value = (os.environ if environ is None else environ).get(DISABLE_ENV, "")
+    return value not in {"", "0"}
+
+
+def _marker_exists(path: Path) -> bool:
+    """Return True only when the marker is known to exist."""
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _run_uncached(reason: str, command: Sequence[str]) -> int:
+    """Explain why caching is off, then run the command."""
+    say(f"{reason}, running without cache")
+    return run_child(command).exit_code
+
+
+def _record_pass(path: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
+    """Write the marker and prune old ones; a failure only warns."""
+    try:
+        write_marker(path, tree=tree, name=name, command=command)
+    except OSError as error:
+        say(f"warning: could not record pass: {error}")
+        return
+    prune_markers(path.parent)
+
+
+def _record_if_unchanged(path: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
+    """Record the pass only when the run left the tree it was keyed on untouched."""
+    # A command that rewrote tracked files or left new files behind did not pass on `tree`.
+    if take_snapshot().tree == tree:
+        _record_pass(path, tree=tree, name=name, command=command)
+    else:
+        say("files changed during the run, not recording pass")
+
+
+def run_gate(name: str, command: Sequence[str]) -> int:
+    """Run a gate command unless it already passed on the tree about to be tested.
+
+    Args:
+        name: Gate name that, with the tree, identifies a recorded pass.
+        command: Command and arguments to run.
+
+    Returns:
+        The command's exit code, or 0 when a recorded pass lets it skip.
+    """
+    if cache_disabled():
+        return _run_uncached(_DISABLED_REASON, command)
+
+    snapshot = take_snapshot()
+    tree = snapshot.tree
+    if tree is None:
+        return _run_uncached(snapshot.reason or "tree unknown", command)
+
+    common_dir = git_common_dir()
+    if common_dir is None:
+        return _run_uncached(_NO_COMMON_DIR_REASON, command)
+
+    path = marker_path(common_dir, tree, name)
+    if _marker_exists(path):
+        say(f"{name} already passed on tree {tree[:12]}, skipping")
+        return 0
+
+    result = run_child(command)
+    if result.interrupted or result.exit_code != 0:
+        return result.exit_code
+
+    # Recording is best effort: nothing after a passing run may change its exit code.
+    try:
+        _record_if_unchanged(path, tree=tree, name=name, command=command)
+    except Exception as error:  # noqa: BLE001
+        say(f"warning: could not record pass: {error}")
+    return result.exit_code
+
+
+def gate_status(name: str) -> int:
+    """Print whether a gate would skip, without running anything.
+
+    Args:
+        name: Gate name to look up.
+
+    Returns:
+        0 when a recorded pass exists for the current tree, 1 otherwise.
+    """
+    if cache_disabled():
+        say(_DISABLED_REASON)
+        return 1
+
+    snapshot = take_snapshot()
+    tree = snapshot.tree
+    path: Path | None = None
+    marker = "none"
+    if tree is not None:
+        common_dir = git_common_dir()
+        if common_dir is None:
+            marker = f"none: {_NO_COMMON_DIR_REASON}"
+        else:
+            path = marker_path(common_dir, tree, name)
+            marker = str(path)
+    hit = path is not None and _marker_exists(path)
+
+    pp.kv(
+        {
+            "name": name,
+            "tree": tree if tree is not None else f"unknown: {snapshot.reason}",
+            "marker": marker,
+            "result": "hit" if hit else "miss",
+        }
+    )
+    return 0 if hit else 1
+
+
+def clear_cache() -> int:
+    """Delete every marker for the current repository.
+
+    Returns:
+        0 on success, 1 outside a git repository or when markers cannot be removed.
+    """
+    common_dir = git_common_dir()
+    if common_dir is None:
+        say("not a git repository")
+        return 1
+    try:
+        count = clear_markers(common_dir)
+    except OSError as error:
+        say(f"could not clear markers: {error}")
+        return 1
+    say(f"removed {count} marker{'' if count == 1 else 's'}")
+    return 0
