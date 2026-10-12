@@ -33,6 +33,8 @@ Exit codes:
   clear   0 on success, 1 on failure.
 
 Set GATE_CACHE_DISABLE to any non-empty value other than 0 to always run the command.
+Set GATE_CACHE_MAX_AGE_DAYS to a positive whole number to change how many days a
+recorded pass lasts (default 30).
 
 Only file content is keyed. Never wrap checks that depend on anything else,
 such as commit-message or branch-name checks.

@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 DISABLE_ENV = "GATE_CACHE_DISABLE"
+MAX_AGE_ENV = "GATE_CACHE_MAX_AGE_DAYS"
+DEFAULT_MAX_AGE_DAYS = 30
 _DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
 _NO_COMMON_DIR_REASON = "could not locate git directory"
 
@@ -32,6 +34,35 @@ def cache_disabled(environ: Mapping[str, str] | None = None) -> bool:
     """
     value = (os.environ if environ is None else environ).get(DISABLE_ENV, "")
     return value not in {"", "0"}
+
+
+def marker_max_age_days(environ: Mapping[str, str] | None = None) -> int:
+    """Read how many days a marker lives before pruning deletes it.
+
+    An invalid value warns and falls back to the default, so a typo in the setting
+    can never fail a gate.
+
+    Args:
+        environ: Environment to read; defaults to the process environment.
+
+    Returns:
+        The positive whole number of days from GATE_CACHE_MAX_AGE_DAYS, or 30 when it
+        is unset, empty, or invalid.
+    """
+    value = (os.environ if environ is None else environ).get(MAX_AGE_ENV, "").strip()
+    if not value:
+        return DEFAULT_MAX_AGE_DAYS
+    try:
+        days = int(value)
+    except ValueError:
+        days = 0
+    if days < 1:
+        say(
+            f"warning: {MAX_AGE_ENV}={value!r} is not a positive whole number of days, "
+            f"using {DEFAULT_MAX_AGE_DAYS}"
+        )
+        return DEFAULT_MAX_AGE_DAYS
+    return days
 
 
 def _marker_exists(path: Path) -> bool:
@@ -55,7 +86,7 @@ def _record_pass(path: Path, *, tree: str, name: str, command: Sequence[str]) ->
     except OSError as error:
         say(f"warning: could not record pass: {error}")
         return
-    prune_markers(path.parent)
+    prune_markers(path.parent, max_age_days=marker_max_age_days())
 
 
 def _record_if_unchanged(path: Path, *, tree: str, name: str, command: Sequence[str]) -> None:

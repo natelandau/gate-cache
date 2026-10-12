@@ -91,7 +91,7 @@ A command that exits 0 but changes the tree does not get a record. Examples are 
 
 A failing command, a signal, or Ctrl-C never writes a marker. If gate-cache gets `SIGTERM` or `SIGHUP` while the command runs, it sends the signal to the command, waits for the command to stop, and exits with the status of the command. A cache error never changes the exit code of the command. If gate-cache cannot write a marker, it prints a warning and keeps the exit code.
 
-Markers live in the git common directory, so all linked worktrees of a repository share them. After each new marker, gate-cache deletes markers older than 30 days.
+Markers live in the git common directory, so all linked worktrees of a repository share them. After each new marker, gate-cache deletes markers older than 30 days. To change that limit, set `GATE_CACHE_MAX_AGE_DAYS`.
 
 ## Marker format
 
@@ -156,13 +156,28 @@ $ gate-cache clear
 gate-cache: removed 3 markers
 ```
 
-## Turn off caching
+## Environment variables
 
-If `GATE_CACHE_DISABLE` has a value that is not empty and not `0`, gate-cache runs every command and never reads or writes markers. With caching off, `gate-cache status` exits 1.
+Two environment variables control the cache.
+
+| Variable                  | Effect                                                         | Default |
+| ------------------------- | -------------------------------------------------------------- | ------- |
+| `GATE_CACHE_DISABLE`      | Any value that is not empty and not `0` turns off caching.     | not set |
+| `GATE_CACHE_MAX_AGE_DAYS` | The age in days at which gate-cache deletes a marker.          | `30`    |
+
+With caching off, gate-cache runs every command and never reads or writes markers, and `gate-cache status` exits 1.
 
 ```sh
 GATE_CACHE_DISABLE=1 git push
 ```
+
+The marker directory holds one small file for each gate that passed on each tree. After each new marker, gate-cache deletes every marker older than `GATE_CACHE_MAX_AGE_DAYS`, so the directory holds only the passes from that period. The age counts from when gate-cache wrote the marker. A skip does not reset it, so a marker that a gate hits every day still expires. A smaller value keeps the directory smaller and causes more runs on old trees.
+
+```sh
+export GATE_CACHE_MAX_AGE_DAYS=7
+```
+
+The value must be a positive whole number. If it is not, gate-cache prints a warning and uses 30 days.
 
 ## Supported runners and platforms
 

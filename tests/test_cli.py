@@ -97,7 +97,14 @@ def test_help_is_self_describing(
     """Help explains the tool to a reader with no other context."""
     assert invoke(monkeypatch, "--help") == 0
     out = capfd.readouterr().out
-    for text in ("--name", "GATE_CACHE_DISABLE", "status", "clear", "gate-cache --name pytest -- "):
+    for text in (
+        "--name",
+        "GATE_CACHE_DISABLE",
+        "GATE_CACHE_MAX_AGE_DAYS",
+        "status",
+        "clear",
+        "gate-cache --name pytest -- ",
+    ):
         assert text in out
     flat = " ".join(out.split())
     assert "records a pass keyed on the git tree of the tracked files" in flat

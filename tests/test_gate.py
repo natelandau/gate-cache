@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from gate_cache.gate import cache_disabled, clear_cache, gate_status, run_gate
+from gate_cache.gate import cache_disabled, clear_cache, gate_status, marker_max_age_days, run_gate
 from gate_cache.markers import marker_dir
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot
@@ -303,6 +303,69 @@ def test_prune_runs_after_write(git_repo: Path, counter: Counter) -> None:
     os.utime(old, (stale, stale))
     run_gate(NAME, counter.argv())
     assert not old.exists()
+    assert len(markers(git_repo)) == 1
+
+
+def _plant_marker(repo: Path, name: str, age_days: float) -> Path:
+    """Create a marker file whose mtime is age_days in the past."""
+    directory = marker_dir(repo / ".git")
+    directory.mkdir(exist_ok=True)
+    path = directory / name
+    path.write_text("{}")
+    stamp = time.time() - age_days * 86400
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def test_max_age_env_shortens_pruning(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify GATE_CACHE_MAX_AGE_DAYS prunes markers younger than the 30-day default."""
+    monkeypatch.setenv("GATE_CACHE_MAX_AGE_DAYS", "7")
+    older = _plant_marker(git_repo, "older", age_days=8)
+    newer = _plant_marker(git_repo, "newer", age_days=6)
+    run_gate(NAME, counter.argv())
+    assert not older.exists()
+    assert newer.exists()
+
+
+def test_max_age_env_lengthens_pruning(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify GATE_CACHE_MAX_AGE_DAYS keeps markers older than the 30-day default."""
+    monkeypatch.setenv("GATE_CACHE_MAX_AGE_DAYS", "90")
+    kept = _plant_marker(git_repo, "kept", age_days=60)
+    run_gate(NAME, counter.argv())
+    assert kept.exists()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, 30), ("", 30), ("7", 7), (" 14 ", 14), ("365", 365)],
+)
+def test_marker_max_age_days_valid(value: str | None, expected: int) -> None:
+    """Verify valid or unset values give the configured or default age."""
+    environ = {} if value is None else {"GATE_CACHE_MAX_AGE_DAYS": value}
+    assert marker_max_age_days(environ) == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-3", "seven", "1.5"])
+def test_marker_max_age_days_invalid_warns_and_uses_default(
+    value: str, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify an invalid value warns and falls back to 30 days instead of failing."""
+    assert marker_max_age_days({"GATE_CACHE_MAX_AGE_DAYS": value}) == 30
+    err = capfd.readouterr().err
+    assert "GATE_CACHE_MAX_AGE_DAYS" in err
+    assert "using 30" in err
+
+
+def test_invalid_max_age_keeps_exit_code(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify an invalid max age never changes the command's exit code or blocks recording."""
+    monkeypatch.setenv("GATE_CACHE_MAX_AGE_DAYS", "nope")
+    assert run_gate(NAME, counter.argv()) == 0
     assert len(markers(git_repo)) == 1
 
 
