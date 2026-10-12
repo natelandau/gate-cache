@@ -7,9 +7,7 @@ import json
 import os
 from typing import TYPE_CHECKING, Any
 
-from nclutils import pp
-
-from gate_cache.console import say
+from gate_cache.console import kv, say
 from gate_cache.markers import (
     clear_markers,
     marker_exists,
@@ -285,7 +283,7 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
     }
     if last_run is not None:
         rows["last run"] = str(last_run["reason"])
-    pp.kv(rows)
+    kv(rows)
     return 0 if hit else 1
 
 
@@ -312,14 +310,14 @@ def _list_gates(snapshot: Snapshot, common_dir: Path | None, *, as_json: bool) -
         return code
 
     if tree is None:
-        pp.kv({"tree": f"unknown: {snapshot.reason}"})
+        kv({"tree": f"unknown: {snapshot.reason}"})
         return 1
     if common_dir is None:
-        pp.kv({"tree": tree, "passed": f"unknown: {_NO_COMMON_DIR_REASON}"})
+        kv({"tree": tree, "passed": f"unknown: {_NO_COMMON_DIR_REASON}"})
         return 1
     if not passed and not missed:
-        pp.kv({"tree": tree})
-        pp.console().print("No gates match the current tree", markup=False, highlight=False)
+        kv({"tree": tree})
+        print("No gates match the current tree")  # noqa: T201
         return 1
     rows = {"tree": tree}
     if passed:
@@ -328,7 +326,7 @@ def _list_gates(snapshot: Snapshot, common_dir: Path | None, *, as_json: bool) -
         rows["missed"] = ", ".join(
             f"{m['name']} ({m['reason']})" if m["reason"] else m["name"] for m in missed
         )
-    pp.kv(rows)
+    kv(rows)
     return code
 
 

@@ -8,10 +8,9 @@ import json
 import shutil
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-from nclutils.utils import iso_timestamp
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -125,7 +124,8 @@ def write_miss(
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     """Write a timestamped JSON record via a temp file and rename, so readers never see half."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {**payload, "timestamp": iso_timestamp()}
+    timestamp = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    payload = {**payload, "timestamp": timestamp}
     tmp_name: str | None = None
     try:
         with tempfile.NamedTemporaryFile(

@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from nclutils.sh import CompletedCommand, ShellCommandFailedError
 
 from gate_cache import scratch, snapshot
+from gate_cache.git import GitFailedError, GitResult
 from gate_cache.scratch import SCRATCH_PREFIX, runtime_area
 from gate_cache.snapshot import git_common_dir, take_snapshot
 from tests.conftest import add_submodule, expected_tree, git
@@ -567,10 +567,11 @@ def test_scratch_dir_removed_after_git_failure(
     """A git failure while hashing dirty work is unknown and still cleans up."""
     real_run_git = snapshot.run_git
 
-    def failing_run_git(*args: str, **kwargs: Any) -> CompletedCommand:
+    def failing_run_git(*args: str, **kwargs: Any) -> GitResult:
         env = kwargs.get("env") or {}
         if "write-tree" in args and SCRATCH_PREFIX in env.get("GIT_INDEX_FILE", ""):
-            raise ShellCommandFailedError(msg="boom")
+            msg = "boom"
+            raise GitFailedError(msg)
         return real_run_git(*args, **kwargs)
 
     monkeypatch.setattr(snapshot, "run_git", failing_run_git)

@@ -7,10 +7,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from nclutils.git import run_git
-from nclutils.sh import ShellCommandError, ShellCommandNotFoundError
-
 from gate_cache import scratch
+from gate_cache.git import GitError, GitNotFoundError, run_git
 
 
 @dataclass(frozen=True)
@@ -327,16 +325,16 @@ def take_snapshot(cwd: Path | None = None) -> Snapshot:
     try:
         env = _git_env(cwd)
         state = _inspect(cwd, env)
-    except ShellCommandNotFoundError:
+    except GitNotFoundError:
         return Snapshot(tree=None, reason="git not found")
-    except (ShellCommandError, UnicodeDecodeError):
+    except (GitError, UnicodeDecodeError):
         return Snapshot(tree=None, reason="could not inspect git state")
     if state.reason or state.root is None:
         return Snapshot(tree=None, reason=state.reason or "could not locate work tree")
 
     try:
         return _private_snapshot(cwd, state.root, env)
-    except (ShellCommandError, OSError, UnicodeDecodeError):
+    except (GitError, OSError, UnicodeDecodeError):
         return Snapshot(tree=None, reason="could not hash working copy")
 
 
@@ -351,7 +349,7 @@ def git_common_dir(cwd: Path | None = None) -> Path | None:
     """
     try:
         result = run_git("rev-parse", "--git-common-dir", cwd=cwd)
-    except (ShellCommandError, UnicodeDecodeError):
+    except (GitError, UnicodeDecodeError):
         return None
     output = result.stdout.strip()
     if not output or "\n" in output:
