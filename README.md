@@ -14,7 +14,7 @@ $ gate-cache --name pytest -- uv run pytest
 gate-cache: pytest already passed on tree aaff74984ccc, skipping
 ```
 
-A change to a tracked file changes the content, so no marker matches and the command runs again. CI starts from a fresh clone with no markers, so CI runs every command.
+A change to a tracked file changes the content, so no marker matches and the command runs again. A CI runner that starts from a fresh clone has no markers, so it runs every command.
 
 ## Install
 
@@ -81,6 +81,22 @@ lint:
 
 After `just test` passes, the next `just test` on the same content skips pytest.
 
+### Recipes with arguments
+
+gate-cache identifies a command by its name alone, not by its arguments. If `just test -k unit` and `just test` ran under the same name, a pass of the unit tests would also skip the full suite. Giving each set of arguments its own name, or caching only the bare form, keeps the two apart.
+
+This recipe caches `just test` and runs `just test -k unit` without the cache:
+
+```just
+test *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "{{ args }}" ]]; then
+        exec gate-cache --name test -- uv run pytest
+    fi
+    exec uv run pytest {{ args }}
+```
+
 ### Makefile
 
 ```make
@@ -108,6 +124,29 @@ repos:
 ```
 
 With this hook, a commit, a push, an agent, and your terminal all run `just test` and share its markers. The recipe runs in the project environment, so `uv run` prints no `VIRTUAL_ENV` warning. This form needs `gate-cache` and `just` on the `PATH`.
+
+### CI
+
+A hosted CI runner starts each job from a fresh clone, so it has no markers and runs every command. A self-hosted or persistent runner can keep the `.git` directory between jobs, and the markers in it. `GATE_CACHE_DISABLE=1` in the CI environment makes every command run on that runner:
+
+```yaml
+# .github/workflows/test.yml
+env:
+  GATE_CACHE_DISABLE: "1"
+
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v7
+      - run: just test
+```
+
+The same variable turns off the cache for one command on your machine:
+
+```sh
+GATE_CACHE_DISABLE=1 just test
+```
 
 ## See what already passed
 

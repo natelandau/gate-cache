@@ -73,7 +73,7 @@ A marker covers the name and the tree, and nothing else. The tree holds the cont
 - Changes that git is told to ignore. `core.fileMode=false` hides changes to the executable bit. `git update-index --assume-unchanged` and `--skip-worktree` hide edits to tracked files.
 - Changes in submodules that git is told to ignore. `diff.ignoreSubmodules` and the `submodule.<name>.ignore` setting can hide a dirty submodule.
 
-A change to one of these leaves the tree the same, so an existing marker still matches and gate-cache skips the command. A fresh run after such a change can give a different result. CI runs every command from a fresh clone, with no markers. `gate-cache clear` deletes the markers, and `GATE_CACHE_DISABLE=1` runs every command without the cache.
+A change to one of these leaves the tree the same, so an existing marker still matches and gate-cache skips the command. A fresh run after such a change can give a different result. A CI runner that starts from a fresh clone has no markers and runs every command. A runner that keeps the `.git` directory between jobs also keeps the markers. `gate-cache clear` deletes the markers, and `GATE_CACHE_DISABLE=1` runs every command without the cache.
 
 A marker also does not cover the commit message, the branch name, or anything on a remote. gate-cache decides only about the command that it wraps, and it never skips other hooks.
 
