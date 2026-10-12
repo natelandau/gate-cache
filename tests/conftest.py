@@ -29,7 +29,8 @@ def git_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_config))
-    for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
+    # CI and GATE_CACHE_DISABLE turn caching off, which would hide every cache hit.
+    for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "CI", "GATE_CACHE_DISABLE"):
         monkeypatch.delenv(var, raising=False)
     return home
 

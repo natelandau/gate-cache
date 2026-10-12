@@ -33,7 +33,10 @@ Exit codes:
           current tree. 1 otherwise.
   clear   0 on success, 1 on failure.
 
-Set GATE_CACHE_DISABLE to any non-empty value other than 0 to always run the command.
+GATE_CACHE_DISABLE and CI are on when the value is not empty, 0, or false (any
+case). If GATE_CACHE_DISABLE is on, the command always runs without the cache.
+If it is 0 or false, caching stays on. If it is empty or not set, CI decides the
+same way.
 Set GATE_CACHE_MAX_AGE_DAYS to a positive whole number to change how many days a
 recorded pass lasts (default 30).
 
@@ -71,8 +74,8 @@ def run(
 
     On a skip, prints one line to stderr and exits 0 without running anything. Otherwise
     runs the command and exits with its exit code. The command runs without caching
-    (and nothing is recorded) when GATE_CACHE_DISABLE is set, the tree has unstaged
-    changes or untracked files, or this is not a git repository. A pass is recorded only
+    (and nothing is recorded) when GATE_CACHE_DISABLE or CI turns caching off, the tree
+    has unstaged changes or untracked files, or this is not a git repository. A pass is recorded only
     when the command exits 0 and the run leaves the tree unchanged.
 
     Parameters

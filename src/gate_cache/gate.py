@@ -23,23 +23,39 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 DISABLE_ENV = "GATE_CACHE_DISABLE"
+CI_ENV = "CI"
 MAX_AGE_ENV = "GATE_CACHE_MAX_AGE_DAYS"
 DEFAULT_MAX_AGE_DAYS = 30
 _DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
+_CI_REASON = f"caching disabled in CI ({DISABLE_ENV}=0 keeps it on)"
 _NO_COMMON_DIR_REASON = "could not locate git directory"
 
 
-def cache_disabled(environ: Mapping[str, str] | None = None) -> bool:
-    """Report whether GATE_CACHE_DISABLE turns caching off.
+def _flag_on(value: str) -> bool:
+    """Read an on/off variable the way CI systems set CI, so `false` means off."""
+    return value.strip().lower() not in {"", "0", "false"}
+
+
+def disabled_reason(environ: Mapping[str, str] | None = None) -> str | None:
+    """Explain why caching is off, so a gate runs every time and reports the cause.
+
+    A non-empty GATE_CACHE_DISABLE decides: `0` or `false` keeps caching on and any other
+    value turns it off. Otherwise CI decides, because a persistent CI runner keeps
+    markers between jobs. Both read empty, `0`, and `false` in any case as off.
 
     Args:
         environ: Environment to read; defaults to the process environment.
 
     Returns:
-        True when the variable is set to any non-empty value other than `0`.
+        The message to show when caching is off, or None when caching is on.
     """
-    value = (os.environ if environ is None else environ).get(DISABLE_ENV, "")
-    return value not in {"", "0"}
+    env = os.environ if environ is None else environ
+    disable = env.get(DISABLE_ENV, "")
+    if disable.strip():
+        return _DISABLED_REASON if _flag_on(disable) else None
+    if _flag_on(env.get(CI_ENV, "")):
+        return _CI_REASON
+    return None
 
 
 def marker_max_age_days(environ: Mapping[str, str] | None = None) -> int:
@@ -114,8 +130,9 @@ def run_gate(name: str, command: Sequence[str]) -> int:
     Returns:
         The command's exit code, or 0 when a recorded pass lets it skip.
     """
-    if cache_disabled():
-        return _run_uncached(_DISABLED_REASON, command)
+    reason = disabled_reason()
+    if reason is not None:
+        return _run_uncached(reason, command)
 
     snapshot = take_snapshot()
     tree = snapshot.tree
@@ -154,8 +171,9 @@ def gate_status(name: str | None = None) -> int:
         0 when a recorded pass exists for the gate, or for at least one gate when
         listing, and 1 otherwise.
     """
-    if cache_disabled():
-        say(_DISABLED_REASON)
+    reason = disabled_reason()
+    if reason is not None:
+        say(reason)
         return 1
 
     snapshot = take_snapshot()

@@ -127,22 +127,17 @@ With this hook, a commit, a push, an agent, and your terminal all run `just test
 
 ### CI
 
-A hosted CI runner starts each job from a fresh clone, so it has no markers and runs every command. A self-hosted or persistent runner can keep the `.git` directory between jobs, and the markers in it. `GATE_CACHE_DISABLE=1` in the CI environment makes every command run on that runner:
+gate-cache turns off caching when the `CI` variable is on. A variable is on when its value is not empty, `0`, or `false`. Case and spaces around the value do not matter. Many CI systems set `CI=true` in every job, for example GitHub Actions and GitLab CI/CD. Jenkins does not set `CI`.
 
-```yaml
-# .github/workflows/test.yml
-env:
-  GATE_CACHE_DISABLE: "1"
+When caching is off, gate-cache runs the command each time and writes no marker.
 
-jobs:
-  test:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v7
-      - run: just test
+`GATE_CACHE_DISABLE` overrides `CI`. To keep caching on when `CI` is on, set `GATE_CACHE_DISABLE` to `0` or `false`:
+
+```sh
+GATE_CACHE_DISABLE=0 just test
 ```
 
-The same variable turns off the cache for one command on your machine:
+To turn off caching when `CI` is not set, set `GATE_CACHE_DISABLE` to `1`:
 
 ```sh
 GATE_CACHE_DISABLE=1 just test
@@ -189,12 +184,15 @@ GATE_CACHE_DISABLE=1 git push
 
 ## Settings
 
-Two environment variables control gate-cache.
+Three environment variables control gate-cache.
 
-| Variable                  | Effect                                                     | Default |
-| ------------------------- | ---------------------------------------------------------- | ------- |
-| `GATE_CACHE_DISABLE`      | Any value that is not empty and not `0` turns off caching. | not set |
-| `GATE_CACHE_MAX_AGE_DAYS` | gate-cache deletes markers older than this number of days. | `30`    |
+| Variable                  | Effect                                                                         | Default |
+| ------------------------- | ------------------------------------------------------------------------------ | ------- |
+| `GATE_CACHE_DISABLE`      | If on, turns off caching. If `0` or `false`, keeps caching on when `CI` is on. | not set |
+| `CI`                      | If on, turns off caching. A value in `GATE_CACHE_DISABLE` overrides it.        | not set |
+| `GATE_CACHE_MAX_AGE_DAYS` | gate-cache deletes markers older than this number of days.                     | `30`    |
+
+A variable is on when its value is not empty, `0`, or `false`. Case and spaces around the value do not matter.
 
 Each marker is one small file in the `.git` directory of the repository, so all worktrees of the repository share the markers.
 

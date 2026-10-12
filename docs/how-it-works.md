@@ -8,7 +8,7 @@ gate-cache keys each marker on two values: the gate name and the git tree of the
 
 Each time it runs, gate-cache does these steps in this sequence:
 
-1. If `GATE_CACHE_DISABLE` turns caching off, run the command and write no marker.
+1. If caching is off, run the command and write no marker. If `GATE_CACHE_DISABLE` has a value, it decides. If it is empty or not set, `CI` decides. Each variable turns off caching when its value is not empty, `0`, or `false`, in any case.
 2. Find the tree. gate-cache uses `git write-tree` only if the tracked files in the working copy match the index and no untracked, non-ignored files exist.
 3. If the tree is unknown, run the command without the cache and write no marker. The tree is unknown with unstaged changes, untracked non-ignored files, an unmerged index, outside a git repository, or after any git error.
 4. If git cannot find the git directory that holds the markers, run the command without the cache and write no marker.
@@ -75,7 +75,7 @@ A marker covers the name and the tree, and nothing else. The tree holds the cont
 - Changes that git is told to ignore. `core.fileMode=false` hides changes to the executable bit. `git update-index --assume-unchanged` and `--skip-worktree` hide edits to tracked files.
 - Changes in submodules that git is told to ignore. `diff.ignoreSubmodules` and the `submodule.<name>.ignore` setting can hide a dirty submodule.
 
-A change to one of these leaves the tree the same, so an existing marker still matches and gate-cache skips the command. A fresh run after such a change can give a different result. A CI runner that starts from a fresh clone has no markers and runs every command. A runner that keeps the `.git` directory between jobs also keeps the markers. `gate-cache clear` deletes the markers, and `GATE_CACHE_DISABLE=1` runs every command without the cache.
+A change to one of these leaves the tree the same, so an existing marker still matches and gate-cache skips the command. A fresh run after such a change can give a different result. A CI runner that starts from a fresh clone has no markers and runs every command. A runner that keeps the `.git` directory between jobs also keeps the markers. If `CI` is on and `GATE_CACHE_DISABLE` is not set, gate-cache does not use them. `gate-cache clear` deletes the markers, and `GATE_CACHE_DISABLE=1` runs every command without the cache.
 
 A marker also does not cover the commit message, the branch name, or anything on a remote. gate-cache decides only about the command that it wraps, and it never skips other hooks.
 

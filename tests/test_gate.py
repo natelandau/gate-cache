@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from gate_cache.gate import cache_disabled, clear_cache, gate_status, marker_max_age_days, run_gate
+from gate_cache.gate import clear_cache, disabled_reason, gate_status, marker_max_age_days, run_gate
 from gate_cache.markers import marker_dir
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot
@@ -228,19 +228,76 @@ def test_disable_zero_means_enabled(
     assert counter.count == 1
 
 
+DISABLE_REASON = "caching disabled by GATE_CACHE_DISABLE"
+CI_REASON = "caching disabled in CI (GATE_CACHE_DISABLE=0 keeps it on)"
+
+
 @pytest.mark.parametrize(
     ("environ", "expected"),
     [
-        ({}, False),
-        ({"GATE_CACHE_DISABLE": ""}, False),
-        ({"GATE_CACHE_DISABLE": "0"}, False),
-        ({"GATE_CACHE_DISABLE": "1"}, True),
-        ({"GATE_CACHE_DISABLE": "yes"}, True),
+        ({}, None),
+        ({"GATE_CACHE_DISABLE": ""}, None),
+        ({"GATE_CACHE_DISABLE": "0"}, None),
+        ({"GATE_CACHE_DISABLE": "1"}, DISABLE_REASON),
+        ({"GATE_CACHE_DISABLE": "yes"}, DISABLE_REASON),
+        ({"GATE_CACHE_DISABLE": "false"}, None),
+        ({"GATE_CACHE_DISABLE": " False "}, None),
+        ({"GATE_CACHE_DISABLE": " 0 "}, None),
+        ({"GATE_CACHE_DISABLE": "  "}, None),
+        ({"CI": "true"}, CI_REASON),
+        ({"CI": "1"}, CI_REASON),
+        ({"CI": "True"}, CI_REASON),
+        ({"CI": "woodpecker"}, CI_REASON),
+        ({"CI": ""}, None),
+        ({"CI": "0"}, None),
+        ({"CI": "false"}, None),
+        ({"CI": " FALSE "}, None),
+        ({"CI": "true", "GATE_CACHE_DISABLE": "0"}, None),
+        ({"CI": "true", "GATE_CACHE_DISABLE": "false"}, None),
+        ({"CI": "true", "GATE_CACHE_DISABLE": "  "}, CI_REASON),
+        ({"CI": "true", "GATE_CACHE_DISABLE": ""}, CI_REASON),
+        ({"CI": "true", "GATE_CACHE_DISABLE": "1"}, DISABLE_REASON),
+        ({"CI": "false", "GATE_CACHE_DISABLE": "1"}, DISABLE_REASON),
     ],
 )
-def test_cache_disabled_values(environ: dict[str, str], expected: bool) -> None:
-    """Any non-empty value other than 0 disables caching."""
-    assert cache_disabled(environ) is expected
+def test_disabled_reason_values(environ: dict[str, str], expected: str | None) -> None:
+    """Verify GATE_CACHE_DISABLE decides when set, and CI decides otherwise, by one rule."""
+    assert disabled_reason(environ) == expected
+
+
+def test_ci_env_always_runs_and_writes_nothing(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify a truthy CI bypasses the cache and names the override."""
+    monkeypatch.setenv("CI", "true")
+    run_gate(NAME, counter.argv())
+    run_gate(NAME, counter.argv())
+    assert counter.count == 2
+    assert markers(git_repo) == []
+    assert f"gate-cache: {CI_REASON}, running without cache" in capfd.readouterr().err
+
+
+def test_disable_zero_keeps_caching_in_ci(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify GATE_CACHE_DISABLE=0 keeps caching on when CI is set."""
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("GATE_CACHE_DISABLE", "0")
+    run_gate(NAME, counter.argv())
+    run_gate(NAME, counter.argv())
+    assert counter.count == 1
+
+
+def test_status_when_disabled_by_ci(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status names CI as the reason caching is off."""
+    monkeypatch.setenv("CI", "true")
+    assert gate_status(NAME) == 1
+    assert CI_REASON in capfd.readouterr().err
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
