@@ -248,6 +248,89 @@ def test_ctrl_c_while_parsing_exits_130_quietly(
     def interrupt(_tokens: list[str]) -> int:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "app", interrupt)
+    monkeypatch.setattr(cli, "_dispatch", interrupt)
     assert invoke(monkeypatch, "--name", "x", "--", "true") == 130
     assert "Traceback" not in capfd.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--name", "a", "--name", "b", "--", "true"],
+        ["--name=a", "--name", "b", "--", "true"],
+        ["status", "--name", "a", "--name", "b"],
+    ],
+)
+def test_repeated_name_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    """Verify a second --name is rejected instead of silently replacing the first."""
+    run_gate = MagicMock(return_value=0)
+    status = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    monkeypatch.setattr(cli, "gate_status", status)
+    assert invoke(monkeypatch, *args) == 2
+    run_gate.assert_not_called()
+    status.assert_not_called()
+    assert "--name given more than once" in capfd.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["status", "--help"], ["gate-cache status", "--name", "--json", "list the gates"]),
+        (["status", "-h"], ["gate-cache status", "--json"]),
+        (["clear", "--help"], ["gate-cache clear", "Delete every recorded pass"]),
+        (["-h"], ["status", "clear", "GATE_CACHE_DISABLE"]),
+    ],
+)
+def test_help_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+    expected: list[str],
+) -> None:
+    """Verify -h and --help describe the top level and each subcommand, then exit 0."""
+    assert invoke(monkeypatch, *args) == 0
+    out = capfd.readouterr().out
+    for text in expected:
+        assert text in out
+
+
+@pytest.mark.parametrize("args", [["status", "--bogus"], ["clear", "extra"], ["status", "--name"]])
+def test_subcommand_bad_arguments_are_usage_errors(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    """Verify malformed subcommand arguments exit 2 with the subcommand's usage."""
+    status = MagicMock(return_value=0)
+    clear = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "gate_status", status)
+    monkeypatch.setattr(cli, "clear_cache", clear)
+    assert invoke(monkeypatch, *args) == 2
+    status.assert_not_called()
+    clear.assert_not_called()
+    assert f"gate-cache {args[0]}" in capfd.readouterr().err
+
+
+def test_no_arguments_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a bare gate-cache asks for -- and exits 2."""
+    assert invoke(monkeypatch) == 2
+    assert "put -- before the command" in capfd.readouterr().err
+
+
+def test_name_starting_with_dash_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify a --name value that looks like an option is still taken as the name."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, "--name", "-x", "--", "echo", "hi") == 0
+    run_gate.assert_called_once_with("-x", ["echo", "hi"])
+
+
+def test_later_double_dash_reaches_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify only the first -- separates, so the command keeps its own --."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, "--name", "x", "--", "uv", "run", "--", "pytest") == 0
+    run_gate.assert_called_once_with("x", ["uv", "run", "--", "pytest"])
