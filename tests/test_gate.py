@@ -675,3 +675,34 @@ def test_status_without_name_when_git_dir_unknown(
     out = capfd.readouterr().out
     assert "could not locate git directory" in out
     assert "No gates match" not in out
+
+
+def test_hook_in_worktree_subdirectory_skips_second_run(
+    git_repo: Path, tmp_path: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a hook-style run from a module directory of a linked worktree hits the cache."""
+    (git_repo / "api").mkdir()
+    (git_repo / "api" / "app.py").write_text("x = 1\n")
+    git("add", "api/app.py", cwd=git_repo)
+    git("commit", "-q", "-m", "add module", cwd=git_repo)
+    worktree = tmp_path / "wt"
+    git("worktree", "add", "-q", "--detach", str(worktree), cwd=git_repo)
+    monkeypatch.setenv("GIT_DIR", git("rev-parse", "--absolute-git-dir", cwd=worktree))
+    monkeypatch.chdir(worktree / "api")
+    assert run_gate(NAME, counter.argv()) == 0
+    assert run_gate(NAME, counter.argv()) == 0
+    assert counter.count == 1
+
+
+def test_derived_work_tree_is_not_passed_to_the_command(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify gate-cache leaves the wrapped command's environment unchanged."""
+    worktree = tmp_path / "wt"
+    git("worktree", "add", "-q", "--detach", str(worktree), cwd=git_repo)
+    monkeypatch.setenv("GIT_DIR", git("rev-parse", "--absolute-git-dir", cwd=worktree))
+    monkeypatch.chdir(worktree)
+    seen = tmp_path / "seen.txt"
+    probe = f"import os; open({str(seen)!r}, 'w').write(os.environ.get('GIT_WORK_TREE', 'unset'))"
+    assert run_gate(NAME, [sys.executable, "-c", probe]) == 0
+    assert seen.read_text() == "unset"

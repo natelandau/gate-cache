@@ -278,3 +278,81 @@ def test_unknown_work_tree_root_is_unknown(git_repo: Path, monkeypatch: pytest.M
     """Inside the git directory there is no work tree to probe, so the tree is unknown."""
     monkeypatch.chdir(git_repo / ".git")
     assert take_snapshot().known is False
+
+
+def _repo_with_module(git_repo: Path) -> Path:
+    """Commit a tracked file in a module subdirectory and return that subdirectory."""
+    module = git_repo / "api"
+    module.mkdir()
+    (module / "app.py").write_text("x = 1\n")
+    git("add", "api/app.py", cwd=git_repo)
+    git("commit", "-q", "-m", "add module", cwd=git_repo)
+    return module
+
+
+@pytest.mark.parametrize("linked", [False, True], ids=["main-checkout", "linked-worktree"])
+def test_hook_git_dir_from_subdirectory_is_known(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, linked: bool
+) -> None:
+    """Verify GIT_DIR without GIT_WORK_TREE, as git sets for hooks, still finds the tree."""
+    _repo_with_module(git_repo)
+    root = git_repo
+    if linked:
+        root = tmp_path / "wt"
+        git("worktree", "add", "-q", "--detach", str(root), cwd=git_repo)
+    expected = take_snapshot(root).tree
+    git_dir = git("rev-parse", "--absolute-git-dir", cwd=root)
+    monkeypatch.setenv("GIT_DIR", git_dir)
+    monkeypatch.chdir(root / "api")
+    snapshot = take_snapshot()
+    assert snapshot.reason is None
+    assert snapshot.tree == expected
+
+
+def test_hook_git_dir_still_sees_real_changes(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify the derived work tree still reports unstaged edits elsewhere in the repo."""
+    _repo_with_module(git_repo)
+    root = tmp_path / "wt"
+    git("worktree", "add", "-q", "--detach", str(root), cwd=git_repo)
+    (root / "a.txt").write_text("edited\n")
+    monkeypatch.setenv("GIT_DIR", git("rev-parse", "--absolute-git-dir", cwd=root))
+    monkeypatch.chdir(root / "api")
+    assert take_snapshot().reason == "unstaged changes to tracked files"
+
+
+def test_explicit_git_work_tree_is_respected(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify an explicit GIT_WORK_TREE is used as given."""
+    module = _repo_with_module(git_repo)
+    expected = take_snapshot(git_repo).tree
+    monkeypatch.setenv("GIT_DIR", str(git_repo / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(git_repo))
+    monkeypatch.chdir(module)
+    assert take_snapshot().tree == expected
+
+
+def test_core_worktree_config_is_left_to_git(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a configured core.worktree is honored instead of a derived work tree."""
+    module = _repo_with_module(git_repo)
+    expected = take_snapshot(git_repo).tree
+    git("config", "core.worktree", str(git_repo), cwd=git_repo)
+    monkeypatch.setenv("GIT_DIR", str(git_repo / ".git"))
+    monkeypatch.chdir(module)
+    assert take_snapshot().tree == expected
+
+
+def test_unreadable_git_dir_falls_back_to_inherited_env(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify an error while deriving the work tree leaves git's own behavior in place."""
+
+    def unreadable(_cwd: Path | None) -> Path:
+        raise PermissionError
+
+    monkeypatch.setattr("gate_cache.snapshot._hook_work_tree", unreadable)
+    assert take_snapshot().known

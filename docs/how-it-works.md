@@ -20,6 +20,8 @@ Every uncertain case runs the command. gate-cache can run a command that it did 
 
 At commit time, prek and pre-commit stash unstaged edits, so the tree is the staged content that you commit. At push time with a clean checkout, the tree is the tree of `HEAD`.
 
+Git gives hooks `GIT_DIR` without `GIT_WORK_TREE`, and then treats the current directory as the top of the work tree. When the hook runs from a subdirectory, such as a module recipe, gate-cache finds the real work tree from `GIT_DIR` for its own git commands. The wrapped command gets the environment unchanged.
+
 A command that exits 0 but changes the tree does not get a marker. Examples are a formatter that rewrites files and a command that leaves new untracked files. In this case, gate-cache prints `files changed during the run, not recording pass`.
 
 ## Arguments and exit codes

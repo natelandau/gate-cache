@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,29 +28,65 @@ class Snapshot:
         return self.tree is not None
 
 
-def _work_tree_root(cwd: Path | None) -> Path | None:
+def _hook_work_tree(cwd: Path | None) -> Path | None:
+    """Return the work tree that a GIT_DIR without GIT_WORK_TREE belongs to, if derivable.
+
+    Git hands hooks GIT_DIR alone, and then takes the current directory for the top of the
+    work tree. A hook that changes into a subdirectory would see every other file as changed.
+    """
+    git_dir = os.environ.get("GIT_DIR")
+    if not git_dir or os.environ.get("GIT_WORK_TREE"):
+        return None
+    if run_git("config", "--get", "core.worktree", cwd=cwd, check=False).stdout.strip():
+        return None
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    path = (base / git_dir).resolve()
+    # A linked worktree's git dir holds a `gitdir` file naming `<work tree>/.git`.
+    gitdir_file = path / "gitdir"
+    if gitdir_file.is_file():
+        target = Path(gitdir_file.read_text(encoding="utf-8").strip())
+        return (path / target).resolve().parent
+    if path.name == ".git":
+        return path.parent
+    return None
+
+
+def _git_env(cwd: Path | None) -> dict[str, str] | None:
+    """Return an environment for gate-cache's own git probes, or None to inherit as is."""
+    try:
+        work_tree = _hook_work_tree(cwd)
+    except OSError:
+        return None
+    if work_tree is None:
+        return None
+    return {**os.environ, "GIT_WORK_TREE": str(work_tree)}
+
+
+def _work_tree_root(cwd: Path | None, env: dict[str, str] | None) -> Path | None:
     """Return the absolute top of the work tree, or None when there is none."""
-    result = run_git("rev-parse", "--show-toplevel", cwd=cwd, check=False)
+    result = run_git("rev-parse", "--show-toplevel", cwd=cwd, env=env, check=False)
     output = result.stdout.strip()
     if result.returncode != 0 or not output or "\n" in output:
         return None
     return Path(output)
 
 
-def _unknown_reason(cwd: Path | None) -> str | None:
+def _unknown_reason(cwd: Path | None, env: dict[str, str] | None) -> str | None:
     """Return why the working copy cannot be described by one tree, or None if it can."""
-    if run_git("rev-parse", "--git-dir", cwd=cwd, check=False).returncode != 0:
+    if run_git("rev-parse", "--git-dir", cwd=cwd, env=env, check=False).returncode != 0:
         return "not a git repository"
     # ls-files only lists paths under its cwd. Probing from the top avoids the `:/` pathspec,
     # which GIT_LITERAL_PATHSPECS turns into a literal path that matches nothing.
-    root = _work_tree_root(cwd)
+    root = _work_tree_root(cwd, env)
     if root is None:
         return "could not locate work tree"
-    if run_git("ls-files", "--unmerged", cwd=root).stdout:
+    if run_git("ls-files", "--unmerged", cwd=root, env=env).stdout:
         return "unmerged index"
-    if run_git("diff", "--quiet", cwd=root, okay_codes=(0, 1)).returncode != 0:
+    if run_git("diff", "--quiet", cwd=root, env=env, okay_codes=(0, 1)).returncode != 0:
         return "unstaged changes to tracked files"
-    untracked = run_git("ls-files", "--others", "--exclude-standard", "-z", cwd=root).stdout
+    untracked = run_git(
+        "ls-files", "--others", "--exclude-standard", "-z", cwd=root, env=env
+    ).stdout
     if untracked:
         return f"untracked file: {untracked.split(chr(0))[0]}"
     return None
@@ -69,7 +106,8 @@ def take_snapshot(cwd: Path | None = None) -> Snapshot:
         A Snapshot holding the tree hash, or the reason it is unknown.
     """
     try:
-        reason = _unknown_reason(cwd)
+        env = _git_env(cwd)
+        reason = _unknown_reason(cwd, env)
     except ShellCommandNotFoundError:
         return Snapshot(tree=None, reason="git not found")
     except (ShellCommandError, UnicodeDecodeError):
@@ -78,7 +116,7 @@ def take_snapshot(cwd: Path | None = None) -> Snapshot:
         return Snapshot(tree=None, reason=reason)
 
     try:
-        tree = run_git("write-tree", cwd=cwd).stdout
+        tree = run_git("write-tree", cwd=cwd, env=env).stdout
     except (ShellCommandError, UnicodeDecodeError):
         return Snapshot(tree=None, reason="could not compute tree")
     return Snapshot(tree=tree, reason=None)
