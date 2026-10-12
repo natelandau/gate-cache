@@ -1,0 +1,9 @@
+---
+- id: gate-cache
+  name: gate-cache
+  description: Skip a gate that already passed on this exact tree.
+  entry: gate-cache
+  language: python
+  pass_filenames: false
+  minimum_pre_commit_version: "3.2.0"
+  stages: [pre-commit, pre-push, manual]
