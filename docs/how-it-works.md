@@ -37,7 +37,7 @@ A command that exits 0 but changes the tree does not get a marker. Examples are 
 
 Both `--name` and `--` are required, and only `--name` can come before `--`. gate-cache passes everything after `--` to the command without changes.
 
-The name alone identifies the command. A recipe such as `test *args` that passes extra arguments to the wrapped command runs every variant under the same name, so a pass with `-k unit` writes the same marker as a pass of the full suite.
+The name alone identifies the command. A recipe such as `test *args` that passes extra arguments to the wrapped command runs every variant under the same name, so a pass with `-k unit` writes the same marker as a pass of the full suite. To give each set of arguments its own markers, put the arguments in the name, as the README section [Recipes with arguments](../README.md#recipes-with-arguments) shows.
 
 | Situation                                                   | Exit code                    |
 | ----------------------------------------------------------- | ---------------------------- |
@@ -84,7 +84,7 @@ A marker covers the name and the tree, and nothing else. The tree holds the cont
 - Changes to the executable bit when `core.fileMode=false` is set.
 - Differences that a clean filter removes before git hashes a file, such as line endings with `core.autocrlf` or the content behind a Git LFS pointer when the pointer does not change.
 
-A change to one of these leaves the tree the same, so an existing marker still matches and gate-cache skips the command. A fresh run after such a change can give a different result. A CI runner that starts from a fresh clone has no markers and runs every command. A runner that keeps the `.git` directory between jobs also keeps the markers. If `CI` is on and `GATE_CACHE_DISABLE` is not set, gate-cache does not use them. `gate-cache clear` deletes the markers, and `GATE_CACHE_DISABLE=1` runs every command without the cache.
+A change to one of these leaves the tree the same, so an existing marker still matches and gate-cache skips the command. A fresh run after such a change can give a different result. A CI runner that starts from a fresh clone has no markers and runs every command. A runner that keeps the `.git` directory between jobs also keeps the markers. If `CI` is on and `GATE_CACHE_DISABLE` is not set, gate-cache does not use them. `gate-cache clear` deletes the markers, and `GATE_CACHE_DISABLE=1` runs every command without the cache. To make a gate depend on an ignored file, an environment variable, or a tool version, put its value in the gate name, as the README section [Inputs that git does not track](../README.md#inputs-that-git-does-not-track) shows.
 
 A marker also does not cover the commit message, the branch name, or anything on a remote. gate-cache decides only about the command that it wraps, and it never skips other hooks.
 

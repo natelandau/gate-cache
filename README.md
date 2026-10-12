@@ -83,19 +83,32 @@ After `just test` passes, the next `just test` on the same content skips pytest.
 
 ### Recipes with arguments
 
-gate-cache identifies a command by its name alone, not by its arguments. If `just test -k unit` and `just test` ran under the same name, a pass of the unit tests would also skip the full suite. Giving each set of arguments its own name, or caching only the bare form, keeps the two apart.
-
-This recipe caches `just test` and runs `just test -k unit` without the cache:
+gate-cache identifies a command by its name alone, not by its arguments. If `just test -k unit` and `just test` ran under the same name, a pass of the unit tests would also skip the full suite. To keep them apart, put the arguments in the name:
 
 ```just
 test *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ -z "{{ args }}" ]]; then
-        exec gate-cache --name test -- uv run pytest
-    fi
-    exec uv run pytest {{ args }}
+    gate-cache --name "{{ trim('test ' + args) }}" -- uv run pytest {{ args }}
 ```
+
+`just test` runs under the name `test`, and `just test -k unit` runs under the name `test -k unit`. Each set of arguments has its own markers. `trim` removes the trailing space when there are no arguments, so `gate-cache status --name test` finds the bare form.
+
+### Inputs that git does not track
+
+A marker does not cover ignored files, environment variables, or tool versions. To make a gate depend on one of these inputs, put its value in the name. When the value changes, the name changes, so no marker matches and the command runs again:
+
+```just
+# Run again when the uv version changes
+test:
+    gate-cache --name "test-uv$(uv --version | cut -d' ' -f2)" -- uv run pytest
+
+# Run again when the ignored .env file changes
+integration:
+    gate-cache --name "integration-$(git hash-object .env)" -- uv run pytest tests/integration
+```
+
+`git hash-object` prints a hash of the file, so the name does not hold the secrets in `.env`. Do not put a secret value in a name, because the marker and `gate-cache status` record the name as plain text.
+
+The shell of the recipe expands `$(...)` before gate-cache starts. A hook `entry` or `args` list does not go through a shell, so put the command in a recipe and call the recipe from the hook. To look up the gate with `gate-cache status --name`, give the expanded name, such as `test-uv0.13.0`.
 
 ### Makefile
 
@@ -190,7 +203,7 @@ $ gate-cache status --json
 
 ## Start fresh
 
-A marker records only the content of the files that git does not ignore. A new tool version, a changed environment variable, or a change to a service does not change that content, so the old markers still match.
+A marker records only the content of the files that git does not ignore. A new tool version, a changed environment variable, or a change to a service does not change that content, so the old markers still match. To make a gate run again when one of these inputs changes, put the input in the name, as [Inputs that git does not track](#inputs-that-git-does-not-track) shows.
 
 `gate-cache clear` deletes every marker for the repository, and the records of missed runs:
 

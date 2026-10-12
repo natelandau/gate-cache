@@ -17,13 +17,14 @@ _SUBCOMMANDS = {"status", "clear"}
 _INFO_FLAGS = {"-h", "--help", "--version"}
 
 _HELP = """\
-Skip a lint or test command that already passed on the same git tree. gate-cache runs
-the command, records a pass keyed on the git tree of the working copy (tracked and
-untracked, non-ignored files), and skips the command next time the tree is identical.
-A pass on uncommitted work therefore skips when the same content is committed.
+Skip a lint or test command that already passed on the same git tree. gate-cache
+runs the command, records a pass keyed on the git tree of the working copy
+(tracked and untracked, non-ignored files), and skips the command next time the
+tree is identical. A pass on uncommitted work therefore skips when the same
+content is committed.
 
-Both --name and -- are required, and only --name may come before --. Everything after
--- is the command, verbatim.
+Both --name and -- are required, and only --name may come before --. Everything
+after -- is the command, verbatim.
 
 Exit codes:
   run     the command's own exit code, or 0 when a recorded pass lets it skip.
@@ -39,11 +40,16 @@ same way.
 Set GATE_CACHE_MAX_AGE_DAYS to a positive whole number to change how many days a
 recorded pass lasts (default 30).
 
-Only file content is keyed. Never wrap checks that depend on anything else,
-such as commit-message or branch-name checks.
+Only the name and the file content are keyed. To also key on recipe arguments,
+an ignored file, an environment variable, or a tool version, put its value in
+--name. A changed value gives a new name, so the command runs again. Never put a
+secret in a name, because markers and status store it as plain text. Never wrap
+checks that depend on the commit message or the branch name.
 
 Typical use:
   gate-cache --name pytest -- uv run pytest -x
+  gate-cache --name "pytest -k unit" -- uv run pytest -k unit
+  gate-cache --name "test-$(git hash-object .env)" -- uv run pytest
 """
 
 app = App(
@@ -83,6 +89,7 @@ def run(
         The command and its arguments, given after `--`. Example: -- uv run pytest -x
     name
         Gate name. Records match only when the name and the tree both match.
+        Include arguments or other inputs that the tree does not cover.
     """
     if not command:
         say("no command given after --")
