@@ -1,5 +1,6 @@
 """Tests for the command line interface."""
 
+import shlex
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -33,12 +34,54 @@ def test_run_requires_double_dash(
     assert "--" in capfd.readouterr().err
 
 
-def test_run_requires_name(
+def test_run_without_name_keys_on_the_command(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without --name, a rerun of the same command skips and other arguments run again."""
+    assert invoke(monkeypatch, "--", *counter.argv()) == 0
+    assert invoke(monkeypatch, "--", *counter.argv()) == 0
+    assert counter.count == 1
+
+    assert invoke(monkeypatch, "--", *counter.argv(touch=tmp_path / "elsewhere.txt")) == 0
+    assert counter.count == 2
+
+
+def test_status_finds_a_pass_recorded_under_the_default_name(
     git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A run without --name is a usage error."""
-    assert invoke(monkeypatch, "--", *counter.argv()) != 0
+    """Verify status --name with the quoted command reports a pass recorded without --name."""
+    assert invoke(monkeypatch, "--", *counter.argv()) == 0
+    assert invoke(monkeypatch, "status", "--name", shlex.join(counter.argv())) == 0
+
+
+def test_run_rejects_empty_name(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """An empty --name, such as an unset shell variable, is a usage error and nothing runs."""
+    assert invoke(monkeypatch, "--name", "", "--", *counter.argv()) == 2
     assert counter.count == 0
+    assert "--name needs a value" in capfd.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("command", "name"),
+    [
+        (["pytest", "a b"], "pytest 'a b'"),
+        (["pytest", "a", "b"], "pytest a b"),
+        (["status"], "status"),
+    ],
+)
+def test_run_without_name_uses_quoted_command(
+    monkeypatch: pytest.MonkeyPatch, command: list[str], name: str
+) -> None:
+    """The default name quotes arguments, so differently split commands never share a name."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, "--", *command) == 0
+    run_gate.assert_called_once_with(name, command)
 
 
 def test_empty_command_is_usage_error(
@@ -120,6 +163,7 @@ def test_help_is_self_describing(
         "status",
         "clear",
         "gate-cache --name pytest -- ",
+        "gate-cache -- uv run pytest",
     ):
         assert text in out
     flat = " ".join(out.split())

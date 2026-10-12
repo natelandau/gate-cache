@@ -4,14 +4,14 @@ Skip a command that already passed on the same code.
 
 A lint or test command often runs many times on code that did not change. It runs when you finish the work, in a pre-commit hook, after a rebase that changed nothing, and in a pre-push hook. When an agent works in the repository, it runs the same command again. If the command takes minutes, the repeat runs take most of the time between finished code and a pushed branch.
 
-gate-cache remembers which commands passed on which code. It wraps a command and gives it a name. When the command passes, gate-cache writes a marker for that name and for the exact content of the files in the working copy that git does not ignore. The next time the same name runs on the same content, gate-cache finds the marker, skips the command, and exits 0 at once.
+gate-cache remembers which commands passed on which code. It wraps a command, and the command line is the name of the gate. When the command passes, gate-cache writes a marker for that name and for the exact content of the files in the working copy that git does not ignore. The next time the same name runs on the same content, gate-cache finds the marker, skips the command, and exits 0 at once.
 
 ```console
-$ gate-cache --name pytest -- uv run pytest
+$ gate-cache -- uv run pytest
 ============================= 412 passed in 94.20s =============================
 
-$ gate-cache --name pytest -- uv run pytest
-gate-cache: pytest already passed on tree aaff74984ccc, skipping
+$ gate-cache -- uv run pytest
+gate-cache: uv run pytest already passed on tree aaff74984ccc, skipping
 ```
 
 A change to any file that git does not ignore changes the content, so no marker matches and the command runs again. A CI runner that starts from a fresh clone has no markers, so it runs every command.
@@ -28,14 +28,22 @@ The prek and pre-commit hooks install gate-cache themselves, so the hooks work w
 
 ## Run a command through gate-cache
 
-The name goes after `--name`, and the command goes after `--`:
+The command goes after `--`:
+
+```sh
+gate-cache -- uv run pytest
+gate-cache -- uv run ruff check .
+```
+
+The command and its arguments are the name of the gate. Each name has its own markers, so a pass of `uv run pytest -k unit` never skips `uv run pytest`.
+
+To choose the name yourself, put `--name` before `--`:
 
 ```sh
 gate-cache --name pytest -- uv run pytest
-gate-cache --name ruff -- uv run ruff check .
 ```
 
-Each name has its own markers. A command run under one name never skips because of a marker for another name.
+With `--name`, the name alone identifies the gate, and the arguments of the command are not part of it. Give a name when two different command lines do the same check and must share markers, or when a gate depends on [inputs that git does not track](#inputs-that-git-does-not-track).
 
 gate-cache exits with the exit code of the command, or with 0 when it skips the command. It writes a marker only when the command passes, so a command that failed runs again the next time.
 
@@ -52,18 +60,18 @@ repos:
     hooks:
       - id: gate-cache
         name: pytest
-        args: [--name, pytest, --, uv, run, pytest]
+        args: [--, uv, run, pytest]
         files: ^(src/|tests/)
       - id: gate-cache
         name: ruff
-        args: [--name, ruff, --, uv, run, ruff, check, .]
+        args: [--, uv, run, ruff, check, .]
 ```
 
 The hook runs at commit time and at push time. At commit time, gate-cache matches the content that you commit.
 
 The hook runs in its own virtual environment, and the wrapped command inherits that environment. A command started with `uv run`, or a project command such as `just test`, runs in the project environment. `uv run` prints a warning that `VIRTUAL_ENV` does not match the project. The warning has no effect on the run.
 
-Hooks, agents, and your terminal all read and write the same markers. When one of them runs `gate-cache --name pytest -- uv run pytest` and it passes, the others skip that name on the same content.
+Hooks, agents, and your terminal all read and write the same markers. When one of them runs `gate-cache -- uv run pytest` and it passes, the others skip `uv run pytest` on the same content.
 
 ## Examples
 
@@ -73,24 +81,26 @@ These examples show gate-cache inside the task runner of a project. When a recip
 
 ```just
 test:
-    gate-cache --name test -- uv run pytest
+    gate-cache -- uv run pytest
 
 lint:
-    gate-cache --name lint -- uv run ruff check .
+    gate-cache -- uv run ruff check .
 ```
 
 After `just test` passes, the next `just test` on the same content skips pytest.
 
 ### Recipes with arguments
 
-gate-cache identifies a command by its name alone, not by its arguments. If `just test -k unit` and `just test` ran under the same name, a pass of the unit tests would also skip the full suite. To keep them apart, put the arguments in the name:
+A recipe that passes its arguments to the command needs no `--name`. Each set of arguments gives a different command line, so each set has its own markers:
 
 ```just
 test *args:
-    gate-cache --name "{{ trim('test ' + args) }}" -- uv run pytest {{ args }}
+    gate-cache -- uv run pytest {{ args }}
 ```
 
-`just test` runs under the name `test`, and `just test -k unit` runs under the name `test -k unit`. Each set of arguments has its own markers. `trim` removes the trailing space when there are no arguments, so `gate-cache status --name test` finds the bare form.
+`just test` runs under the name `uv run pytest`, and `just test -k unit` runs under the name `uv run pytest -k unit`. A pass of the unit tests never skips the full suite.
+
+If the recipe gives `--name`, the arguments are not part of the name. Put them in the name, or a pass of `just test -k unit` also skips `just test`.
 
 ### Inputs that git does not track
 
@@ -106,7 +116,7 @@ integration:
     gate-cache --name "integration-$(git hash-object .env)" -- uv run pytest tests/integration
 ```
 
-`git hash-object` prints a hash of the file, so the name does not hold the secrets in `.env`. Do not put a secret value in a name, because the marker and `gate-cache status` record the name as plain text.
+`git hash-object` prints a hash of the file, so the name does not hold the secrets in `.env`. Do not put a secret value in a name, because the marker and `gate-cache status` record the name as plain text. Without `--name`, the command line is the name, so give `--name` to a command that takes a secret as an argument.
 
 The shell of the recipe expands `$(...)` before gate-cache starts. A hook `entry` or `args` list does not go through a shell, so put the command in a recipe and call the recipe from the hook. To look up the gate with `gate-cache status --name`, give the expanded name, such as `test-uv0.13.0`.
 
@@ -114,10 +124,10 @@ The shell of the recipe expands `$(...)` before gate-cache starts. A hook `entry
 
 ```make
 test:
-	gate-cache --name test -- uv run pytest
+	gate-cache -- uv run pytest
 
 lint:
-	gate-cache --name lint -- uv run ruff check .
+	gate-cache -- uv run ruff check .
 ```
 
 ### A hook that calls the recipe
@@ -163,17 +173,17 @@ GATE_CACHE_DISABLE=1 just test
 ```console
 $ gate-cache status
   tree:   aaff74984cccd156a469afa7d9ab10e4777beb24
-  passed: pytest
-  missed: ruff (exit code 1)
+  passed: uv run pytest
+  missed: uv run ruff check . (exit code 1)
 ```
 
 A name is missed when its command failed, or when it exited 0 but changed the files. A later pass of the same name removes it from the `missed` line.
 
-With `--name`, it reports on one name:
+With `--name`, it reports on one name. For a gate that ran without `--name`, give the command line as the name:
 
 ```console
-$ gate-cache status --name ruff
-  name:     ruff
+$ gate-cache status --name "uv run ruff check ."
+  name:     uv run ruff check .
   tree:     aaff74984cccd156a469afa7d9ab10e4777beb24
   marker:   /path/to/repo/.git/gate-cache/7d94ca2f57ec0a77f60d328fb405d339fb0c2a645991b97c042ac54403104e9e
   result:   miss
@@ -192,9 +202,9 @@ $ gate-cache status --json
   "enabled": true,
   "tree": "aaff74984cccd156a469afa7d9ab10e4777beb24",
   "reason": null,
-  "passed": ["pytest"],
+  "passed": ["uv run pytest"],
   "missed": [
-    {"name": "ruff", "exit_code": 1, "reason": "exit code 1", "timestamp": "2026-10-12T12:31:55Z"}
+    {"name": "uv run ruff check .", "exit_code": 1, "reason": "exit code 1", "timestamp": "2026-10-12T12:31:55Z"}
   ]
 }
 ```
