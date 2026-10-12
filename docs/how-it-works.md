@@ -35,18 +35,20 @@ A command that exits 0 but changes the tree does not get a marker. Examples are 
 
 ## Arguments and exit codes
 
-Both `--name` and `--` are required, and only `--name` can come before `--`. gate-cache passes everything after `--` to the command without changes.
+`--` is required, and only `--name` can come before it. gate-cache passes everything after `--` to the command without changes.
 
-The name alone identifies the command. A recipe such as `test *args` that passes extra arguments to the wrapped command runs every variant under the same name, so a pass with `-k unit` writes the same marker as a pass of the full suite. To give each set of arguments its own markers, put the arguments in the name, as the README section [Recipes with arguments](../README.md#recipes-with-arguments) shows.
+Without `--name`, the name of the gate is the command and its arguments, joined with spaces and quoted as Python `shlex.join` quotes them. An argument that holds a space or a shell special character gets single quotes, so `pytest 'a b'` and `pytest a b` are different names. Each set of arguments therefore has its own markers.
 
-| Situation                                                   | Exit code                    |
-| ----------------------------------------------------------- | ---------------------------- |
-| The command ran                                             | The exit code of the command |
-| A marker exists, so the command was skipped                 | 0                            |
-| A missing `--name` or `--`, or another argument before `--` | 2, and nothing runs          |
-| The command is not found                                    | 127                          |
-| The command cannot be run                                   | 126                          |
-| A signal stopped the command                                | 128 plus the signal number   |
+With `--name`, the name alone identifies the gate, and the arguments are not part of the key. A recipe such as `test *args` that gives `--name test` runs every variant under the same name, so a pass with `-k unit` writes the same marker as a pass of the full suite. To keep the variants apart, leave out `--name`, or put the arguments in the name.
+
+| Situation                                                                 | Exit code                    |
+| ------------------------------------------------------------------------- | ---------------------------- |
+| The command ran                                                           | The exit code of the command |
+| A marker exists, so the command was skipped                               | 0                            |
+| A missing `--`, a `--name` with no value, or another argument before `--` | 2, and nothing runs          |
+| The command is not found                                                  | 127                          |
+| The command cannot be run                                                 | 126                          |
+| A signal stopped the command                                              | 128 plus the signal number   |
 
 A failing command, a signal, or Ctrl-C never writes a marker. If gate-cache gets `SIGTERM` or `SIGHUP` while the command runs, it sends the signal to the command, waits for the command to stop, and exits with the status of the command. A signal that the shell ignores, for example under `nohup`, stays ignored for the command.
 
@@ -66,7 +68,7 @@ repos:
     hooks:
       - id: pytest
         name: pytest
-        entry: gate-cache --name pytest -- uv run pytest
+        entry: gate-cache -- uv run pytest
         language: system
         pass_filenames: false
 ```
@@ -81,6 +83,7 @@ A marker covers the name and the tree, and nothing else. The tree holds the cont
 - Environment variables.
 - Tool versions that a lockfile does not pin.
 - External services.
+- The working directory. `ruff check .` checks different files in `src/` than at the top of the repository, but both runs have the same tree and the same name. Run such a command from one directory, or give each directory its own `--name`.
 - Changes to the executable bit when `core.fileMode=false` is set.
 - Differences that a clean filter removes before git hashes a file, such as line endings with `core.autocrlf` or the content behind a Git LFS pointer when the pointer does not change.
 
@@ -105,7 +108,7 @@ key    = sha256( tree_hash + "\0" + name )
 marker = $(git rev-parse --git-common-dir)/gate-cache/<key>
 ```
 
-The tree hash is the tree from step 2 of [When gate-cache skips a command](#when-gate-cache-skips-a-command). This shell snippet computes it on a copy of the index, then finds the marker for the `pytest` name:
+The name is the value of `--name`, or the quoted command line when `--name` is not given. The tree hash is the tree from step 2 of [When gate-cache skips a command](#when-gate-cache-skips-a-command). This shell snippet computes it on a copy of the index, then finds the marker for the `pytest` name:
 
 ```bash
 index=$(mktemp)
