@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.3.0 (2026-10-12)
+
+### BREAKING CHANGE
+
+- caching is off when CI is set, unless
+GATE_CACHE_DISABLE is 0 or false. GATE_CACHE_DISABLE now reads empty,
+0, and false (any case, trimmed) as off, so GATE_CACHE_DISABLE=false
+keeps caching on instead of turning it off.
+
+### Feat
+
+- **status**: report missed gates and add --json output
+- **gate**: run uncached when CI is set
+
+### Fix
+
+- **snapshot**: find the work tree when hooks set only GIT_DIR
+
 ## v0.2.0 (2026-10-11)
 
 ### Feat
