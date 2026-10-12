@@ -6,7 +6,11 @@
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
     ]
-    dependencies = ["cyclopts>=5.2.0,<6.0.0", "nclutils>=3.4.4,<4.0.0"]
+    dependencies = [
+        "cyclopts>=5.2.0,<6.0.0",
+        "nclutils>=3.4.4,<4.0.0",
+        "platformdirs>=4.13.0,<5.0.0",
+    ]
     description = "Skip lint and test gates that already passed on the exact same git tree."
     license = { file = "LICENSE" }
     name = "gate-cache"

@@ -15,6 +15,7 @@ from gate_cache.markers import (
     marker_key,
     marker_path,
     miss_path,
+    miss_record,
     missed_records,
     passed_names,
     prune_markers,
@@ -253,3 +254,34 @@ def test_clear_markers_removes_misses_without_counting_them(tmp_path: Path) -> N
     )
     assert clear_markers(tmp_path) == 1
     assert not marker_dir(tmp_path).exists()
+
+
+def test_missed_records_skip_gates_with_contentless_marker(tmp_path: Path) -> None:
+    """Verify a marker without JSON content still supersedes a miss, since it still skips."""
+    write_miss(
+        miss_path(tmp_path, TREE, "ruff"),
+        tree=TREE,
+        name="ruff",
+        command=["x"],
+        exit_code=1,
+        reason="exit code 1",
+    )
+    marker_path(tmp_path, TREE, "ruff").touch()
+    assert missed_records(tmp_path, TREE) == []
+
+
+def test_miss_record_reads_one_gate(tmp_path: Path) -> None:
+    """Verify one gate's miss record is read by name, and a missing one is None."""
+    write_miss(
+        miss_path(tmp_path, TREE, "ruff"),
+        tree=TREE,
+        name="ruff",
+        command=["x"],
+        exit_code=3,
+        reason="exit code 3",
+    )
+    record = miss_record(tmp_path, TREE, "ruff")
+    assert record is not None
+    assert record["exit_code"] == 3
+    assert miss_record(tmp_path, TREE, "pytest") is None
+    assert miss_record(tmp_path, OTHER_TREE, "ruff") is None

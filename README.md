@@ -4,7 +4,7 @@ Skip a command that already passed on the same code.
 
 A lint or test command often runs many times on code that did not change. It runs when you finish the work, in a pre-commit hook, after a rebase that changed nothing, and in a pre-push hook. When an agent works in the repository, it runs the same command again. If the command takes minutes, the repeat runs take most of the time between finished code and a pushed branch.
 
-gate-cache remembers which commands passed on which code. It wraps a command and gives it a name. When the command passes, gate-cache writes a marker for that name and for the exact content of the tracked files. The next time the same name runs on the same content, gate-cache finds the marker, skips the command, and exits 0 at once.
+gate-cache remembers which commands passed on which code. It wraps a command and gives it a name. When the command passes, gate-cache writes a marker for that name and for the exact content of the files in the working copy that git does not ignore. The next time the same name runs on the same content, gate-cache finds the marker, skips the command, and exits 0 at once.
 
 ```console
 $ gate-cache --name pytest -- uv run pytest
@@ -14,7 +14,7 @@ $ gate-cache --name pytest -- uv run pytest
 gate-cache: pytest already passed on tree aaff74984ccc, skipping
 ```
 
-A change to a tracked file changes the content, so no marker matches and the command runs again. A CI runner that starts from a fresh clone has no markers, so it runs every command.
+A change to any file that git does not ignore changes the content, so no marker matches and the command runs again. A CI runner that starts from a fresh clone has no markers, so it runs every command.
 
 ## Install
 
@@ -39,7 +39,7 @@ Each name has its own markers. A command run under one name never skips because 
 
 gate-cache exits with the exit code of the command, or with 0 when it skips the command. It writes a marker only when the command passes, so a command that failed runs again the next time.
 
-When the working copy has uncommitted edits or files that git does not track, the content on disk is not a commit-ready snapshot. gate-cache then runs the command and writes no marker.
+The tree includes uncommitted edits and untracked files that git does not ignore. A gate that passes on uncommitted work therefore skips in the commit hook when you commit the same content. gate-cache computes the tree from a private copy of the index, so it never stages files or changes your index.
 
 ## Run it as a hook
 
@@ -169,7 +169,7 @@ $ gate-cache status --name ruff
 
 The `last run` line shows only when the name ran on this content without a pass.
 
-`status` runs nothing. With `--name`, it exits 0 when a marker matches and 1 when none does. Without `--name`, it exits 0 when at least one name passed. When gate-cache cannot match the content, for example because of uncommitted edits, the `tree` line gives the reason.
+`status` runs nothing. With `--name`, it exits 0 when a marker matches and 1 when none does. Without `--name`, it exits 0 when at least one name passed. When gate-cache cannot match the content, for example during a merge conflict, the `tree` line gives the reason.
 
 With `--json`, `status` writes one JSON object to stdout instead of text. The exit codes do not change:
 
@@ -186,11 +186,11 @@ $ gate-cache status --json
 }
 ```
 
-`reason` tells why gate-cache cannot match the content, and is `null` when it can. When caching is off, `enabled` is `false` and `reason` names the variable. With `--name`, the object has the `name`, `marker`, `result`, and `last_run` keys in place of `passed` and `missed`.
+`reason` tells why gate-cache cannot match the content, and is `null` when it can. When caching is off, `enabled` is `false`, `reason` names the variable, and the other keys are empty or `null`. With `--name`, the object has the `name`, `marker`, `result`, and `last_run` keys in place of `passed` and `missed`.
 
 ## Start fresh
 
-A marker records only the content of the tracked files. A new tool version, a changed environment variable, or a change to a service does not change that content, so the old markers still match.
+A marker records only the content of the files that git does not ignore. A new tool version, a changed environment variable, or a change to a service does not change that content, so the old markers still match.
 
 `gate-cache clear` deletes every marker for the repository, and the records of missed runs:
 

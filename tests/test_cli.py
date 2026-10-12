@@ -123,8 +123,8 @@ def test_help_is_self_describing(
     ):
         assert text in out
     flat = " ".join(out.split())
-    assert "records a pass keyed on the git tree of the tracked files" in flat
-    assert "untracked files the command runs without caching" in flat
+    assert "records a pass keyed on the git tree of the working copy" in flat
+    assert "A pass on uncommitted work therefore skips when the same content is committed" in flat
     assert "If it is empty or not set, CI decides the same way" in flat
     assert "empty-command" not in out
 
