@@ -14,6 +14,7 @@ from gate_cache.markers import (
     marker_dir,
     marker_key,
     marker_path,
+    passed_names,
     prune_markers,
     write_marker,
 )
@@ -175,3 +176,31 @@ def test_write_marker_cleans_up_when_replace_fails(tmp_path, monkeypatch):
     with pytest.raises(OSError, match="Cross-device link"):
         write_marker(path, tree=TREE, name="pytest", command=["pytest"])
     assert list(path.parent.iterdir()) == []
+
+
+OTHER_TREE = "aaff74984cccd156a469afa7d9ab10e4777beb24"
+
+
+def test_passed_names_lists_gates_for_tree(tmp_path: Path) -> None:
+    """Verify only gates recorded for the given tree are listed, sorted by name."""
+    for tree, name in ((TREE, "pytest"), (TREE, "api-lint"), (OTHER_TREE, "ruff")):
+        write_marker(marker_path(tmp_path, tree, name), tree=tree, name=name, command=["x"])
+    assert passed_names(tmp_path, TREE) == ["api-lint", "pytest"]
+
+
+def test_passed_names_skips_unreadable_and_mismatched_files(tmp_path: Path) -> None:
+    """Verify files without matching JSON content are left out instead of failing."""
+    write_marker(marker_path(tmp_path, TREE, "pytest"), tree=TREE, name="pytest", command=["x"])
+    directory = marker_dir(tmp_path)
+    (directory / marker_key(TREE, "touched")).write_text("")
+    (directory / marker_key(TREE, "garbage")).write_text("not json")
+    (directory / marker_key(TREE, "list")).write_text("[1, 2]")
+    (directory / ("f" * 64)).write_text(json.dumps({"tree": TREE, "name": "forged"}))
+    (directory / ".tmp-abc").write_text(json.dumps({"tree": TREE, "name": "partial"}))
+    (directory / "subdir").mkdir()
+    assert passed_names(tmp_path, TREE) == ["pytest"]
+
+
+def test_passed_names_missing_dir_is_empty(tmp_path: Path) -> None:
+    """Verify a repo with no marker directory lists no gates."""
+    assert passed_names(tmp_path, TREE) == []

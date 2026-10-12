@@ -610,3 +610,68 @@ def test_literal_pathspecs_do_not_hide_untracked_files(
     run_gate(NAME, counter.argv())
     assert counter.count == 2
     assert markers(git_repo) == []
+
+
+def test_status_without_name_lists_passed_gates(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status with no name lists every gate that passed on the current tree."""
+    run_gate("pytest", counter.argv())
+    run_gate("api-lint", counter.argv())
+    capfd.readouterr()
+    assert gate_status(None) == 0
+    out = capfd.readouterr().out
+    assert git("write-tree", cwd=git_repo) in out
+    assert re.search(r"gates:\s+api-lint, pytest", out)
+
+
+def test_status_without_name_ignores_other_trees(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify gates that passed on an earlier tree are not listed."""
+    run_gate("pytest", counter.argv())
+    commit_change(git_repo, "changed")
+    capfd.readouterr()
+    assert gate_status(None) == 1
+    out = capfd.readouterr().out
+    assert "No gates match the current tree" in out
+    assert "pytest" not in out
+
+
+def test_status_without_name_and_no_markers(
+    git_repo: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify an empty cache reports that no gates match."""
+    assert gate_status(None) == 1
+    assert "No gates match the current tree" in capfd.readouterr().out
+
+
+def test_status_without_name_reports_unknown_tree(
+    git_repo: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify an unknown tree reports the reason instead of a list."""
+    (git_repo / "new.py").write_text("x")
+    assert gate_status(None) == 1
+    out = capfd.readouterr().out
+    assert "unknown: untracked file: new.py" in out
+    assert "No gates match" not in out
+
+
+def test_status_without_name_when_disabled(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status with no name honors GATE_CACHE_DISABLE."""
+    monkeypatch.setenv("GATE_CACHE_DISABLE", "1")
+    assert gate_status(None) == 1
+    assert "caching disabled" in capfd.readouterr().err
+
+
+def test_status_without_name_when_git_dir_unknown(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify listing reports the missing git directory instead of an empty list."""
+    monkeypatch.setattr("gate_cache.gate.git_common_dir", lambda: None)
+    assert gate_status(None) == 1
+    out = capfd.readouterr().out
+    assert "could not locate git directory" in out
+    assert "No gates match" not in out

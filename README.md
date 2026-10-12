@@ -135,7 +135,9 @@ gate-cache has two commands in addition to the default run. Run `gate-cache --he
 
 ### status
 
-`gate-cache status` reports whether a gate would skip on the current tree. It runs nothing.
+`gate-cache status` reports which gates would skip on the current tree. It runs nothing.
+
+With `--name`, it reports on one gate:
 
 ```console
 $ gate-cache status --name pytest
@@ -145,7 +147,19 @@ $ gate-cache status --name pytest
   result: hit
 ```
 
-If the tree is unknown, the `tree` line gives the reason, such as `unknown: untracked file: notes.txt`. The command exits 0 on a hit and 1 otherwise.
+The command exits 0 on a hit and 1 otherwise.
+
+Without `--name`, it lists every gate that passed on the current tree:
+
+```console
+$ gate-cache status
+  tree:  aaff74984cccd156a469afa7d9ab10e4777beb24
+  gates: api-lint, pytest
+```
+
+The command exits 0 when at least one gate matches. If no gate matches, it prints `No gates match the current tree` and exits 1. The list reads the JSON content of each marker, so it does not show a marker that another tool wrote without that content. Such a marker still makes its gate skip.
+
+In both forms, if the tree is unknown, the `tree` line gives the reason, such as `unknown: untracked file: notes.txt`, and the command exits 1.
 
 ### clear
 

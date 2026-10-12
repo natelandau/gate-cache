@@ -91,6 +91,14 @@ def test_status_and_clear_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     clear.assert_called_once_with()
 
 
+def test_status_without_name_lists_gates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify status with no --name asks for the list of passed gates."""
+    status = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "gate_status", status)
+    assert invoke(monkeypatch, "status") == 0
+    status.assert_called_once_with(None)
+
+
 def test_help_is_self_describing(
     monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:

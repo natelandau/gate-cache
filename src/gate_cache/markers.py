@@ -96,6 +96,45 @@ def write_marker(path: Path, *, tree: str, name: str, command: Sequence[str]) ->
         raise
 
 
+def passed_names(common_dir: Path, tree: str) -> list[str]:
+    """List the gates with a recorded pass on a tree, for reporting what would skip.
+
+    Marker filenames are one-way hashes, so names come from each marker's JSON content.
+    A file whose content is missing, unreadable, or does not hash to its own filename is
+    left out. Markers written by other tools without that content still count for skips
+    but cannot be listed.
+
+    Args:
+        common_dir: Absolute path to the git common directory.
+        tree: Git tree hash to match.
+
+    Returns:
+        Sorted, unique gate names.
+    """
+    names: set[str] = set()
+    try:
+        entries = list(marker_dir(common_dir).iterdir())
+    except OSError:
+        return []
+    for entry in entries:
+        if entry.name.startswith(TEMP_PREFIX):
+            continue
+        try:
+            data = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = data.get("name")
+        if (
+            data.get("tree") == tree
+            and isinstance(name, str)
+            and marker_key(tree, name) == entry.name
+        ):
+            names.add(name)
+    return sorted(names)
+
+
 def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None = None) -> None:
     """Delete markers older than the cutoff, ignoring every filesystem error.
 

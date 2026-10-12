@@ -29,7 +29,8 @@ Both --name and -- are required, and only --name may come before --. Everything 
 Exit codes:
   run     the command's own exit code, or 0 when a recorded pass lets it skip.
           Usage errors exit 2.
-  status  0 when a recorded pass exists for the current tree, 1 otherwise.
+  status  0 when the named gate, or any gate without --name, passed on the
+          current tree. 1 otherwise.
   clear   0 on success, 1 on failure.
 
 Set GATE_CACHE_DISABLE to any non-empty value other than 0 to always run the command.
@@ -50,7 +51,7 @@ app = App(
     help_format="plaintext",
     usage=(
         "Usage: gate-cache --name NAME -- COMMAND [ARGS...]\n"
-        "       gate-cache status --name NAME\n"
+        "       gate-cache status [--name NAME]\n"
         "       gate-cache clear"
     ),
     result_action="return_int_as_exit_code_else_zero",
@@ -88,16 +89,19 @@ def run(
 
 
 @app.command
-def status(*, name: str) -> int:
-    """Report whether the gate would skip, without running anything.
+def status(*, name: str | None = None) -> int:
+    """Report whether gates would skip, without running anything.
 
-    Prints the current tree hash (or why it is unknown), the marker path, and hit or
-    miss to stdout. Exits 0 on a hit, 1 otherwise.
+    With --name, print the tree hash (or why it is unknown), the marker path,
+    and hit or miss. Exit 0 on a hit, 1 otherwise.
+
+    Without --name, list every gate that passed on the current tree.
+    Exit 0 when at least one gate matches, 1 otherwise.
 
     Parameters
     ----------
     name
-        Gate name to look up.
+        Gate name to look up. Omit it to list every gate that passed on this tree.
     """
     return gate_status(name)
 

@@ -8,9 +8,15 @@ from typing import TYPE_CHECKING
 from nclutils import pp
 
 from gate_cache.console import say
-from gate_cache.markers import clear_markers, marker_path, prune_markers, write_marker
+from gate_cache.markers import (
+    clear_markers,
+    marker_path,
+    passed_names,
+    prune_markers,
+    write_marker,
+)
 from gate_cache.runner import run_child
-from gate_cache.snapshot import git_common_dir, take_snapshot
+from gate_cache.snapshot import Snapshot, git_common_dir, take_snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -137,20 +143,25 @@ def run_gate(name: str, command: Sequence[str]) -> int:
     return result.exit_code
 
 
-def gate_status(name: str) -> int:
-    """Print whether a gate would skip, without running anything.
+def gate_status(name: str | None = None) -> int:
+    """Print whether a gate would skip, or list every gate that would, without running.
 
     Args:
-        name: Gate name to look up.
+        name: Gate name to look up. When None, list every gate with a recorded pass on
+            the current tree.
 
     Returns:
-        0 when a recorded pass exists for the current tree, 1 otherwise.
+        0 when a recorded pass exists for the gate, or for at least one gate when
+        listing, and 1 otherwise.
     """
     if cache_disabled():
         say(_DISABLED_REASON)
         return 1
 
     snapshot = take_snapshot()
+    if name is None:
+        return _list_passed(snapshot)
+
     tree = snapshot.tree
     path: Path | None = None
     marker = "none"
@@ -172,6 +183,24 @@ def gate_status(name: str) -> int:
         }
     )
     return 0 if hit else 1
+
+
+def _list_passed(snapshot: Snapshot) -> int:
+    """Print the gates with a recorded pass on the snapshot's tree."""
+    if snapshot.tree is None:
+        pp.kv({"tree": f"unknown: {snapshot.reason}"})
+        return 1
+    common_dir = git_common_dir()
+    if common_dir is None:
+        pp.kv({"tree": snapshot.tree, "gates": f"unknown: {_NO_COMMON_DIR_REASON}"})
+        return 1
+    names = passed_names(common_dir, snapshot.tree)
+    if not names:
+        pp.kv({"tree": snapshot.tree})
+        pp.console().print("No gates match the current tree", markup=False, highlight=False)
+        return 1
+    pp.kv({"tree": snapshot.tree, "gates": ", ".join(names)})
+    return 0
 
 
 def clear_cache() -> int:
