@@ -10,8 +10,10 @@ from pathlib import Path
 import pytest
 
 from gate_cache.markers import (
+    MAX_RECORD_BYTES,
     clear_markers,
     marker_dir,
+    marker_duration,
     marker_key,
     marker_path,
     miss_path,
@@ -58,6 +60,60 @@ def test_write_marker_writes_json(tmp_path):
     assert data["name"] == "pytest"
     assert isinstance(data["timestamp"], str)
     assert data["timestamp"]
+
+
+def test_write_marker_records_duration(tmp_path: Path) -> None:
+    """Verify a given duration is stored in seconds rounded to three decimals."""
+    path = marker_path(tmp_path, TREE, "pytest")
+
+    write_marker(path, tree=TREE, name="pytest", command=["pytest"], duration=1.23456)
+
+    assert json.loads(path.read_text(encoding="utf-8"))["duration"] == 1.235
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"), [('{"duration": 94.5}', 94.5), ('{"duration": 0}', 0.0)]
+)
+def test_marker_duration_reads_valid_value(tmp_path: Path, content: str, expected: float) -> None:
+    """Verify a finite non-negative duration is read back as a float."""
+    path = tmp_path / "marker"
+    path.write_text(content, encoding="utf-8")
+
+    result = marker_duration(path)
+
+    assert result == expected
+    assert isinstance(result, float)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "",
+        "not json",
+        "[]",
+        "{}",
+        '{"duration": -1}',
+        '{"duration": true}',
+        '{"duration": "94"}',
+        '{"duration": NaN}',
+        '{"duration": Infinity}',
+        '{"duration": 1' + "0" * 400 + "}",
+        '{"duration": 1e300}',
+        '{"duration": 2592001}',
+        "[" * 100000,
+    ],
+)
+def test_marker_duration_unusable(tmp_path: Path, content: str) -> None:
+    """Verify unreadable, missing, or invalid durations read as None."""
+    path = tmp_path / "marker"
+    path.write_text(content, encoding="utf-8")
+
+    assert marker_duration(path) is None
+
+
+def test_marker_duration_missing_file(tmp_path: Path) -> None:
+    """Verify a marker that does not exist has no duration."""
+    assert marker_duration(tmp_path / "absent") is None
 
 
 def test_write_marker_leaves_no_temp_files(tmp_path):
@@ -285,3 +341,41 @@ def test_miss_record_reads_one_gate(tmp_path: Path) -> None:
     assert record["exit_code"] == 3
     assert miss_record(tmp_path, TREE, "pytest") is None
     assert miss_record(tmp_path, OTHER_TREE, "ruff") is None
+
+
+def test_marker_duration_ignores_oversized_file(tmp_path: Path) -> None:
+    """Verify a marker larger than any real record is not parsed."""
+    path = tmp_path / "marker"
+    path.write_text('{"duration": 5}' + " " * MAX_RECORD_BYTES, encoding="utf-8")
+
+    assert marker_duration(path) is None
+
+
+def test_marker_duration_ignores_fifo(tmp_path: Path) -> None:
+    """Verify a FIFO at the marker path is not opened, which would block forever."""
+    path = tmp_path / "marker"
+    os.mkfifo(path)
+
+    assert marker_duration(path) is None
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads files regardless of mode")
+def test_marker_duration_unreadable_file(tmp_path: Path) -> None:
+    """Verify a marker that cannot be read has no duration."""
+    path = tmp_path / "marker"
+    path.write_text('{"duration": 5}', encoding="utf-8")
+    path.chmod(0o000)
+    try:
+        assert marker_duration(path) is None
+    finally:
+        path.chmod(0o644)
+
+
+def test_marker_duration_reads_large_command(tmp_path: Path) -> None:
+    """Verify a marker with a long command line, such as one listing many files, is read."""
+    path = marker_path(tmp_path, TREE, "ruff")
+    command = ["ruff", "check", *(f"src/pkg/module_{i:05}.py" for i in range(5000))]
+
+    write_marker(path, tree=TREE, name="ruff", command=command, duration=2.0)
+
+    assert marker_duration(path) == 2.0

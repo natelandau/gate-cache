@@ -11,8 +11,10 @@ $ gate-cache -- uv run pytest
 ============================= 412 passed in 94.20s =============================
 
 $ gate-cache -- uv run pytest
-gate-cache: uv run pytest already passed on tree aaff74984ccc, skipping
+gate-cache: uv run pytest already passed on tree aaff74984ccc, skipping (saved 1m 34s)
 ```
+
+The time in parentheses is how long the command ran when it passed, so the time that the skip saves is approximate.
 
 A change to any file that git does not ignore changes the content, so no marker matches and the command runs again. To make a gate match only the files that its command reads, [scope the gate to its paths](#scope-a-gate-to-its-paths). A CI runner that starts from a fresh clone has no markers, so it runs every command.
 
@@ -212,18 +214,19 @@ $ gate-cache status --name "uv run ruff check ."
   last run: exit code 1
 ```
 
-The `last run` line shows only when the name ran on this content without a pass.
+The `last run` line shows only when the name ran on this content without a pass. The `duration` line shows how long the command ran when it passed.
 
 For a scoped gate, give the same `--path` options with `--name`. The report adds a `paths` line and a `scope` line, and the `tree` line shows the whole tree:
 
 ```console
 $ gate-cache status --name api-test --path api/ --path uv.lock
-  name:   api-test
-  paths:  api/ uv.lock
-  scope:  paths:7c462ce94adead1b7ab99f8e4212ffac194c562e0d178151207c1f01e0073615
-  tree:   aaff74984cccd156a469afa7d9ab10e4777beb24
-  marker: /path/to/repo/.git/gate-cache/4156a896efe2ed16204b6d2525acbfbd9c4dd808dbfc135571e4f631b7d7754a
-  result: hit
+  name:     api-test
+  paths:    api/ uv.lock
+  scope:    paths:7c462ce94adead1b7ab99f8e4212ffac194c562e0d178151207c1f01e0073615
+  tree:     aaff74984cccd156a469afa7d9ab10e4777beb24
+  marker:   /path/to/repo/.git/gate-cache/4156a896efe2ed16204b6d2525acbfbd9c4dd808dbfc135571e4f631b7d7754a
+  result:   hit
+  duration: 1m 34s
 ```
 
 Without `--name`, `status` also lists the scoped gates that passed or missed on the current content of their paths.
@@ -245,7 +248,7 @@ $ gate-cache status --json
 }
 ```
 
-`reason` tells why gate-cache cannot match the content, and is `null` when it can. When caching is off, `enabled` is `false`, `reason` names the variable, and the other keys are empty or `null`. With `--name`, the object has the `name`, `marker`, `result`, and `last_run` keys in place of `passed` and `missed`. With `--path`, `tree` holds the scope value, and the object adds the `paths` and `full_tree` keys.
+`reason` tells why gate-cache cannot match the content, and is `null` when it can. When caching is off, `enabled` is `false`, `reason` names the variable, and the other keys are empty or `null`. With `--name`, the object has the `name`, `marker`, `result`, `last_run`, and `duration` keys in place of `passed` and `missed`. `duration` is the run time in seconds of the matching pass, or `null`. With `--path`, `tree` holds the scope value, and the object adds the `paths` and `full_tree` keys.
 
 ## Start fresh
 

@@ -16,7 +16,7 @@ from gate_cache.gate import clear_cache, disabled_reason, gate_status, marker_ma
 from gate_cache.markers import marker_dir, miss_path
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot
-from tests.conftest import Counter, git, markers, misses
+from tests.conftest import Counter, git, markers, misses, read_records
 
 NAME = "pytest"
 
@@ -39,7 +39,7 @@ def test_first_run_executes_and_second_skips(
     tree = git("write-tree", cwd=git_repo)
     assert counter.count == 1
     assert (
-        f"gate-cache: {NAME} already passed on tree {tree[:12]}, skipping\n"
+        f"gate-cache: {NAME} already passed on tree {tree[:12]}, skipping (saved <1s)\n"
         in capfd.readouterr().err
     )
 
@@ -403,6 +403,7 @@ def test_status_hit_and_miss(
     assert gate_status(NAME) == 1
     out = capfd.readouterr().out
     assert re.search(r"result:\s+miss", out)
+    assert "duration:" not in out
     assert git("write-tree", cwd=git_repo) in out
 
     run_gate(NAME, counter.argv())
@@ -834,6 +835,7 @@ def test_named_status_json_hit(
     assert data["marker"] == str(markers(git_repo)[0])
     assert data["result"] == "hit"
     assert data["last_run"] is None
+    assert isinstance(data["duration"], float)
 
 
 def test_named_status_json_miss_with_last_run(
@@ -848,6 +850,7 @@ def test_named_status_json_miss_with_last_run(
     assert data["last_run"]["exit_code"] == 5
     assert data["last_run"]["reason"] == "exit code 5"
     assert data["last_run"]["timestamp"]
+    assert data["duration"] is None
 
 
 def test_list_status_json(
@@ -984,12 +987,14 @@ def test_status_json_when_disabled_keeps_report_keys(
     data = json.loads(capfd.readouterr().out)
     assert data["passed"] == []
     assert data["missed"] == []
+    assert "duration" not in data
     assert gate_status(NAME, as_json=True) == 1
     data = json.loads(capfd.readouterr().out)
     assert data["name"] == NAME
     assert data["result"] == "miss"
     assert data["marker"] is None
     assert data["last_run"] is None
+    assert data["duration"] is None
 
 
 def test_status_lists_miss_without_reason_by_name_only(
@@ -1005,3 +1010,92 @@ def test_status_lists_miss_without_reason_by_name_only(
     out = capfd.readouterr().out
     assert re.search(r"missed:\s+ruff\n", out)
     assert "None" not in out
+
+
+def test_pass_records_duration(git_repo: Path, counter: Counter) -> None:
+    """Verify a passing run stores its command's duration in the marker."""
+    run_gate(NAME, counter.argv())
+
+    (record,) = read_records(markers(git_repo))
+    duration = record["duration"]
+    assert isinstance(duration, float)
+    assert duration >= 0
+
+
+def test_skip_prints_recorded_duration(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a skip reports the duration stored in the marker."""
+    run_gate(NAME, counter.argv())
+    markers(git_repo)[0].write_text(json.dumps({"duration": 94}))
+    capfd.readouterr()
+
+    assert run_gate(NAME, counter.argv()) == 0
+
+    assert counter.count == 1
+    assert ", skipping (saved 1m 34s)\n" in capfd.readouterr().err
+
+
+@pytest.mark.parametrize("content", ["{}", "not json"])
+def test_skip_without_usable_duration_has_no_suffix(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str], content: str
+) -> None:
+    """Verify a marker without a usable duration still skips, without the suffix."""
+    run_gate(NAME, counter.argv())
+    markers(git_repo)[0].write_text(content)
+    capfd.readouterr()
+
+    assert run_gate(NAME, counter.argv()) == 0
+
+    assert counter.count == 1
+    assert capfd.readouterr().err.endswith(", skipping\n")
+
+
+def test_miss_record_has_no_duration(git_repo: Path, counter: Counter) -> None:
+    """Verify a failed run's miss record carries no duration."""
+    run_gate(NAME, counter.argv(exit_code=5))
+
+    (record,) = read_records(misses(git_repo))
+    assert "duration" not in record
+
+
+def test_named_status_json_hit_without_duration(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a hit on a marker without a duration reports null."""
+    run_gate(NAME, counter.argv())
+    markers(git_repo)[0].write_text("{}")
+    capfd.readouterr()
+
+    assert gate_status(NAME, as_json=True) == 0
+
+    data = json.loads(capfd.readouterr().out)
+    assert data["result"] == "hit"
+    assert data["duration"] is None
+
+
+def test_named_status_text_hides_missing_duration(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a hit on a marker without a duration shows no duration row."""
+    run_gate(NAME, counter.argv())
+    markers(git_repo)[0].write_text("{}")
+    capfd.readouterr()
+
+    assert gate_status(NAME) == 0
+
+    assert "duration:" not in capfd.readouterr().out
+
+
+def test_named_status_text_shows_duration(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify the text report adds a duration row after the result row on a hit."""
+    run_gate(NAME, counter.argv())
+    markers(git_repo)[0].write_text(json.dumps({"duration": 94}))
+    capfd.readouterr()
+
+    assert gate_status(NAME) == 0
+
+    out = capfd.readouterr().out
+    assert re.search(r"result:\s+hit\n\s*duration:\s+1m 34s\n", out)
