@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.7.0 (2026-11-16)
+
+### Feat
+
+- **cli**: show the time a skipped gate saved (#11)
+- **cli**: limit a gate's cache to the paths it reads (#9)
+
 ## v0.6.0 (2026-10-12)
 
 ### Feat
