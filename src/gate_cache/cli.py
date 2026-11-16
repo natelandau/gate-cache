@@ -105,10 +105,13 @@ Report whether gates would skip, without running anything.
 
 With --name, print the tree hash (or why it is unknown), the marker path,
 hit or miss, and how the last run on this tree failed when it did. Exit 0 on a
-hit, 1 otherwise.
+hit, 1 otherwise. Repeat --path with --name to look up a gate scoped to those
+paths.
 
 Without --name, list the gates that passed on the current tree and the gates
-that ran on it without passing. Exit 0 when at least one gate passed, 1 otherwise.
+that ran on it without passing. Scoped gates are listed when they passed or
+missed on the current content of their paths. Exit 0 when at least one gate
+passed, 1 otherwise.
 """
 
 _CLEAR_HELP = """\
