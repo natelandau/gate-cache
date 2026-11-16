@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from gate_cache.markers import MISS_SUFFIX, marker_dir
+
 
 def git(*args: str, cwd: Path) -> str:
     """Run git in cwd and return stripped stdout."""
@@ -136,3 +138,17 @@ def expected_tree(repo: Path) -> str:
         ).stdout.strip()
     finally:
         scratch.unlink(missing_ok=True)
+
+
+def markers(repo: Path) -> list[Path]:
+    """Return the pass markers in the repo's marker directory."""
+    directory = marker_dir(repo / ".git")
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.iterdir() if path.suffix != MISS_SUFFIX)
+
+
+def misses(repo: Path) -> list[Path]:
+    """Return the miss records in the repo's marker directory."""
+    directory = marker_dir(repo / ".git")
+    return sorted(directory.glob(f"*{MISS_SUFFIX}")) if directory.is_dir() else []

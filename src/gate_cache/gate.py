@@ -5,23 +5,24 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gate_cache.console import kv, say
 from gate_cache.markers import (
+    RecordIndex,
     clear_markers,
     marker_exists,
     marker_path,
     miss_path,
     miss_record,
-    missed_records,
-    passed_names,
     prune_markers,
+    scope_fields,
     write_marker,
     write_miss,
 )
 from gate_cache.runner import run_child
-from gate_cache.snapshot import git_common_dir, take_snapshot
+from gate_cache.snapshot import git_common_dir, take_snapshot, take_snapshots
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -101,50 +102,80 @@ def _run_uncached(reason: str, command: Sequence[str]) -> int:
     return run_child(command).exit_code
 
 
-def _record_pass(common_dir: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
-    """Write the marker, drop any earlier miss, and prune old files; a failure only warns."""
-    path = marker_path(common_dir, tree, name)
-    try:
-        write_marker(path, tree=tree, name=name, command=command)
-    except OSError as error:
-        say(f"warning: could not record pass: {error}")
-        return
-    with contextlib.suppress(OSError):
-        miss_path(common_dir, tree, name).unlink(missing_ok=True)
-    prune_markers(path.parent, max_age_days=marker_max_age_days())
+@dataclass(frozen=True)
+class _Attempt:
+    """One run of a gate on a known snapshot, and how to record its outcome.
 
+    Attributes:
+        common_dir: Git common directory that holds the markers.
+        name: Gate name.
+        command: Command and arguments that run.
+        snapshot: The snapshot the run is keyed on.
+        key: The snapshot's key, known to be set.
+    """
 
-def _record_miss(
-    common_dir: Path, *, tree: str, name: str, command: Sequence[str], exit_code: int, reason: str
-) -> None:
-    """Record that the gate ran on the tree without passing, so status can report it."""
-    # Reporting is best effort: nothing about a miss record may change the exit code.
-    try:
-        path = miss_path(common_dir, tree, name)
-        write_miss(path, tree=tree, name=name, command=command, exit_code=exit_code, reason=reason)
+    common_dir: Path
+    name: str
+    command: Sequence[str]
+    snapshot: Snapshot
+    key: str
+
+    def record_pass(self) -> None:
+        """Write the marker, drop any earlier miss, and prune old files; a failure only warns."""
+        path = marker_path(self.common_dir, self.key, self.name)
+        try:
+            write_marker(
+                path,
+                tree=self.key,
+                name=self.name,
+                command=self.command,
+                paths=self.snapshot.paths,
+                full_tree=self.snapshot.tree,
+            )
+        except OSError as error:
+            say(f"warning: could not record pass: {error}")
+            return
+        with contextlib.suppress(OSError):
+            miss_path(self.common_dir, self.key, self.name).unlink(missing_ok=True)
         prune_markers(path.parent, max_age_days=marker_max_age_days())
-    except Exception as error:  # noqa: BLE001
-        say(f"warning: could not record miss: {error}")
+
+    def record_miss(self, *, exit_code: int, reason: str) -> None:
+        """Record that the gate ran on the key without passing, so status can report it."""
+        # Reporting is best effort: nothing about a miss record may change the exit code.
+        try:
+            path = miss_path(self.common_dir, self.key, self.name)
+            write_miss(
+                path,
+                tree=self.key,
+                name=self.name,
+                command=self.command,
+                exit_code=exit_code,
+                reason=reason,
+                paths=self.snapshot.paths,
+                full_tree=self.snapshot.tree,
+            )
+            prune_markers(path.parent, max_age_days=marker_max_age_days())
+        except Exception as error:  # noqa: BLE001
+            say(f"warning: could not record miss: {error}")
+
+    def record_if_unchanged(self) -> None:
+        """Record the pass only when the run left the content it was keyed on untouched."""
+        # A command that rewrote keyed files or left new files behind did not pass on `key`.
+        if take_snapshot(paths=self.snapshot.paths).key == self.key:
+            self.record_pass()
+        else:
+            say(f"{_FILES_CHANGED}, not recording pass")
+            self.record_miss(exit_code=0, reason=_FILES_CHANGED)
 
 
-def _record_if_unchanged(common_dir: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
-    """Record the pass only when the run left the tree it was keyed on untouched."""
-    # A command that rewrote tracked files or left new files behind did not pass on `tree`.
-    if take_snapshot().tree == tree:
-        _record_pass(common_dir, tree=tree, name=name, command=command)
-    else:
-        say(f"{_FILES_CHANGED}, not recording pass")
-        _record_miss(
-            common_dir, tree=tree, name=name, command=command, exit_code=0, reason=_FILES_CHANGED
-        )
-
-
-def run_gate(name: str, command: Sequence[str]) -> int:
-    """Run a gate command unless it already passed on the tree about to be tested.
+def run_gate(name: str, command: Sequence[str], paths: Sequence[str] = ()) -> int:
+    """Run a gate command unless it already passed on the content about to be tested.
 
     Args:
-        name: Gate name that, with the tree, identifies a recorded pass.
+        name: Gate name that, with the key, identifies a recorded pass.
         command: Command and arguments to run.
+        paths: Git pathspecs that scope the key to the files the gate reads. Empty keys
+            on the whole tree.
 
     Returns:
         The command's exit code, or 0 when a recorded pass lets it skip.
@@ -153,47 +184,46 @@ def run_gate(name: str, command: Sequence[str]) -> int:
     if reason is not None:
         return _run_uncached(reason, command)
 
-    snapshot = take_snapshot()
-    tree = snapshot.tree
-    if tree is None:
+    snapshot = take_snapshot(paths=paths)
+    key = snapshot.key
+    if key is None:
         return _run_uncached(snapshot.reason or "tree unknown", command)
 
     common_dir = git_common_dir()
     if common_dir is None:
         return _run_uncached(_NO_COMMON_DIR_REASON, command)
 
-    if marker_exists(marker_path(common_dir, tree, name)):
-        say(f"{name} already passed on tree {tree[:12]}, skipping")
+    if marker_exists(marker_path(common_dir, key, name)):
+        say(f"{name} already passed on {snapshot.label}, skipping")
         return 0
 
+    attempt = _Attempt(
+        common_dir=common_dir, name=name, command=command, snapshot=snapshot, key=key
+    )
     result = run_child(command)
     if result.interrupted:
         return result.exit_code
     if result.exit_code != 0:
-        _record_miss(
-            common_dir,
-            tree=tree,
-            name=name,
-            command=command,
-            exit_code=result.exit_code,
-            reason=f"exit code {result.exit_code}",
-        )
+        attempt.record_miss(exit_code=result.exit_code, reason=f"exit code {result.exit_code}")
     else:
         # Recording is best effort: nothing after a passing run may change its exit code.
         try:
-            _record_if_unchanged(common_dir, tree=tree, name=name, command=command)
+            attempt.record_if_unchanged()
         except Exception as error:  # noqa: BLE001
             say(f"warning: could not record pass: {error}")
     return result.exit_code
 
 
-def gate_status(name: str | None = None, *, as_json: bool = False) -> int:
+def gate_status(
+    name: str | None = None, *, as_json: bool = False, paths: Sequence[str] = ()
+) -> int:
     """Print whether a gate would skip, or list the gates that ran, without running anything.
 
     Args:
         name: Gate name to look up. When None, list every gate that passed or missed on
             the current tree.
         as_json: Print one JSON object to stdout instead of text.
+        paths: Pathspecs of a scoped gate to look up with name. Ignored without name.
 
     Returns:
         0 when a recorded pass exists for the gate, or for at least one gate when
@@ -212,10 +242,10 @@ def gate_status(name: str | None = None, *, as_json: bool = False) -> int:
             say(reason)
         return 1
 
-    snapshot = take_snapshot()
-    common_dir = git_common_dir() if snapshot.tree is not None else None
     if name is None:
-        return _list_gates(snapshot, common_dir, as_json=as_json)
+        return _list_gates(as_json=as_json)
+    snapshot = take_snapshot(paths=paths)
+    common_dir = git_common_dir() if snapshot.known else None
     return _named_status(name, snapshot, common_dir, as_json=as_json)
 
 
@@ -226,7 +256,7 @@ def _print_json(data: Mapping[str, Any]) -> None:
 
 def _unknown_reason(snapshot: Snapshot, common_dir: Path | None) -> str | None:
     """Return why markers cannot be looked up, or None when they can."""
-    if snapshot.tree is None:
+    if not snapshot.known:
         return snapshot.reason or "tree unknown"
     if common_dir is None:
         return _NO_COMMON_DIR_REASON
@@ -243,15 +273,15 @@ def _miss_summary(record: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_json: bool) -> int:
-    """Print whether one gate would skip on the snapshot's tree."""
-    tree = snapshot.tree
+    """Print whether one gate would skip on the snapshot's key."""
+    key = snapshot.key
     path: Path | None = None
     hit = False
     last_run: dict[str, Any] | None = None
-    if tree is not None and common_dir is not None:
-        path = marker_path(common_dir, tree, name)
+    if key is not None and common_dir is not None:
+        path = marker_path(common_dir, key, name)
         hit = marker_exists(path)
-        record = None if hit else miss_record(common_dir, tree, name)
+        record = None if hit else miss_record(common_dir, key, name)
         last_run = _miss_summary(record) if record is not None else None
     reason = _unknown_reason(snapshot, common_dir)
 
@@ -260,41 +290,51 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
             {
                 "enabled": True,
                 "name": name,
-                "tree": tree,
+                "tree": key,
                 "reason": reason,
                 "marker": str(path) if path is not None else None,
                 "result": "hit" if hit else "miss",
                 "last_run": last_run,
+                **scope_fields(snapshot.paths, snapshot.tree),
             }
         )
         return 0 if hit else 1
 
     if path is not None:
         marker = str(path)
-    elif tree is not None:
+    elif key is not None:
         marker = f"none: {reason}"
     else:
         marker = "none"
-    rows = {
-        "name": name,
-        "tree": tree if tree is not None else f"unknown: {reason}",
-        "marker": marker,
-        "result": "hit" if hit else "miss",
-    }
+    rows = {"name": name}
+    if snapshot.paths:
+        rows["paths"] = " ".join(snapshot.paths)
+    if snapshot.paths:
+        rows["scope"] = snapshot.scope if snapshot.scope is not None else f"unknown: {reason}"
+    rows["tree"] = snapshot.tree if snapshot.tree is not None else f"unknown: {reason}"
+    rows |= {"marker": marker, "result": "hit" if hit else "miss"}
     if last_run is not None:
         rows["last run"] = str(last_run["reason"])
     kv(rows)
     return 0 if hit else 1
 
 
-def _list_gates(snapshot: Snapshot, common_dir: Path | None, *, as_json: bool) -> int:
-    """Print the gates that passed or missed on the snapshot's tree."""
+def _list_gates(*, as_json: bool) -> int:
+    """Print the gates that passed or missed on the current tree, or on their paths' content."""
+    # Scoped gates are found by recomputing each recorded path set's scope, all from one staging.
+    common_dir = git_common_dir()
+    index = RecordIndex.load(common_dir) if common_dir is not None else None
+    path_sets = index.scoped_path_sets() if index is not None else []
+    snapshot, *scoped = take_snapshots([(), *path_sets])
     tree = snapshot.tree
+    if tree is None:
+        common_dir = None
     passed: list[str] = []
     missed: list[dict[str, Any]] = []
-    if tree is not None and common_dir is not None:
-        passed = passed_names(common_dir, tree)
-        missed = [{"name": r["name"], **_miss_summary(r)} for r in missed_records(common_dir, tree)]
+    if tree is not None and index is not None:
+        keys = [tree, *(s.scope for s in scoped if s.scope is not None)]
+        passed = index.passed_names(*keys)
+        missed = [{"name": r["name"], **_miss_summary(r)} for r in index.missed_records(*keys)]
     code = 0 if passed else 1
 
     if as_json:

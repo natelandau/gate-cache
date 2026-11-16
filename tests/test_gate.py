@@ -6,32 +6,19 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
 from gate_cache import scratch
 from gate_cache.gate import clear_cache, disabled_reason, gate_status, marker_max_age_days, run_gate
-from gate_cache.markers import MISS_SUFFIX, marker_dir, miss_path
+from gate_cache.markers import marker_dir, miss_path
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot
-from tests.conftest import Counter, git
+from tests.conftest import Counter, git, markers, misses
 
 NAME = "pytest"
-
-
-def markers(repo: Path) -> list[Path]:
-    """Return the pass markers in the repo's marker directory."""
-    directory = marker_dir(repo / ".git")
-    if not directory.is_dir():
-        return []
-    return sorted(path for path in directory.iterdir() if path.suffix != MISS_SUFFIX)
-
-
-def misses(repo: Path) -> list[Path]:
-    """Return the miss records in the repo's marker directory."""
-    directory = marker_dir(repo / ".git")
-    return sorted(directory.glob(f"*{MISS_SUFFIX}")) if directory.is_dir() else []
 
 
 def commit_change(repo: Path, content: str) -> None:
@@ -541,12 +528,12 @@ def test_unexpected_error_after_pass_keeps_exit_code(
     real = gate.take_snapshot
     calls: list[int] = []
 
-    def snapshot_then_fail() -> Snapshot:
+    def snapshot_then_fail(paths: Sequence[str] = ()) -> Snapshot:
         calls.append(1)
         if len(calls) > 1:
             msg = "boom"
             raise RuntimeError(msg)
-        return real()
+        return real(paths=paths)
 
     monkeypatch.setattr("gate_cache.gate.take_snapshot", snapshot_then_fail)
     assert run_gate(NAME, counter.argv()) == 0

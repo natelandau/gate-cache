@@ -8,12 +8,13 @@ import json
 import shutil
 import tempfile
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
 MARKER_DIRNAME = "gate-cache"
 TEMP_PREFIX = ".tmp-"
@@ -78,33 +79,69 @@ def miss_path(common_dir: Path, tree: str, name: str) -> Path:
     return marker_dir(common_dir) / f"{marker_key(tree, name)}{MISS_SUFFIX}"
 
 
-def write_marker(path: Path, *, tree: str, name: str, command: Sequence[str]) -> None:
+def scope_fields(paths: Sequence[str], full_tree: str | None) -> dict[str, object]:
+    """Return the record keys that describe a scoped gate, or none for an unscoped one.
+
+    Args:
+        paths: Pathspecs of a scoped gate, or empty for an unscoped one.
+        full_tree: Whole working-copy tree of the run.
+
+    Returns:
+        The `paths` and `full_tree` keys, or an empty dict when paths is empty.
+    """
+    return {"paths": list(paths), "full_tree": full_tree} if paths else {}
+
+
+def write_marker(
+    path: Path,
+    *,
+    tree: str,
+    name: str,
+    command: Sequence[str],
+    paths: Sequence[str] = (),
+    full_tree: str | None = None,
+) -> None:
     """Atomically write a marker file.
 
     Args:
         path: Destination marker path; its parent directory is created if needed.
-        tree: Git tree hash the command passed on.
+        tree: Git tree hash, or scope value, the command passed on.
         name: Gate name.
         command: The command that passed.
+        paths: Pathspecs of a scoped gate, or empty for an unscoped one.
+        full_tree: Whole working-copy tree of a scoped gate's run.
 
     Raises:
         OSError: If the marker cannot be written. Any temp file is removed.
     """
-    _write_json(path, {"tree": tree, "name": name, "command": list(command)})
+    _write_json(
+        path,
+        {"tree": tree, "name": name, "command": list(command), **scope_fields(paths, full_tree)},
+    )
 
 
-def write_miss(
-    path: Path, *, tree: str, name: str, command: Sequence[str], exit_code: int, reason: str
+def write_miss(  # noqa: PLR0913
+    path: Path,
+    *,
+    tree: str,
+    name: str,
+    command: Sequence[str],
+    exit_code: int,
+    reason: str,
+    paths: Sequence[str] = (),
+    full_tree: str | None = None,
 ) -> None:
     """Atomically record that a gate ran on a tree and did not pass.
 
     Args:
         path: Destination miss record path; its parent directory is created if needed.
-        tree: Git tree hash the command ran on.
+        tree: Git tree hash, or scope value, the command ran on.
         name: Gate name.
         command: The command that ran.
         exit_code: The command's exit code.
         reason: Why the run did not record a pass.
+        paths: Pathspecs of a scoped gate, or empty for an unscoped one.
+        full_tree: Whole working-copy tree of a scoped gate's run.
 
     Raises:
         OSError: If the record cannot be written. Any temp file is removed.
@@ -117,6 +154,7 @@ def write_miss(
             "command": list(command),
             "exit_code": exit_code,
             "reason": reason,
+            **scope_fields(paths, full_tree),
         },
     )
 
@@ -139,45 +177,6 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
             with contextlib.suppress(OSError):
                 Path(tmp_name).unlink()
         raise
-
-
-def passed_names(common_dir: Path, tree: str) -> list[str]:
-    """List the gates with a recorded pass on a tree, for reporting what would skip.
-
-    Marker filenames are one-way hashes, so names come from each marker's JSON content.
-    A file whose content is missing, unreadable, or does not hash to its own filename is
-    left out. Markers written by other tools without that content still count for skips
-    but cannot be listed.
-
-    Args:
-        common_dir: Absolute path to the git common directory.
-        tree: Git tree hash to match.
-
-    Returns:
-        Sorted, unique gate names.
-    """
-    return sorted({record["name"] for record in _records(common_dir, tree, suffix="")})
-
-
-def missed_records(common_dir: Path, tree: str) -> list[dict[str, Any]]:
-    """List the gates that ran on a tree without passing, for reporting what would run.
-
-    A gate whose marker exists on the tree is left out, since a later pass supersedes the
-    miss. This holds for markers without JSON content too, because those still skip.
-
-    Args:
-        common_dir: Absolute path to the git common directory.
-        tree: Git tree hash to match.
-
-    Returns:
-        Each miss record's JSON content, sorted by gate name.
-    """
-    records = [
-        record
-        for record in _records(common_dir, tree, suffix=MISS_SUFFIX)
-        if not marker_exists(marker_path(common_dir, tree, record["name"]))
-    ]
-    return sorted(records, key=lambda record: record["name"])
 
 
 def miss_record(common_dir: Path, tree: str, name: str) -> dict[str, Any] | None:
@@ -216,27 +215,131 @@ def _read_record(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _records(common_dir: Path, tree: str, *, suffix: str) -> list[dict[str, Any]]:
-    """Read the records for a tree whose filename is the key of their own name plus suffix."""
-    try:
-        entries = list(marker_dir(common_dir).iterdir())
-    except OSError:
-        return []
-    records: list[dict[str, Any]] = []
-    for entry in entries:
-        if entry.name.startswith(TEMP_PREFIX) or not entry.name.endswith(suffix):
-            continue
-        data = _read_record(entry)
-        if data is None:
-            continue
-        name = data.get("name")
-        if (
-            data.get("tree") == tree
-            and isinstance(name, str)
-            and f"{marker_key(tree, name)}{suffix}" == entry.name
-        ):
-            records.append(data)
-    return records
+@dataclass(frozen=True)
+class RecordIndex:
+    """Every finished marker and miss record of a repository, read from disk once.
+
+    Status asks several questions of the same directory, such as which gates passed on the
+    tree and on each scope, so one scan answers them all.
+
+    Attributes:
+        common_dir: Absolute path to the git common directory.
+        entries: Each record file with its parsed JSON content.
+    """
+
+    common_dir: Path
+    entries: tuple[tuple[Path, dict[str, Any]], ...]
+
+    @classmethod
+    def load(cls, common_dir: Path) -> RecordIndex:
+        """Read every finished record file, skipping temp files and unparsable content.
+
+        Args:
+            common_dir: Absolute path to the git common directory.
+
+        Returns:
+            The index, empty when the marker directory is missing or unreadable.
+        """
+        try:
+            paths = list(marker_dir(common_dir).iterdir())
+        except OSError:
+            paths = []
+        entries = []
+        for path in paths:
+            if path.name.startswith(TEMP_PREFIX):
+                continue
+            data = _read_record(path)
+            if data is not None:
+                entries.append((path, data))
+        return cls(common_dir=common_dir, entries=tuple(entries))
+
+    def passed_names(self, *trees: str) -> list[str]:
+        """List the gates with a recorded pass on any of the trees, for reporting what would skip.
+
+        Marker filenames are one-way hashes, so names come from each marker's JSON content.
+        A file whose content is missing, unreadable, or does not hash to its own filename is
+        left out. Markers written by other tools without that content still count for skips
+        but cannot be listed.
+
+        Args:
+            *trees: Git tree hashes or scope values to match.
+
+        Returns:
+            Sorted, unique gate names.
+        """
+        return sorted({record["name"] for record in self._matching(trees, suffix="")})
+
+    def missed_records(self, *trees: str) -> list[dict[str, Any]]:
+        """List the gates that ran on any of the trees without passing.
+
+        A gate whose marker exists on the tree is left out, since a later pass supersedes the
+        miss. This holds for markers without JSON content too, because those still skip.
+
+        Args:
+            *trees: Git tree hashes or scope values to match.
+
+        Returns:
+            Each miss record's JSON content, sorted by gate name.
+        """
+        records = [
+            record
+            for record in self._matching(trees, suffix=MISS_SUFFIX)
+            if not marker_exists(marker_path(self.common_dir, record["tree"], record["name"]))
+        ]
+        return sorted(records, key=lambda record: record["name"])
+
+    def scoped_path_sets(self) -> list[tuple[str, ...]]:
+        """List each distinct pathspec list that scoped gates were recorded with.
+
+        A scope cannot be reversed into its paths, so status recomputes each listed scope on
+        the current content to find the scoped gates that match it.
+
+        Returns:
+            The distinct pathspec lists, sorted.
+        """
+        found: set[tuple[str, ...]] = set()
+        for _, data in self.entries:
+            paths = data.get("paths")
+            if isinstance(paths, list) and paths and all(isinstance(p, str) and p for p in paths):
+                found.add(tuple(paths))
+        return sorted(found)
+
+    def _matching(self, trees: Collection[str], *, suffix: str) -> list[dict[str, Any]]:
+        """Return the records for the trees whose filename is the key of their own name."""
+        return [
+            data
+            for path, data in self.entries
+            if isinstance(tree := data.get("tree"), str)
+            and tree in trees
+            and isinstance(name := data.get("name"), str)
+            and path.name == f"{marker_key(tree, name)}{suffix}"
+        ]
+
+
+def passed_names(common_dir: Path, *trees: str) -> list[str]:
+    """List the gates with a recorded pass on any of the trees; see RecordIndex.passed_names.
+
+    Args:
+        common_dir: Absolute path to the git common directory.
+        *trees: Git tree hashes or scope values to match.
+
+    Returns:
+        Sorted, unique gate names.
+    """
+    return RecordIndex.load(common_dir).passed_names(*trees)
+
+
+def missed_records(common_dir: Path, *trees: str) -> list[dict[str, Any]]:
+    """List the gates that ran on any of the trees without passing; see RecordIndex.
+
+    Args:
+        common_dir: Absolute path to the git common directory.
+        *trees: Git tree hashes or scope values to match.
+
+    Returns:
+        Each miss record's JSON content, sorted by gate name.
+    """
+    return RecordIndex.load(common_dir).missed_records(*trees)
 
 
 def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None = None) -> None:

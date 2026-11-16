@@ -2,31 +2,53 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gate_cache import scratch
 from gate_cache.git import GitError, GitNotFoundError, run_git
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 
 @dataclass(frozen=True)
 class Snapshot:
-    """The tree a gate is about to test, or why that tree is unknown.
+    """The content a gate is about to test, or why that content is unknown.
 
     Attributes:
-        tree: Git tree hash describing the content under test, or None when unknown.
-        reason: Why the tree is unknown, or None when it is known.
+        tree: Git tree hash describing the whole working copy, or None when unknown.
+        reason: Why the content is unknown, or None when it is known.
+        scope: The `paths:` value covering only the gate's paths, or None for an unscoped gate.
+        paths: The sorted, distinct pathspecs that scope the gate, or empty for the whole tree.
     """
 
     tree: str | None
     reason: str | None
+    scope: str | None = None
+    paths: tuple[str, ...] = ()
+
+    @property
+    def key(self) -> str | None:
+        """Return the value a marker is keyed on: the scope when there is one, else the tree."""
+        return self.scope if self.paths else self.tree
 
     @property
     def known(self) -> bool:
-        """Return True when a tree hash identifies the content under test."""
-        return self.tree is not None
+        """Return True when a key identifies the content under test."""
+        return self.key is not None
+
+    @property
+    def label(self) -> str:
+        """Name the key for one-line messages, such as `tree 1a2b3c4d5e6f`."""
+        if self.paths:
+            return f"paths {(self.scope or '').removeprefix(_SCOPE_PREFIX)[:12]}"
+        return f"tree {(self.tree or '')[:12]}"
 
 
 def _hook_work_tree(cwd: Path | None) -> Path | None:
@@ -264,8 +286,64 @@ def _case_mismatch_reason(root: Path, env: dict[str, str]) -> str | None:
     return None
 
 
-def _private_snapshot(cwd: Path | None, root: Path, env: dict[str, str] | None) -> Snapshot:
-    """Stage the working copy into a private index and return its tree, writing nothing real.
+_SCOPE_PREFIX = "paths:"
+_SCOPE_TAG = "gate-cache-paths-v1"
+# These would make the same --path values match different files in different environments.
+_PATHSPEC_ENV = (
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+)
+_UNMATCHED = re.compile(r"^error: pathspec '(.*)' did not match", re.MULTILINE)
+
+
+def _git_complaint(stderr: str) -> str | None:
+    """Pick the line of git's stderr that explains a failure, preferring fatal and error lines."""
+    lines = [line for line in stderr.splitlines() if line.strip()]
+    errors = [line for line in lines if line.startswith(("fatal:", "error:"))]
+    return (errors or lines or [None])[0]
+
+
+def _scope(root: Path, env: dict[str, str], paths: tuple[str, ...], tree: str) -> Snapshot:
+    """Hash the staged entries under PATHS, or explain why no scope can describe them.
+
+    A path that selects nothing would give a constant scope that skips forever, so it
+    leaves the scope unknown instead.
+    """
+    # C locale: the unmatched-path error is parsed below.
+    scope_env = {key: value for key, value in env.items() if key not in _PATHSPEC_ENV}
+    scope_env["LC_ALL"] = "C"
+    try:
+        listed = run_git(
+            "ls-files", "--stage", "-z", "--error-unmatch", "--", *paths,
+            cwd=root, env=scope_env, check=False,
+        )  # fmt: skip
+    except UnicodeDecodeError:
+        # Kept to this path set, so one undecodable listing cannot blank the others.
+        return Snapshot(
+            tree=tree, reason="could not match --path: output is not UTF-8", paths=paths
+        )
+    if listed.returncode != 0:
+        unmatched = _UNMATCHED.search(listed.stderr)
+        if unmatched:
+            reason = f"--path {unmatched.group(1)} matches no files"
+        else:
+            detail = _git_complaint(listed.stderr)
+            reason = f"could not match --path: {detail}" if detail else "could not match --path"
+        return Snapshot(tree=tree, reason=reason, paths=paths)
+    if not listed.stdout:
+        reason = f"--path {' '.join(paths)} matches no files"
+        return Snapshot(tree=tree, reason=reason, paths=paths)
+    head = "\0".join([_SCOPE_TAG, *paths]).encode()
+    digest = hashlib.sha256(head + b"\0\0" + listed.stdout.encode()).hexdigest()
+    return Snapshot(tree=tree, reason=None, scope=f"{_SCOPE_PREFIX}{digest}", paths=paths)
+
+
+def _private_snapshots(
+    cwd: Path | None, root: Path, env: dict[str, str] | None, path_sets: list[tuple[str, ...]]
+) -> list[Snapshot]:
+    """Stage the working copy into a private index once and key it for each path set.
 
     A copy of the index and a throwaway object store take every write, so the real index,
     its lock, and `.git/objects` stay untouched even by write-tree's cache-tree update.
@@ -296,20 +374,28 @@ def _private_snapshot(cwd: Path | None, root: Path, env: dict[str, str] | None) 
         if added.returncode != 0:
             # Name git's complaint, such as an embedded repository with no commit, so the
             # user can see what keeps the cache off.
-            lines = [line for line in added.stderr.splitlines() if line.strip()]
-            errors = [line for line in lines if line.startswith(("fatal:", "error:"))]
-            detail = (errors or lines or [None])[0]
+            detail = _git_complaint(added.stderr)
             reason = "could not stage working copy"
-            return Snapshot(tree=None, reason=f"{reason}: {detail}" if detail else reason)
+            return _unknown(path_sets=path_sets, reason=f"{reason}: {detail}" if detail else reason)
         reason = _staged_reason(root, private_env)
         if reason:
-            return Snapshot(tree=None, reason=reason)
+            return _unknown(path_sets=path_sets, reason=reason)
         tree = run_git(*no_split, "write-tree", cwd=root, env=private_env).stdout
-    return Snapshot(tree=tree, reason=None)
+        return [
+            _scope(root=root, env=private_env, paths=paths, tree=tree)
+            if paths
+            else Snapshot(tree=tree, reason=None)
+            for paths in path_sets
+        ]
 
 
-def take_snapshot(cwd: Path | None = None) -> Snapshot:
-    """Identify the tree a gate command is about to test.
+def _unknown(path_sets: list[tuple[str, ...]], reason: str) -> list[Snapshot]:
+    """Return one unknown snapshot per path set, all for the same reason."""
+    return [Snapshot(tree=None, reason=reason, paths=paths) for paths in path_sets]
+
+
+def take_snapshot(cwd: Path | None = None, paths: Iterable[str] = ()) -> Snapshot:
+    """Identify the content a gate command is about to test.
 
     The tree is the one a commit of the working copy would get, so a pass on uncommitted work
     matches the later commit. Every situation where the tree might not describe what the
@@ -318,24 +404,41 @@ def take_snapshot(cwd: Path | None = None) -> Snapshot:
 
     Args:
         cwd: Directory to run git in. Defaults to the process working directory.
+        paths: Git pathspecs, from the top of the work tree, that scope the key to the files
+            a gate reads. Empty keys on the whole tree.
 
     Returns:
-        A Snapshot holding the tree hash, or the reason it is unknown.
+        A Snapshot holding the tree hash and any scope, or the reason they are unknown.
     """
+    return take_snapshots([paths], cwd=cwd)[0]
+
+
+def take_snapshots(path_sets: Iterable[Iterable[str]], cwd: Path | None = None) -> list[Snapshot]:
+    """Key the working copy for several path sets while staging it only once.
+
+    Args:
+        path_sets: One collection of pathspecs per snapshot wanted. An empty one keys on the
+            whole tree.
+        cwd: Directory to run git in. Defaults to the process working directory.
+
+    Returns:
+        One Snapshot per path set, in order.
+    """
+    normalized = [tuple(sorted(set(paths))) for paths in path_sets]
     try:
         env = _git_env(cwd)
         state = _inspect(cwd, env)
     except GitNotFoundError:
-        return Snapshot(tree=None, reason="git not found")
+        return _unknown(path_sets=normalized, reason="git not found")
     except (GitError, UnicodeDecodeError):
-        return Snapshot(tree=None, reason="could not inspect git state")
+        return _unknown(path_sets=normalized, reason="could not inspect git state")
     if state.reason or state.root is None:
-        return Snapshot(tree=None, reason=state.reason or "could not locate work tree")
+        return _unknown(path_sets=normalized, reason=state.reason or "could not locate work tree")
 
     try:
-        return _private_snapshot(cwd, state.root, env)
+        return _private_snapshots(cwd, state.root, env, normalized)
     except (GitError, OSError, UnicodeDecodeError):
-        return Snapshot(tree=None, reason="could not hash working copy")
+        return _unknown(path_sets=normalized, reason="could not hash working copy")
 
 
 def git_common_dir(cwd: Path | None = None) -> Path | None:
