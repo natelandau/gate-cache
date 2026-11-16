@@ -117,8 +117,6 @@ Markers live in the git common directory, so all linked worktrees of a repositor
 
 Other tools can read and write markers without calling gate-cache. The marker format is a public contract, and any change to it is a breaking change.
 
-A marker counts as a pass only because the file exists. Its content is a JSON object for information only. gate-cache writes a `duration` field, which holds the run time of the command in seconds, and shows it in the skip line. A marker without this field, or with content that is not JSON, still counts as a pass.
-
 The marker key is the lowercase hex SHA-256 of the tree hash, a NUL byte, and the gate name:
 
 ```text
@@ -175,6 +173,6 @@ marker="$(git rev-parse --git-common-dir)/gate-cache/$key"
 
 The listing goes through a file because the shell drops NUL bytes from the output of `$(...)`.
 
-The existence of the marker file is the signal. gate-cache writes a small JSON object with `tree`, `name`, `command`, and `timestamp` keys. A scoped gate writes its scope value in `tree`, and adds `paths`, the sorted path list, and `full_tree`, the tree of the whole working copy at the time of the run. `gate-cache status` without `--name` reads this JSON to list the gates, so it does not list a marker that another tool wrote without that content. Such a marker still makes its gate skip.
+The existence of the marker file is the signal. gate-cache writes a small JSON object with `tree`, `name`, `command`, `timestamp`, and `duration` keys. `duration` is the run time of the command in seconds, and the skip line and `gate-cache status --name` show it. gate-cache ignores a `duration` that is not a number from 0 to 30 days, and it does not read a marker that is larger than 16 MiB or is not a regular file. In these cases the skip line shows no saved time. A scoped gate writes its scope value in `tree`, and adds `paths`, the sorted path list, and `full_tree`, the tree of the whole working copy at the time of the run. `gate-cache status` without `--name` reads this JSON to list the gates, so it does not list a marker that another tool wrote without that content. Such a marker still makes its gate skip.
 
-When a command fails, or exits 0 but changes the tree, gate-cache writes a miss record at `<key>.miss` in the same directory. The record holds the same JSON keys as a marker, plus `exit_code` and `reason`. A miss record never makes a gate skip. Only `gate-cache status` reads it, to list the missed gates. A pass of the same name on the same tree deletes the miss record. A run that a signal to gate-cache stopped, such as Ctrl-C, writes no miss record. Pruning and `gate-cache clear` delete miss records with the markers.
+When a command fails, or exits 0 but changes the tree, gate-cache writes a miss record at `<key>.miss` in the same directory. The record holds the same JSON keys as a marker, except `duration`, plus `exit_code` and `reason`. A miss record never makes a gate skip. Only `gate-cache status` reads it, to list the missed gates. A pass of the same name on the same tree deletes the miss record. A run that a signal to gate-cache stopped, such as Ctrl-C, writes no miss record. Pruning and `gate-cache clear` delete miss records with the markers.
