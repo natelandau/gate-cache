@@ -5,7 +5,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import shutil
+import stat
 import tempfile
 import time
 from dataclasses import dataclass
@@ -19,6 +21,12 @@ if TYPE_CHECKING:
 MARKER_DIRNAME = "gate-cache"
 TEMP_PREFIX = ".tmp-"
 MISS_SUFFIX = ".miss"
+# Records hold a command line, which the OS caps at a few MiB. The cap keeps a stray large
+# file from being read in full.
+MAX_RECORD_BYTES = 16 * 1024 * 1024
+_DAY_SECONDS = 86400
+# No gate runs this long, so a larger stored value is corrupt.
+MAX_DURATION_SECONDS = 30 * _DAY_SECONDS
 
 
 def marker_key(tree: str, name: str) -> str:
@@ -100,6 +108,7 @@ def write_marker(
     command: Sequence[str],
     paths: Sequence[str] = (),
     full_tree: str | None = None,
+    duration: float | None = None,
 ) -> None:
     """Atomically write a marker file.
 
@@ -110,14 +119,20 @@ def write_marker(
         command: The command that passed.
         paths: Pathspecs of a scoped gate, or empty for an unscoped one.
         full_tree: Whole working-copy tree of a scoped gate's run.
+        duration: Seconds the command ran, shown on later skips. Omitted when None.
 
     Raises:
         OSError: If the marker cannot be written. Any temp file is removed.
     """
-    _write_json(
-        path,
-        {"tree": tree, "name": name, "command": list(command), **scope_fields(paths, full_tree)},
-    )
+    payload: dict[str, object] = {
+        "tree": tree,
+        "name": name,
+        "command": list(command),
+        **scope_fields(paths, full_tree),
+    }
+    if duration is not None:
+        payload["duration"] = round(duration, 3)
+    _write_json(path, payload)
 
 
 def write_miss(  # noqa: PLR0913
@@ -209,10 +224,40 @@ def marker_exists(path: Path) -> bool:
 def _read_record(path: Path) -> dict[str, Any] | None:
     """Parse a JSON object from a record file, or return None when it is not one."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
+        # O_NONBLOCK keeps a FIFO from blocking the open; fstat on the open file then rejects it.
+        with open(os.open(path, os.O_RDONLY | os.O_NONBLOCK), "rb") as handle:  # noqa: PTH123
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_RECORD_BYTES:
+                return None
+            raw = handle.read(MAX_RECORD_BYTES + 1)
+        if len(raw) > MAX_RECORD_BYTES:
+            return None
+        data = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def marker_duration(path: Path) -> float | None:
+    """Read how long the recorded pass ran, to report the time a skip saves.
+
+    Markers from other tools or older versions may lack the field, so any problem
+    yields None rather than an error.
+
+    Args:
+        path: Marker file to read.
+
+    Returns:
+        The duration in seconds, or None when the marker has no usable value.
+    """
+    record = _read_record(path)
+    value = record.get("duration") if record is not None else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    # The range check also rejects NaN, infinity, and ints too large for a float.
+    if not 0 <= value <= MAX_DURATION_SECONDS:
+        return None
+    return float(value)
 
 
 @dataclass(frozen=True)
@@ -350,7 +395,7 @@ def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None 
         max_age_days: Age in days beyond which a file is deleted.
         now: Current epoch time; defaults to the system clock.
     """
-    cutoff = (time.time() if now is None else now) - max_age_days * 86400
+    cutoff = (time.time() if now is None else now) - max_age_days * _DAY_SECONDS
     try:
         for entry in directory.iterdir():
             with contextlib.suppress(OSError):

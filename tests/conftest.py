@@ -1,5 +1,6 @@
 """Shared fixtures that isolate git from the developer's configuration."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -152,3 +153,8 @@ def misses(repo: Path) -> list[Path]:
     """Return the miss records in the repo's marker directory."""
     directory = marker_dir(repo / ".git")
     return sorted(directory.glob(f"*{MISS_SUFFIX}")) if directory.is_dir() else []
+
+
+def read_records(paths: list[Path]) -> list[dict[str, object]]:
+    """Parse the JSON content of marker or miss record files."""
+    return [json.loads(path.read_text()) for path in paths]

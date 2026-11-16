@@ -379,7 +379,9 @@ def test_scoped_skip_names_the_paths(
     capfd.readouterr()
     assert invoke(monkeypatch, "--name", "t", "--path", "a.txt", "--", *counter.argv()) == 0
     assert counter.count == 1
-    assert re.search(r"t already passed on paths [0-9a-f]{12}, skipping", capfd.readouterr().err)
+    assert re.search(
+        r"t already passed on paths [0-9a-f]{12}, skipping \(saved <1s\)$", capfd.readouterr().err
+    )
 
 
 def test_status_passes_paths(monkeypatch: pytest.MonkeyPatch) -> None:

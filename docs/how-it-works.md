@@ -19,7 +19,7 @@ Each time it runs, gate-cache does these steps in this sequence:
     - A submodule directory that holds files but is not a git repository.
     - On a case-insensitive filesystem, a file that differs from its index entry only by the case of its name.
 4. If git cannot find the git directory that holds the markers, run the command without the cache and write no marker.
-5. If a marker for the tree and the name exists, print a skip line and exit 0.
+5. If a marker for the tree and the name exists, print a skip line and exit 0. If the marker records the run time of the command, the skip line shows it.
 6. Run the command.
 7. If the command exits 0 and the tree did not change during the run, write the marker. Otherwise, write a miss record that `gate-cache status` reports.
 
@@ -116,6 +116,8 @@ Markers live in the git common directory, so all linked worktrees of a repositor
 ## Marker format
 
 Other tools can read and write markers without calling gate-cache. The marker format is a public contract, and any change to it is a breaking change.
+
+A marker counts as a pass only because the file exists. Its content is a JSON object for information only. gate-cache writes a `duration` field, which holds the run time of the command in seconds, and shows it in the skip line. A marker without this field, or with content that is not JSON, still counts as a pass.
 
 The marker key is the lowercase hex SHA-256 of the tree hash, a NUL byte, and the gate name:
 

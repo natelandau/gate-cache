@@ -14,7 +14,7 @@ from gate_cache import snapshot as snapshot_module
 from gate_cache.gate import gate_status, run_gate
 from gate_cache.git import GitResult
 from gate_cache.snapshot import take_snapshot, take_snapshots
-from tests.conftest import Counter, expected_tree, git, markers, misses
+from tests.conftest import Counter, expected_tree, git, markers, misses, read_records
 
 
 @pytest.fixture
@@ -154,11 +154,6 @@ def test_path_outside_repository_is_unknown(scoped_repo: Path, tmp_path: Path) -
     assert snap.reason is not None
 
 
-def _read(paths: list[Path]) -> list[dict[str, object]]:
-    """Parse the JSON content of marker or miss record files."""
-    return [json.loads(path.read_text()) for path in paths]
-
-
 def test_scoped_gate_skips_after_change_outside_paths(scoped_repo: Path, counter: Counter) -> None:
     """Verify a docs-style change outside the paths lets a scoped gate skip."""
     assert run_gate("t", counter.argv(), paths=["src"]) == 0
@@ -193,7 +188,7 @@ def test_unmatched_path_runs_uncached(
     assert run_gate("t", counter.argv(), paths=["nope/"]) == 0
     assert run_gate("t", counter.argv(), paths=["nope/"]) == 0
     assert counter.count == 2
-    assert _read(markers(scoped_repo)) == []
+    assert read_records(markers(scoped_repo)) == []
     assert "--path nope/ matches no files, running without cache" in capfd.readouterr().err
 
 
@@ -207,14 +202,16 @@ def test_edit_outside_paths_during_run_records_pass(scoped_repo: Path, counter: 
 def test_edit_inside_paths_during_run_records_miss(scoped_repo: Path, counter: Counter) -> None:
     """Verify an edit inside the paths while the gate runs records a miss, not a pass."""
     run_gate("t", counter.argv(touch=scoped_repo / "src" / "app.py"), paths=["src"])
-    assert _read(markers(scoped_repo)) == []
-    assert [r["reason"] for r in _read(misses(scoped_repo))] == ["files changed during the run"]
+    assert read_records(markers(scoped_repo)) == []
+    assert [r["reason"] for r in read_records(misses(scoped_repo))] == [
+        "files changed during the run"
+    ]
 
 
 def test_scoped_marker_records_paths_and_full_tree(scoped_repo: Path, counter: Counter) -> None:
     """Verify a scoped marker keeps the scope as its tree and adds the paths and full tree."""
     run_gate("t", counter.argv(), paths=["src", "a.txt"])
-    (record,) = _read(markers(scoped_repo))
+    (record,) = read_records(markers(scoped_repo))
     assert str(record["tree"]).startswith("paths:")
     assert record["paths"] == ["a.txt", "src"]
     assert record["full_tree"] == git("rev-parse", "HEAD^{tree}", cwd=scoped_repo)
@@ -223,8 +220,8 @@ def test_scoped_marker_records_paths_and_full_tree(scoped_repo: Path, counter: C
 def test_unscoped_marker_is_unchanged(scoped_repo: Path, counter: Counter) -> None:
     """Verify an unscoped marker writes only the keys it always has."""
     run_gate("t", counter.argv())
-    (record,) = _read(markers(scoped_repo))
-    assert set(record) == {"tree", "name", "command", "timestamp"}
+    (record,) = read_records(markers(scoped_repo))
+    assert set(record) == {"tree", "name", "command", "timestamp", "duration"}
 
 
 def test_status_finds_scoped_pass_after_outside_change(

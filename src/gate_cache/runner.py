@@ -6,6 +6,7 @@ import contextlib
 import signal
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -29,10 +30,13 @@ class ChildResult:
         exit_code: Exit code to propagate, with signal deaths mapped to 128 + signal.
         interrupted: True when gate-cache received SIGINT, SIGTERM, or SIGHUP while the
             child ran.
+        duration: Seconds from spawning the child until it exited, or 0 when it never started.
     """
 
     exit_code: int
     interrupted: bool
+    # A measurement, so it is left out of equality.
+    duration: float = field(default=0.0, compare=False)
 
 
 @dataclass
@@ -107,6 +111,7 @@ def run_child(argv: Sequence[str]) -> ChildResult:
         signal arrived while the child ran.
     """
     state = _SignalState()
+    started = time.monotonic()
     with _trap_signals(state):
         try:
             proc = subprocess.Popen(list(argv))  # noqa: S603
@@ -121,7 +126,8 @@ def run_child(argv: Sequence[str]) -> ChildResult:
             return ChildResult(_EXIT_NOT_EXECUTABLE, interrupted=state.interrupted)
         state.attach(proc)
         code = proc.wait()
+    duration = time.monotonic() - started
 
     if code < 0:
         code = _SIGNAL_EXIT_BASE - code
-    return ChildResult(code, interrupted=state.interrupted)
+    return ChildResult(code, interrupted=state.interrupted, duration=duration)

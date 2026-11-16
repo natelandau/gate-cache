@@ -8,10 +8,11 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from gate_cache.console import kv, say
+from gate_cache.console import format_duration, kv, say
 from gate_cache.markers import (
     RecordIndex,
     clear_markers,
+    marker_duration,
     marker_exists,
     marker_path,
     miss_path,
@@ -120,8 +121,12 @@ class _Attempt:
     snapshot: Snapshot
     key: str
 
-    def record_pass(self) -> None:
-        """Write the marker, drop any earlier miss, and prune old files; a failure only warns."""
+    def record_pass(self, duration: float) -> None:
+        """Write the marker, drop any earlier miss, and prune old files; a failure only warns.
+
+        Args:
+            duration: Seconds the command ran, stored for later skips to report.
+        """
         path = marker_path(self.common_dir, self.key, self.name)
         try:
             write_marker(
@@ -131,6 +136,7 @@ class _Attempt:
                 command=self.command,
                 paths=self.snapshot.paths,
                 full_tree=self.snapshot.tree,
+                duration=duration,
             )
         except OSError as error:
             say(f"warning: could not record pass: {error}")
@@ -158,11 +164,15 @@ class _Attempt:
         except Exception as error:  # noqa: BLE001
             say(f"warning: could not record miss: {error}")
 
-    def record_if_unchanged(self) -> None:
-        """Record the pass only when the run left the content it was keyed on untouched."""
+    def record_if_unchanged(self, duration: float) -> None:
+        """Record the pass only when the run left the content it was keyed on untouched.
+
+        Args:
+            duration: Seconds the command ran.
+        """
         # A command that rewrote keyed files or left new files behind did not pass on `key`.
         if take_snapshot(paths=self.snapshot.paths).key == self.key:
-            self.record_pass()
+            self.record_pass(duration)
         else:
             say(f"{_FILES_CHANGED}, not recording pass")
             self.record_miss(exit_code=0, reason=_FILES_CHANGED)
@@ -193,8 +203,11 @@ def run_gate(name: str, command: Sequence[str], paths: Sequence[str] = ()) -> in
     if common_dir is None:
         return _run_uncached(_NO_COMMON_DIR_REASON, command)
 
-    if marker_exists(marker_path(common_dir, key, name)):
-        say(f"{name} already passed on {snapshot.label}, skipping")
+    path = marker_path(common_dir, key, name)
+    if marker_exists(path):
+        duration = marker_duration(path)
+        saved = f" (saved {format_duration(duration)})" if duration is not None else ""
+        say(f"{name} already passed on {snapshot.label}, skipping{saved}")
         return 0
 
     attempt = _Attempt(
@@ -208,7 +221,7 @@ def run_gate(name: str, command: Sequence[str], paths: Sequence[str] = ()) -> in
     else:
         # Recording is best effort: nothing after a passing run may change its exit code.
         try:
-            attempt.record_if_unchanged()
+            attempt.record_if_unchanged(result.duration)
         except Exception as error:  # noqa: BLE001
             say(f"warning: could not record pass: {error}")
     return result.exit_code
@@ -232,11 +245,7 @@ def gate_status(
     reason = disabled_reason()
     if reason is not None:
         if as_json:
-            empty = (
-                {"name": name, "marker": None, "result": "miss", "last_run": None}
-                if name is not None
-                else {"passed": [], "missed": []}
-            )
+            empty = _named_report(name) if name is not None else {"passed": [], "missed": []}
             _print_json({"enabled": False, "tree": None, "reason": reason, **empty})
         else:
             say(reason)
@@ -263,6 +272,27 @@ def _unknown_reason(snapshot: Snapshot, common_dir: Path | None) -> str | None:
     return None
 
 
+def _named_report(
+    name: str,
+    *,
+    marker: str | None = None,
+    hit: bool = False,
+    last_run: dict[str, Any] | None = None,
+    duration: float | None = None,
+) -> dict[str, Any]:
+    """Build the per-gate keys of a `status --name --json` report.
+
+    Both the disabled and the enabled report call this, so they always carry the same keys.
+    """
+    return {
+        "name": name,
+        "marker": marker,
+        "result": "hit" if hit else "miss",
+        "last_run": last_run,
+        "duration": duration,
+    }
+
+
 def _miss_summary(record: Mapping[str, Any]) -> dict[str, Any]:
     """Pick the fields of a miss record that describe the run."""
     return {
@@ -278,9 +308,11 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
     path: Path | None = None
     hit = False
     last_run: dict[str, Any] | None = None
+    duration: float | None = None
     if key is not None and common_dir is not None:
         path = marker_path(common_dir, key, name)
         hit = marker_exists(path)
+        duration = marker_duration(path) if hit else None
         record = None if hit else miss_record(common_dir, key, name)
         last_run = _miss_summary(record) if record is not None else None
     reason = _unknown_reason(snapshot, common_dir)
@@ -292,9 +324,13 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
                 "name": name,
                 "tree": key,
                 "reason": reason,
-                "marker": str(path) if path is not None else None,
-                "result": "hit" if hit else "miss",
-                "last_run": last_run,
+                **_named_report(
+                    name,
+                    marker=str(path) if path is not None else None,
+                    hit=hit,
+                    last_run=last_run,
+                    duration=duration,
+                ),
                 **scope_fields(snapshot.paths, snapshot.tree),
             }
         )
@@ -313,6 +349,8 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
         rows["scope"] = snapshot.scope if snapshot.scope is not None else f"unknown: {reason}"
     rows["tree"] = snapshot.tree if snapshot.tree is not None else f"unknown: {reason}"
     rows |= {"marker": marker, "result": "hit" if hit else "miss"}
+    if duration is not None:
+        rows["duration"] = format_duration(duration)
     if last_run is not None:
         rows["last run"] = str(last_run["reason"])
     kv(rows)

@@ -167,3 +167,10 @@ def test_restore_skips_handlers_set_outside_python(monkeypatch: pytest.MonkeyPat
         assert run_child([sys.executable, "-c", "pass"]) == ChildResult(0, interrupted=False)
     finally:
         real_signal(signal.SIGHUP, original)
+
+
+def test_run_child_reports_duration() -> None:
+    """Verify the result carries how long the child ran."""
+    result = run_child([sys.executable, "-c", "import time; time.sleep(0.2)"])
+
+    assert result.duration >= 0.2
