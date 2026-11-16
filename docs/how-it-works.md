@@ -33,22 +33,37 @@ Git gives hooks `GIT_DIR` without `GIT_WORK_TREE`, and then treats the current d
 
 A command that exits 0 but changes the tree does not get a marker. Examples are a formatter that rewrites files and a command that leaves new untracked files. In this case, gate-cache prints `files changed during the run, not recording pass`.
 
+## Gates scoped to paths
+
+A gate with one or more `--path` options keys its marker on the content under those paths, not on the whole tree. The other rules above do not change. These rules apply to a scoped gate:
+
+- Each value is a git pathspec. gate-cache matches it from the top of the work tree, whatever the current directory.
+- gate-cache removes `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS`, and `GIT_ICASE_PATHSPECS` from the environment of the match, so the same values match the same files in every environment.
+- gate-cache sorts the values and removes duplicates. The order of the `--path` options has no effect on the key.
+- gate-cache stages the working copy into the private index, as in step 2. It then lists the matched entries with `git ls-files --stage`. The list holds the mode, the blob hash, and the path of each tracked and untracked, non-ignored file under the paths.
+- The scope is a hash of the sorted values and that list. [Marker format](#marker-format) gives the formula.
+- If a path without `:(exclude)` or `:!` matches no file, or the paths select no file at all, gate-cache runs the command without the cache and writes no marker. The reason line names the path. This rule stops a typo in a path from giving a key that never changes.
+- After a pass, gate-cache compares the scope, not the tree. An edit outside the paths during the run does not stop the marker.
+- The checks in step 3 that make the tree unknown still examine the whole working copy. For example, a submodule with local changes outside the paths still makes gate-cache run the command without the cache.
+
+A scoped marker and an unscoped marker never match each other, even with the same name.
+
 ## Arguments and exit codes
 
-`--` is required, and only `--name` can come before it. gate-cache passes everything after `--` to the command without changes.
+`--` is required, and only `--name` and `--path` can come before it, in any order. `--path` can occur more than once. gate-cache passes everything after `--` to the command without changes.
 
 Without `--name`, the name of the gate is the command and its arguments, joined with spaces and quoted as Python `shlex.join` quotes them. An argument that holds a space or a shell special character gets single quotes, so `pytest 'a b'` and `pytest a b` are different names. Each set of arguments therefore has its own markers.
 
 With `--name`, the name alone identifies the gate, and the arguments are not part of the key. A recipe such as `test *args` that gives `--name test` runs every variant under the same name, so a pass with `-k unit` writes the same marker as a pass of the full suite. To keep the variants apart, leave out `--name`, or put the arguments in the name.
 
-| Situation                                                                 | Exit code                    |
-| ------------------------------------------------------------------------- | ---------------------------- |
-| The command ran                                                           | The exit code of the command |
-| A marker exists, so the command was skipped                               | 0                            |
-| A missing `--`, a `--name` with no value, or another argument before `--` | 2, and nothing runs          |
-| The command is not found                                                  | 127                          |
-| The command cannot be run                                                 | 126                          |
-| A signal stopped the command                                              | 128 plus the signal number   |
+| Situation                                                                             | Exit code                    |
+| ------------------------------------------------------------------------------------- | ---------------------------- |
+| The command ran                                                                       | The exit code of the command |
+| A marker exists, so the command was skipped                                           | 0                            |
+| A missing `--`, a `--name` or `--path` with no value, or another argument before `--` | 2, and nothing runs          |
+| The command is not found                                                              | 127                          |
+| The command cannot be run                                                             | 126                          |
+| A signal stopped the command                                                          | 128 plus the signal number   |
 
 A failing command, a signal, or Ctrl-C never writes a marker. If gate-cache gets `SIGTERM` or `SIGHUP` while the command runs, it sends the signal to the command, waits for the command to stop, and exits with the status of the command. A signal that the shell ignores, for example under `nohup`, stays ignored for the command.
 
@@ -86,6 +101,7 @@ A marker covers the name and the tree, and nothing else. The tree holds the cont
 - The working directory. `ruff check .` checks different files in `src/` than at the top of the repository, but both runs have the same tree and the same name. Run such a command from one directory, or give each directory its own `--name`.
 - Changes to the executable bit when `core.fileMode=false` is set.
 - Differences that a clean filter removes before git hashes a file, such as line endings with `core.autocrlf` or the content behind a Git LFS pointer when the pointer does not change.
+- For a gate scoped with `--path`, every file outside its paths.
 
 A change to one of these leaves the tree the same, so an existing marker still matches and gate-cache skips the command. A fresh run after such a change can give a different result. A CI runner that starts from a fresh clone has no markers and runs every command. A runner that keeps the `.git` directory between jobs also keeps the markers. If `CI` is on and `GATE_CACHE_DISABLE` is not set, gate-cache does not use them. `gate-cache clear` deletes the markers, and `GATE_CACHE_DISABLE=1` runs every command without the cache. To make a gate depend on an ignored file, an environment variable, or a tool version, put its value in the gate name, as the README section [Inputs that git does not track](../README.md#inputs-that-git-does-not-track) shows.
 
@@ -122,6 +138,41 @@ marker="$(git rev-parse --git-common-dir)/gate-cache/$key"
 
 If the working copy matches the index and has no untracked, non-ignored files, `git write-tree` alone gives the same tree. The snippet writes objects for new content into `.git/objects`, as `git add` does. On Linux systems without `shasum`, `sha256sum` gives the same digest.
 
-The existence of the marker file is the signal. gate-cache writes a small JSON object with `tree`, `name`, `command`, and `timestamp` keys. `gate-cache status` without `--name` reads this JSON to list the gates, so it does not list a marker that another tool wrote without that content. Such a marker still makes its gate skip.
+A gate scoped with `--path` uses the same formula with a scope value in place of the tree hash. The scope value starts with `paths:`, so it never equals a tree hash:
+
+```text
+scope  = "paths:" + sha256_hex( "gate-cache-paths-v1" + "\0" + join(paths, "\0") + "\0\0" + listing )
+key    = sha256( scope + "\0" + name )
+```
+
+`paths` holds the `--path` values, sorted by byte value, with duplicates removed. `listing` is the output of `git ls-files --stage -z` for those paths, run at the top of the work tree on the staged copy of the index. This shell snippet finds the marker of the `pytest` gate scoped to `src` and `tests`:
+
+```bash
+name=pytest
+paths=(src tests) # sorted by byte value, with no duplicates
+index=$(mktemp)
+listing=$(mktemp)
+cp -p "$(git rev-parse --git-path index)" "$index"
+top=$(git rev-parse --show-toplevel)
+(
+  cd "$top" || exit 1
+  unset GIT_LITERAL_PATHSPECS GIT_GLOB_PATHSPECS GIT_NOGLOB_PATHSPECS GIT_ICASE_PATHSPECS
+  GIT_INDEX_FILE="$index" git add -A
+  GIT_INDEX_FILE="$index" git ls-files --stage -z -- "${paths[@]}" >"$listing"
+)
+digest=$({
+  printf 'gate-cache-paths-v1'
+  printf '\0%s' "${paths[@]}"
+  printf '\0\0'
+  cat "$listing"
+} | shasum -a 256 | cut -d' ' -f1)
+rm -f "$index" "$listing"
+key=$(printf '%s\0%s' "paths:$digest" "$name" | shasum -a 256 | cut -d' ' -f1)
+marker="$(git rev-parse --git-common-dir)/gate-cache/$key"
+```
+
+The listing goes through a file because the shell drops NUL bytes from the output of `$(...)`.
+
+The existence of the marker file is the signal. gate-cache writes a small JSON object with `tree`, `name`, `command`, and `timestamp` keys. A scoped gate writes its scope value in `tree`, and adds `paths`, the sorted path list, and `full_tree`, the tree of the whole working copy at the time of the run. `gate-cache status` without `--name` reads this JSON to list the gates, so it does not list a marker that another tool wrote without that content. Such a marker still makes its gate skip.
 
 When a command fails, or exits 0 but changes the tree, gate-cache writes a miss record at `<key>.miss` in the same directory. The record holds the same JSON keys as a marker, plus `exit_code` and `reason`. A miss record never makes a gate skip. Only `gate-cache status` reads it, to list the missed gates. A pass of the same name on the same tree deletes the miss record. A run that a signal to gate-cache stopped, such as Ctrl-C, writes no miss record. Pruning and `gate-cache clear` delete miss records with the markers.

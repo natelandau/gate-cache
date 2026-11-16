@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import shlex
 import sys
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from gate_cache import __version__
@@ -19,12 +20,16 @@ _INTERRUPTED = 130
 _INFO_FLAGS = {"-h", "--help", "--version"}
 _NAME_NEEDS_VALUE = "--name needs a value, e.g. gate-cache --name pytest -- uv run pytest"
 _NEEDS_SEPARATOR = "put -- before the command, e.g. gate-cache -- uv run pytest"
+_NEEDS_VALUE = {
+    "--name": _NAME_NEEDS_VALUE,
+    "--path": "--path needs a value, e.g. gate-cache --path src/ -- uv run pytest",
+}
 _NAME_REPEATED = "--name given more than once"
 _NO_COMMAND = "no command given after --"
 
 _USAGE = """\
-gate-cache [--name NAME] -- COMMAND [ARGS...]
-       gate-cache status [--name NAME] [--json]
+gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...]
+       gate-cache status [--name NAME [--path PATHSPEC]...] [--json]
        gate-cache clear"""
 
 _HELP = """\
@@ -34,11 +39,11 @@ runs the command, records a pass keyed on the git tree of the working copy
 tree is identical. A pass on uncommitted work therefore skips when the same
 content is committed.
 
--- is required, and only --name may come before it. Everything after -- is the
-command, verbatim. Without --name, the gate name is the command itself, so each
-set of arguments has its own records. Give --name to share records between
-commands that check the same thing, or to key on inputs that the tree does not
-cover.
+-- is required, and only --name and --path may come before it. Everything after
+-- is the command, verbatim. Without --name, the gate name is the command
+itself, so each set of arguments has its own records. Give --name to share
+records between commands that check the same thing, or to key on inputs that the
+tree does not cover.
 
 Exit codes:
   run     the command's own exit code, or 0 when a recorded pass lets it skip.
@@ -63,10 +68,18 @@ secret in a name, because markers and status store it as plain text. Without
 secret argument. Never wrap checks that depend on the commit message or the
 branch name.
 
+--path scopes a gate to the files it reads, so a change elsewhere in the
+repository does not run it again. Each --path is a git pathspec, read from the
+top of the work tree whatever the current directory, and globs and :(exclude)
+work. Repeat --path for each path. The gate skips when nothing under its paths changed,
+so a path left out is a skip that should have run. A path that matches no file
+runs the command without the cache.
+
 Typical use:
   gate-cache -- uv run pytest -x
   gate-cache --name pytest -- uv run pytest -x
   gate-cache --name "test-$(git hash-object .env)" -- uv run pytest
+  gate-cache --name api-test --path api/ -- uv run pytest
 """
 
 _RUN_HELP = """\
@@ -75,8 +88,9 @@ subcommands:
   clear        Delete every recorded pass for this repository.
 
 run:
-  gate-cache [--name NAME] -- COMMAND [ARGS...] runs COMMAND unless it already
-  passed on the current git tree. On a skip, it prints one line to stderr and
+  gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...] runs COMMAND
+  unless it already passed on the current git tree, or on the same content under
+  its paths. On a skip, it prints one line to stderr and
   exits 0 without running anything. Otherwise it runs the command and exits with
   its exit code. The command runs without caching (and nothing is recorded) when
   GATE_CACHE_DISABLE or CI turns caching off, the tree is unknown (for example an
@@ -145,6 +159,12 @@ def _main_parser() -> argparse.ArgumentParser:
         help="Gate name. Records match only when the name and the tree both match. "
         "Defaults to the command and its arguments, quoted as a shell would.",
     )
+    parser.add_argument(
+        "--path",
+        metavar="PATHSPEC",
+        help="Key on only the files under this git pathspec, read from the top of the work "
+        "tree. Repeat for each path.",
+    )
     return parser
 
 
@@ -160,6 +180,13 @@ def _status_parser() -> argparse.ArgumentParser:
         "--name",
         action=_StoreOnce,
         help="Gate name to look up. Omit it to list every gate that ran on this tree.",
+    )
+    parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        metavar="PATHSPEC",
+        help="Look up the gate scoped to these paths. Repeat for each path. Needs --name.",
     )
     parser.add_argument(
         "--json",
@@ -180,35 +207,62 @@ def _clear_parser() -> argparse.ArgumentParser:
     )
 
 
-def _split_run(tokens: list[str]) -> tuple[str | None, list[str]]:
-    """Split a run invocation into its --name value and the command after the first --.
+@dataclass(frozen=True)
+class _RunArgs:
+    """The options before -- and the command after it."""
 
-    Only `--name X` or `--name=X` may precede `--`, so a stray option such as `--version`
-    or the first word of the command can never be mistaken for one of ours.
+    name: str | None
+    paths: list[str]
+    command: list[str]
+
+
+def _option_value(tokens: list[str], index: int, option: str) -> tuple[str, int] | None:
+    """Read `option X` or `option=X` at index, returning the value and the next index.
 
     Raises:
-        _UsageError: When anything else precedes `--`, `--` is missing, or `--name` is
-            missing its value or given twice.
+        _UsageError: When the option has no value or an empty one, such as an unset shell
+            variable.
+    """
+    arg = tokens[index]
+    if arg == option:
+        if index + 1 == len(tokens) or tokens[index + 1] == "--":
+            raise _UsageError(_NEEDS_VALUE[option])
+        value, after = tokens[index + 1], index + 2
+    elif arg.startswith(f"{option}="):
+        value, after = arg.removeprefix(f"{option}="), index + 1
+    else:
+        return None
+    if not value:
+        raise _UsageError(_NEEDS_VALUE[option])
+    return value, after
+
+
+def _split_run(tokens: list[str]) -> _RunArgs:
+    """Split a run invocation into its options and the command after the first --.
+
+    Only `--name` and `--path`, each as `--opt X` or `--opt=X`, may precede `--`, so a stray
+    option such as `--version` or the first word of the command can never be mistaken for
+    one of ours.
+
+    Raises:
+        _UsageError: When anything else precedes `--`, `--` is missing, an option is
+            missing its value, or `--name` is given twice.
     """
     name: str | None = None
+    paths: list[str] = []
     index = 0
     while index < len(tokens):
-        arg = tokens[index]
-        if arg == "--":
-            return name, tokens[index + 1 :]
-        if arg == "--name":
-            if index + 1 == len(tokens) or tokens[index + 1] == "--":
-                raise _UsageError(_NAME_NEEDS_VALUE)
-            value = tokens[index + 1]
-            index += 2
-        elif arg.startswith("--name="):
-            value = arg.removeprefix("--name=")
-            index += 1
+        if tokens[index] == "--":
+            return _RunArgs(name=name, paths=paths, command=tokens[index + 1 :])
+        if (found := _option_value(tokens=tokens, index=index, option="--name")) is not None:
+            if name is not None:
+                raise _UsageError(_NAME_REPEATED)
+            name, index = found
+        elif (found := _option_value(tokens=tokens, index=index, option="--path")) is not None:
+            value, index = found
+            paths.append(value)
         else:
             break
-        if name is not None:
-            raise _UsageError(_NAME_REPEATED)
-        name = value
     raise _UsageError(_NEEDS_SEPARATOR)
 
 
@@ -221,18 +275,22 @@ def _dispatch(tokens: list[str]) -> int:
     if tokens and tokens[0] in _INFO_FLAGS:
         _main_parser().parse_args(tokens)  # prints help or the version, then exits
     if tokens and tokens[0] == "status":
-        args = _status_parser().parse_args(tokens[1:])
-        return gate_status(args.name, as_json=args.as_json)
+        parser = _status_parser()
+        args = parser.parse_args(tokens[1:])
+        if args.path and args.name is None:
+            parser.error("--path needs --name")
+        if "" in args.path:
+            parser.error(_NEEDS_VALUE["--path"])
+        return gate_status(args.name, as_json=args.as_json, paths=args.path)
     if tokens and tokens[0] == "clear":
         _clear_parser().parse_args(tokens[1:])
         return clear_cache()
 
-    name, command = _split_run(tokens)
-    if not command:
+    run = _split_run(tokens)
+    if not run.command:
         raise _UsageError(_NO_COMMAND)
-    if name == "":
-        raise _UsageError(_NAME_NEEDS_VALUE)
-    return run_gate(shlex.join(command) if name is None else name, command)
+    name = shlex.join(run.command) if run.name is None else run.name
+    return run_gate(name, run.command, paths=run.paths)
 
 
 def main() -> None:

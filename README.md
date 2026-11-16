@@ -14,7 +14,7 @@ $ gate-cache -- uv run pytest
 gate-cache: uv run pytest already passed on tree aaff74984ccc, skipping
 ```
 
-A change to any file that git does not ignore changes the content, so no marker matches and the command runs again. A CI runner that starts from a fresh clone has no markers, so it runs every command.
+A change to any file that git does not ignore changes the content, so no marker matches and the command runs again. To make a gate match only the files that its command reads, [scope the gate to its paths](#scope-a-gate-to-its-paths). A CI runner that starts from a fresh clone has no markers, so it runs every command.
 
 ## Install
 
@@ -48,6 +48,28 @@ With `--name`, the name alone identifies the gate, and the arguments of the comm
 gate-cache exits with the exit code of the command, or with 0 when it skips the command. It writes a marker only when the command passes, so a command that failed runs again the next time.
 
 The tree includes uncommitted edits and untracked files that git does not ignore. A gate that passes on uncommitted work therefore skips in the commit hook when you commit the same content. gate-cache computes the tree from a private copy of the index, so it never stages files or changes your index.
+
+## Scope a gate to its paths
+
+In a repository with several parts, a change to the docs or to one part does not change the result of the tests of another part. A gate that has `--path` options matches only the content under those paths:
+
+```sh
+gate-cache --name api-test --path api/ --path uv.lock -- uv run pytest api/tests
+```
+
+After this gate passes, a change to `README.md` or to `web/` lets it skip, and so does a rebase that brings in only those changes. A change under `api/` or to `uv.lock` makes it run again.
+
+Each `--path` is a git pathspec. gate-cache reads it from the top of the repository, so a recipe that runs in a subdirectory and a hook that runs at the top give the same paths. A directory covers every file under it. The order of the paths has no effect. Wildcards and `:(exclude)` work:
+
+```sh
+gate-cache --name scripts-test --path scripts/ --path ':(exclude)scripts/fixtures/' -- uv run pytest scripts
+```
+
+In a pathspec, `*` also matches `/`, so `*.just` matches a `.just` file in every directory. `**/justfile` matches only a `justfile` inside a directory. To also match the `justfile` at the top, use `:(glob)**/justfile`.
+
+> **Warning:** List every file and directory that the command reads, including lock files and shared config. The gate skips when nothing under its paths changed. A change to a file outside the paths does not make the gate run again.
+
+If a path matches no file, gate-cache runs the command without the cache and prints that path. A typo in a path therefore never makes a gate skip.
 
 ## Run it as a hook
 
@@ -192,7 +214,21 @@ $ gate-cache status --name "uv run ruff check ."
 
 The `last run` line shows only when the name ran on this content without a pass.
 
-`status` runs nothing. With `--name`, it exits 0 when a marker matches and 1 when none does. Without `--name`, it exits 0 when at least one name passed. When gate-cache cannot match the content, for example during a merge conflict, the `tree` line gives the reason.
+For a scoped gate, give the same `--path` options with `--name`. The report adds a `paths` line and a `scope` line, and the `tree` line shows the whole tree:
+
+```console
+$ gate-cache status --name api-test --path api/ --path uv.lock
+  name:   api-test
+  paths:  api/ uv.lock
+  scope:  paths:7c462ce94adead1b7ab99f8e4212ffac194c562e0d178151207c1f01e0073615
+  tree:   aaff74984cccd156a469afa7d9ab10e4777beb24
+  marker: /path/to/repo/.git/gate-cache/4156a896efe2ed16204b6d2525acbfbd9c4dd808dbfc135571e4f631b7d7754a
+  result: hit
+```
+
+Without `--name`, `status` also lists the scoped gates that passed or missed on the current content of their paths.
+
+`status` runs nothing. With `--name`, it exits 0 when a marker matches and 1 when none does. Without `--name`, it exits 0 when at least one name passed. When gate-cache cannot match the content, for example during a merge conflict, the `tree` line gives the reason. For a scoped gate whose paths match no file, the `scope` line gives it.
 
 With `--json`, `status` writes one JSON object to stdout instead of text. The exit codes do not change:
 
@@ -209,7 +245,7 @@ $ gate-cache status --json
 }
 ```
 
-`reason` tells why gate-cache cannot match the content, and is `null` when it can. When caching is off, `enabled` is `false`, `reason` names the variable, and the other keys are empty or `null`. With `--name`, the object has the `name`, `marker`, `result`, and `last_run` keys in place of `passed` and `missed`.
+`reason` tells why gate-cache cannot match the content, and is `null` when it can. When caching is off, `enabled` is `false`, `reason` names the variable, and the other keys are empty or `null`. With `--name`, the object has the `name`, `marker`, `result`, and `last_run` keys in place of `passed` and `missed`. With `--path`, `tree` holds the scope value, and the object adds the `paths` and `full_tree` keys.
 
 ## Start fresh
 

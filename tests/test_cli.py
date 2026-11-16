@@ -1,5 +1,6 @@
 """Tests for the command line interface."""
 
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -81,7 +82,7 @@ def test_run_without_name_uses_quoted_command(
     run_gate = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--", *command) == 0
-    run_gate.assert_called_once_with(name, command)
+    run_gate.assert_called_once_with(name, command, paths=[])
 
 
 def test_empty_command_is_usage_error(
@@ -108,7 +109,7 @@ def test_run_passes_options_through_verbatim(monkeypatch: pytest.MonkeyPatch) ->
     run_gate = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--name", "x", "--", "uv", "run", "pytest", "-x", "--name", "y") == 0
-    run_gate.assert_called_once_with("x", ["uv", "run", "pytest", "-x", "--name", "y"])
+    run_gate.assert_called_once_with("x", ["uv", "run", "pytest", "-x", "--name", "y"], paths=[])
 
 
 def test_double_dash_protects_subcommand_names(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -118,7 +119,7 @@ def test_double_dash_protects_subcommand_names(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(cli, "run_gate", run_gate)
     monkeypatch.setattr(cli, "gate_status", status)
     assert invoke(monkeypatch, "--name", "s", "--", "status") == 0
-    run_gate.assert_called_once_with("s", ["status"])
+    run_gate.assert_called_once_with("s", ["status"], paths=[])
     status.assert_not_called()
 
 
@@ -129,7 +130,7 @@ def test_status_and_clear_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "gate_status", status)
     monkeypatch.setattr(cli, "clear_cache", clear)
     assert invoke(monkeypatch, "status", "--name", "x") == 1
-    status.assert_called_once_with("x", as_json=False)
+    status.assert_called_once_with("x", as_json=False, paths=[])
     assert invoke(monkeypatch, "clear") == 0
     clear.assert_called_once_with()
 
@@ -139,7 +140,7 @@ def test_status_without_name_lists_gates(monkeypatch: pytest.MonkeyPatch) -> Non
     status = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "gate_status", status)
     assert invoke(monkeypatch, "status") == 0
-    status.assert_called_once_with(None, as_json=False)
+    status.assert_called_once_with(None, as_json=False, paths=[])
 
 
 def test_status_json_flag(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,7 +148,7 @@ def test_status_json_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     status = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "gate_status", status)
     assert invoke(monkeypatch, "status", "--json") == 0
-    status.assert_called_once_with(None, as_json=True)
+    status.assert_called_once_with(None, as_json=True, paths=[])
 
 
 def test_help_is_self_describing(
@@ -164,6 +165,8 @@ def test_help_is_self_describing(
         "clear",
         "gate-cache --name pytest -- ",
         "gate-cache -- uv run pytest",
+        "--path",
+        "gate-cache --name api-test --path api/ -- ",
     ):
         assert text in out
     flat = " ".join(out.split())
@@ -171,6 +174,8 @@ def test_help_is_self_describing(
     assert "A pass on uncommitted work therefore skips when the same content is committed" in flat
     assert "If it is empty or not set, CI decides the same way" in flat
     assert "put its value in --name" in flat
+    assert "from the top of the work tree" in flat
+    assert "a path left out is a skip that should have run" in flat
     assert 'gate-cache --name "test-$(git hash-object .env)" -- ' in out
     assert "empty-command" not in out
 
@@ -224,7 +229,7 @@ def test_name_equals_form_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     run_gate = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--name=a", "--", "echo", "hi") == 0
-    run_gate.assert_called_once_with("a", ["echo", "hi"])
+    run_gate.assert_called_once_with("a", ["echo", "hi"], paths=[])
 
 
 def test_ctrl_c_exits_130_quietly(
@@ -232,7 +237,7 @@ def test_ctrl_c_exits_130_quietly(
 ) -> None:
     """Ctrl-C outside the child, such as during git probes, exits 130 with no traceback."""
 
-    def interrupt(_name: str, _command: list[str]) -> int:
+    def interrupt(_name: str, _command: list[str], **_kwargs: object) -> int:
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cli, "run_gate", interrupt)
@@ -325,7 +330,7 @@ def test_name_starting_with_dash_is_accepted(monkeypatch: pytest.MonkeyPatch) ->
     run_gate = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--name", "-x", "--", "echo", "hi") == 0
-    run_gate.assert_called_once_with("-x", ["echo", "hi"])
+    run_gate.assert_called_once_with("-x", ["echo", "hi"], paths=[])
 
 
 def test_later_double_dash_reaches_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -333,4 +338,75 @@ def test_later_double_dash_reaches_the_command(monkeypatch: pytest.MonkeyPatch) 
     run_gate = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--name", "x", "--", "uv", "run", "--", "pytest") == 0
-    run_gate.assert_called_once_with("x", ["uv", "run", "--", "pytest"])
+    run_gate.assert_called_once_with("x", ["uv", "run", "--", "pytest"], paths=[])
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--path", "a", "--path=b", "--name", "x", "--", "echo", "hi"],
+        ["--name=x", "--path=a", "--path", "b", "--", "echo", "hi"],
+    ],
+)
+def test_path_options_reach_the_gate(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
+    """Verify repeated --path values in either form and order reach the gate."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, *args) == 0
+    run_gate.assert_called_once_with("x", ["echo", "hi"], paths=["a", "b"])
+
+
+@pytest.mark.parametrize("args", [["--path"], ["--path", "--", "echo"], ["--path=", "--", "echo"]])
+def test_path_without_value_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    """Verify a --path with no value exits 2 and runs nothing."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, *args) == 2
+    run_gate.assert_not_called()
+    assert "--path needs a value" in capfd.readouterr().err
+
+
+def test_scoped_skip_names_the_paths(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify a scoped skip says it matched on paths rather than the tree."""
+    assert invoke(monkeypatch, "--name", "t", "--path", "a.txt", "--", *counter.argv()) == 0
+    capfd.readouterr()
+    assert invoke(monkeypatch, "--name", "t", "--path", "a.txt", "--", *counter.argv()) == 0
+    assert counter.count == 1
+    assert re.search(r"t already passed on paths [0-9a-f]{12}, skipping", capfd.readouterr().err)
+
+
+def test_status_passes_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify status forwards repeated --path values with --name."""
+    status = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "gate_status", status)
+    assert invoke(monkeypatch, "status", "--name", "x", "--path", "a", "--path", "b") == 0
+    status.assert_called_once_with("x", as_json=False, paths=["a", "b"])
+
+
+def test_status_path_without_name_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status --path without --name exits 2, since only a named lookup uses paths."""
+    status = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "gate_status", status)
+    assert invoke(monkeypatch, "status", "--path", "a") == 2
+    status.assert_not_called()
+    assert "--path needs --name" in capfd.readouterr().err
+
+
+def test_status_empty_path_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify status rejects an empty --path as run does, such as an unset shell variable."""
+    status = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "gate_status", status)
+    assert invoke(monkeypatch, "status", "--name", "x", "--path", "") == 2
+    status.assert_not_called()
+    assert "--path needs a value" in capfd.readouterr().err
