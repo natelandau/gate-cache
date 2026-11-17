@@ -6,7 +6,7 @@ import hashlib
 import os
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -26,12 +26,14 @@ class Snapshot:
         reason: Why the content is unknown, or None when it is known.
         scope: The `paths:` value covering only the gate's paths, or None for an unscoped gate.
         paths: The sorted, distinct pathspecs that scope the gate, or empty for the whole tree.
+        root: Absolute top of the work tree, when git found one, even if the key is unknown.
     """
 
     tree: str | None
     reason: str | None
     scope: str | None = None
     paths: tuple[str, ...] = ()
+    root: Path | None = field(default=None, compare=False)
 
     @property
     def key(self) -> str | None:
@@ -389,9 +391,23 @@ def _private_snapshots(
         ]
 
 
-def _unknown(path_sets: list[tuple[str, ...]], reason: str) -> list[Snapshot]:
+def normalize_paths(paths: Iterable[str]) -> tuple[str, ...]:
+    """Return pathspecs sorted and deduplicated, the form every key and record uses.
+
+    Args:
+        paths: Git pathspecs in any order, possibly repeated.
+
+    Returns:
+        The distinct pathspecs in sorted order.
+    """
+    return tuple(sorted(set(paths)))
+
+
+def _unknown(
+    path_sets: list[tuple[str, ...]], reason: str, root: Path | None = None
+) -> list[Snapshot]:
     """Return one unknown snapshot per path set, all for the same reason."""
-    return [Snapshot(tree=None, reason=reason, paths=paths) for paths in path_sets]
+    return [Snapshot(tree=None, reason=reason, paths=paths, root=root) for paths in path_sets]
 
 
 def take_snapshot(cwd: Path | None = None, paths: Iterable[str] = ()) -> Snapshot:
@@ -424,7 +440,7 @@ def take_snapshots(path_sets: Iterable[Iterable[str]], cwd: Path | None = None) 
     Returns:
         One Snapshot per path set, in order.
     """
-    normalized = [tuple(sorted(set(paths))) for paths in path_sets]
+    normalized = [normalize_paths(paths) for paths in path_sets]
     try:
         env = _git_env(cwd)
         state = _inspect(cwd, env)
@@ -433,12 +449,17 @@ def take_snapshots(path_sets: Iterable[Iterable[str]], cwd: Path | None = None) 
     except (GitError, UnicodeDecodeError):
         return _unknown(path_sets=normalized, reason="could not inspect git state")
     if state.reason or state.root is None:
-        return _unknown(path_sets=normalized, reason=state.reason or "could not locate work tree")
+        return _unknown(
+            path_sets=normalized,
+            reason=state.reason or "could not locate work tree",
+            root=state.root,
+        )
 
     try:
-        return _private_snapshots(cwd, state.root, env, normalized)
+        snapshots = _private_snapshots(cwd, state.root, env, normalized)
     except (GitError, OSError, UnicodeDecodeError):
-        return _unknown(path_sets=normalized, reason="could not hash working copy")
+        return _unknown(path_sets=normalized, reason="could not hash working copy", root=state.root)
+    return [replace(snap, root=state.root) for snap in snapshots]
 
 
 def git_common_dir(cwd: Path | None = None) -> Path | None:

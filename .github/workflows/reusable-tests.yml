@@ -60,3 +60,39 @@ jobs:
             - name: Validate the hook manifest
               shell: bash
               run: uv run prek validate-manifest .pre-commit-hooks.yaml
+
+    frontend:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+
+            - name: Setup Node
+              uses: actions/setup-node@v7
+              with:
+                  node-version-file: .node-version
+                  cache: npm
+                  cache-dependency-path: frontend/package-lock.json
+
+            - name: Install frontend dependencies
+              shell: bash
+              run: npm ci --prefix frontend
+
+            - name: Setup Python, uv, and the package
+              uses: ./.github/actions/setup_python_env
+
+            - name: Check the frontend
+              shell: bash
+              run: uv run duty frontend_check
+
+            - name: Test the frontend
+              shell: bash
+              run: uv run duty frontend_test
+
+            - name: Build the frontend
+              shell: bash
+              run: uv run duty frontend_build
+
+            - name: Confirm the build output
+              shell: bash
+              run: test -f src/gate_cache/dashboard/static/index.html

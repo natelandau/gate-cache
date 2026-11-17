@@ -50,8 +50,24 @@ jobs:
                   fi
                   echo "PROJECT_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
 
+            - name: Setup Node
+              uses: actions/setup-node@v7
+              with:
+                  node-version-file: .node-version
+                  cache: npm
+                  cache-dependency-path: frontend/package-lock.json
+
+            - name: Install frontend dependencies
+              run: npm ci --prefix frontend
+
+            - name: Build the frontend
+              run: uv run duty frontend_build
+
             - name: Build the package
               run: uv build
+
+            - name: Check the wheel and sdist ship the dashboard UI
+              run: uv run duty dist_check dist/*.whl dist/*.tar.gz
 
             - name: Generate release notes from the changelog
               run: uv run cz changelog --dry-run "$PROJECT_VERSION" > release-notes.md
