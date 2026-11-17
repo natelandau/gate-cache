@@ -197,6 +197,46 @@ def test_traversal_blocked(server: DashboardServer, path: str) -> None:
     assert '<div id="app">' in text(server, path)
 
 
+@pytest.mark.parametrize(
+    "path",
+    ["/", "/gates", "/assets/app.js", "/assets/missing.js"],
+    ids=["index", "spa-fallback", "asset", "missing-asset"],
+)
+def test_page_security_headers(server: DashboardServer, path: str) -> None:
+    """Every response outside the API carries the browser security headers."""
+    _, headers, _ = fetch(server, path)
+    assert headers["Content-Security-Policy"] == server_module.CONTENT_SECURITY_POLICY
+    assert headers["X-Frame-Options"] == "DENY"
+    assert headers["Referrer-Policy"] == "no-referrer"
+    assert headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_csp_allows_no_inline_script(server: DashboardServer) -> None:
+    """The policy never lets a script run from inline code or eval."""
+    _, headers, _ = fetch(server, "/")
+    policy = headers["Content-Security-Policy"]
+    assert "unsafe-inline" not in policy
+    assert "unsafe-eval" not in policy
+    assert "frame-ancestors 'none'" in policy
+
+
+@pytest.mark.parametrize("path", ["/api/v1/summary", "/api/v1/nope"], ids=["ok", "not-found"])
+def test_api_headers(server: DashboardServer, path: str) -> None:
+    """API responses carry nosniff but no page policy."""
+    _, headers, _ = fetch(server, path)
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert "Content-Security-Policy" not in headers
+    assert "X-Frame-Options" not in headers
+
+
+def test_forbidden_host_page_headers(server: DashboardServer) -> None:
+    """A rejected page request still carries the page headers."""
+    status, headers, _ = fetch(server, "/", host="evil.example")
+    assert status == 403
+    assert headers["Content-Security-Policy"] == server_module.CONTENT_SECURITY_POLICY
+    assert headers["X-Content-Type-Options"] == "nosniff"
+
+
 def test_no_cors(server: DashboardServer) -> None:
     """No CORS header is ever sent."""
     assert "Access-Control-Allow-Origin" not in fetch(server, "/api/v1/summary")[1]
@@ -424,6 +464,7 @@ def test_no_ui_503(bare_server: DashboardServer) -> None:
     assert status == 503
     assert b"no dashboard UI" in body
     assert headers["Cache-Control"] == "no-store"
+    assert headers["Content-Security-Policy"] == server_module.CONTENT_SECURITY_POLICY
     assert get(bare_server, "/api/v1/summary")[0] == 200
 
 

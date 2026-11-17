@@ -48,6 +48,17 @@ _HASHED_ASSETS = "assets"
 _IMMUTABLE = "public, max-age=31536000, immutable"
 # Files without a hash in the name, such as index.html, revalidate so a new release loads.
 _REVALIDATE = "no-cache"
+# The built UI loads every script, style, image, and API call from its own origin.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+    "form-action 'none'; object-src 'none'"
+)
+_PAGE_HEADERS = (
+    ("Content-Security-Policy", CONTENT_SECURITY_POLICY),
+    # For browsers that ignore frame-ancestors.
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "no-referrer"),
+)
 
 
 class _BadRequestError(ValueError):
@@ -119,6 +130,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     server: DashboardServer  # ty: ignore[incompatible-mutable-override]
     _headers_sent = False
+    _is_api = False
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """Silence request logging."""
@@ -131,6 +143,10 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache_control)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if not self._is_api:
+            for name, value in _PAGE_HEADERS:
+                self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -140,11 +156,11 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """Serve one request."""
         self._headers_sent = False
+        parts = urlsplit(self.path)
+        self._is_api = is_api = parts.path.startswith("/api/")
         if self.headers.get("Host") not in self.server.allowed_hosts:
             self._json(_FORBIDDEN, {"error": "forbidden host"})
             return
-        parts = urlsplit(self.path)
-        is_api = parts.path.startswith("/api/")
         try:
             if is_api:
                 self._api(parts.path, parse_qs(parts.query, keep_blank_values=True))
