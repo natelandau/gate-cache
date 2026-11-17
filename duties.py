@@ -219,9 +219,16 @@ def test_tooling(ctx: Context) -> None:
     _pytest_suite(ctx, "tooling", coverage=False)
 
 
+def _frontend_deps(ctx: Context) -> None:
+    """Install the frontend dependencies when `frontend/node_modules` is missing."""
+    if not (PROJECT_ROOT / "frontend" / "node_modules").is_dir():
+        ctx.run(["npm", "ci", "--prefix", "frontend"], title="frontend dependencies")
+
+
 @duty
 def frontend_test(ctx: Context) -> None:
     """Run the dashboard frontend unit tests."""
+    _frontend_deps(ctx)
     ctx.run(
         gated(
             "frontend-test",
@@ -247,6 +254,7 @@ def test(ctx: Context, *cli_args: str) -> None:
 @duty
 def frontend_check(ctx: Context) -> None:
     """Type-check the dashboard frontend with svelte-check."""
+    _frontend_deps(ctx)
     ctx.run(
         gated(
             "frontend-check",
@@ -260,6 +268,7 @@ def frontend_check(ctx: Context) -> None:
 @duty
 def frontend_build(ctx: Context) -> None:
     """Build the dashboard frontend into the package's static directory."""
+    _frontend_deps(ctx)
     # Never gated: the output is git-ignored, so a marker cannot tell which tree built it
     ctx.run(["npm", "--prefix", "frontend", "run", "build"], title="frontend build")
 
