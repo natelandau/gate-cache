@@ -412,3 +412,98 @@ def test_status_empty_path_is_usage_error(
     assert invoke(monkeypatch, "status", "--name", "x", "--path", "") == 2
     status.assert_not_called()
     assert "--path needs a value" in capfd.readouterr().err
+
+
+def test_stats_reports_the_setting(
+    stats_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Stats prints the setting rows and exits 0."""
+    assert invoke(monkeypatch, "stats") == 0
+    out = capfd.readouterr().out
+    for label in ("recording", "decided by", "config", "data"):
+        assert label in out
+    assert re.search(rf"config: +{re.escape(str(stats_dirs[0]))}", out)
+    assert re.search(rf"data: +{re.escape(str(stats_dirs[1]))}", out)
+
+
+def test_stats_on_then_off(
+    stats_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Stats on turns recording on and stats off turns it back off."""
+    assert invoke(monkeypatch, "stats", "on") == 0
+    capfd.readouterr()
+    assert invoke(monkeypatch, "stats") == 0
+    assert re.search(r"recording: +on", capfd.readouterr().out)
+    assert invoke(monkeypatch, "stats", "off") == 0
+    assert re.search(r"recording: +off", capfd.readouterr().out)
+
+
+def test_stats_on_reports_an_unwritable_config(
+    stats_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """A config file that cannot be written exits 1 with a message."""
+
+    def refuse(*, enabled: bool) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(cli.stats_config, "write_enabled", refuse)
+    assert invoke(monkeypatch, "stats", "on") == 1
+    assert "could not write" in capfd.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("content", "reason"),
+    [
+        (b"[stats\n", "not valid TOML"),
+        (b"\xff\xfe\x00", "not valid UTF-8"),
+        (b"stats.enabled = false\n", "safely"),
+    ],
+)
+def test_stats_on_leaves_an_uneditable_config_untouched(
+    stats_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    content: bytes,
+    reason: str,
+) -> None:
+    """A config that cannot be edited safely exits 1, says why, and stays as it was."""
+    config_file = stats_dirs[0]
+    config_file.parent.mkdir(parents=True)
+    config_file.write_bytes(content)
+    assert invoke(monkeypatch, "stats", "on") == 1
+    err = capfd.readouterr().err
+    assert "could not write" in err
+    assert reason in err
+    assert config_file.read_bytes() == content
+
+
+def test_stats_shows_the_decider_when_env_overrides_config(
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """The environment and CI beat the config file, and the output names the decider."""
+    monkeypatch.setenv("GATE_CACHE_STATS", "0")
+    assert invoke(monkeypatch, "stats") == 0
+    out = capfd.readouterr().out
+    assert re.search(r"recording: +off", out)
+    assert re.search(r"decided by: +env", out)
+
+    monkeypatch.delenv("GATE_CACHE_STATS")
+    monkeypatch.setenv("CI", "true")
+    assert invoke(monkeypatch, "stats") == 0
+    assert re.search(r"decided by: +ci", capfd.readouterr().out)
+
+
+def test_stats_rejects_an_unknown_action(
+    stats_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unknown action is a usage error."""
+    assert invoke(monkeypatch, "stats", "bogus") == 2

@@ -176,3 +176,79 @@ The listing goes through a file because the shell drops NUL bytes from the outpu
 The existence of the marker file is the signal. gate-cache writes a small JSON object with `tree`, `name`, `command`, `timestamp`, and `duration` keys. `duration` is the run time of the command in seconds, and the skip line and `gate-cache status --name` show it. gate-cache ignores a `duration` that is not a number from 0 to 30 days, and it does not read a marker that is larger than 16 MiB or is not a regular file. In these cases the skip line shows no saved time. A scoped gate writes its scope value in `tree`, and adds `paths`, the sorted path list, and `full_tree`, the tree of the whole working copy at the time of the run. `gate-cache status` without `--name` reads this JSON to list the gates, so it does not list a marker that another tool wrote without that content. Such a marker still makes its gate skip.
 
 When a command fails, or exits 0 but changes the tree, gate-cache writes a miss record at `<key>.miss` in the same directory. The record holds the same JSON keys as a marker, except `duration`, plus `exit_code` and `reason`. A miss record never makes a gate skip. Only `gate-cache status` reads it, to list the missed gates. A pass of the same name on the same tree deletes the miss record. A run that a signal to gate-cache stopped, such as Ctrl-C, writes no miss record. Pruning and `gate-cache clear` delete miss records with the markers.
+
+## Stats recording
+
+When recording is on, each run of a gate adds one event to an inbox file. The inbox is `events.jsonl` in the data directory that `gate-cache stats` shows. gate-cache creates the data directory with mode 0700 and the inbox with mode 0600. Each event is one JSON line of at most 4096 bytes. If a line is longer, gate-cache first sets `host` to null. If the line is still too long, it sets `command` to null and sets `command_truncated`. If the line does not fit even without any paths, it sets `worktree`, `subdir`, `branch`, `remote`, `hook_stage`, and `reason` to null. If the line still does not fit, it sets `repo` to null when an empty name would not fit, then keeps the longest prefix of `name` that fits and sets `name_truncated`. Then it keeps the longest prefix of the `paths` list that fits and sets `paths_truncated`.
+
+Recording never affects gating. It happens after the decision to skip or run, and a failure to record is silent. It cannot change a skip, an exit code, or the output of a gate. A run that a signal to gate-cache stopped, such as Ctrl-C, records no event.
+
+### Event fields
+
+Each event has these fields. A field is null when gate-cache does not know its value. All of them are in version 1 of the line format (`"v": 1`). Fields added later are optional, so a reader of version 1 must accept a line that has more fields or fewer.
+
+| Field        | Value                                                                                                                         |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `v`          | The line format version, `1`.                                                                                                 |
+| `ts`         | The Unix time at which the run finished.                                                                                      |
+| `id`         | A random ID for the event.                                                                                                    |
+| `repo`       | The path of the git common directory of the repository.                                                                       |
+| `name`       | The gate name.                                                                                                                |
+| `tree`       | The tree key that the run used. Null when caching was off or the tree was unknown.                                            |
+| `paths`      | The `--path` values.                                                                                                          |
+| `outcome`    | What the run did. See [Outcomes](#outcomes).                                                                                  |
+| `duration`   | The seconds that the command ran. Null for a skip.                                                                            |
+| `saved`      | For a skip, the run time stored in the marker.                                                                                |
+| `exit_code`  | The exit code of the command. Null for a skip.                                                                                |
+| `reason`     | For an `uncached` run, why caching was off.                                                                                   |
+| `version`    | The version of gate-cache that recorded the run.                                                                              |
+| `trigger`    | What started the run: `ci` when `CI` is on, `hook` when `PRE_COMMIT` is on (pre-commit and prek set it for hooks), `agent` when a coding agent started the run, `terminal` when standard input is a terminal, else `other`. The first match applies. |
+| `agent`      | For `agent`, the name of the agent: `claude-code` (`CLAUDECODE`), `gemini-cli` (`GEMINI_CLI`), or `codex` (`CODEX_THREAD_ID`). |
+| `hook_stage` | For `hook`, the git hook stage from `PREK_HOOK_STAGE`, such as `pre-commit` or `pre-push`. pre-commit does not give the stage, so it is null for pre-commit. |
+| `worktree`   | The path of the top of the working tree.                                                                                      |
+| `subdir`     | The working directory relative to the top of the working tree, with `/` separators. `.` at the top.                          |
+| `branch`     | The checked-out branch. Null when HEAD is detached.                                                                           |
+| `head`       | The commit that HEAD points to.                                                                                               |
+| `remote`     | The URL of the `origin` remote, or of the first remote in the git config when there is no `origin`, in the form `host/owner/repo`. gate-cache removes user names and credentials. A local path, or a URL that gate-cache cannot parse without a risk of keeping a credential, gives null. A short alias from a git `insteadOf` rule, such as `gh:owner/repo`, also gives null, because the alias does not name the real host. Later versions can use it to join separate clones of one project. |
+| `machine`    | A random ID that gate-cache creates on the first recorded run and stores in `machine-id` in the data directory. It is the stable key for the machine. |
+| `host`       | The host name of the machine. It is a label, and it can change.                                                               |
+| `platform`   | The platform, as Python's `sys.platform` gives it, such as `darwin` or `linux`.                                               |
+| `overhead`   | The seconds that gate-cache used to find the tree key and look up the marker. Null when caching was off.                      |
+| `marker_age` | For a skip, the seconds since gate-cache wrote the marker.                                                                    |
+| `cpu`        | The user and system CPU seconds of the command. Null for a skip.                                                              |
+| `max_rss`    | The peak memory of the command in bytes. It is the peak of all commands that the gate-cache process ran. Null for a skip.     |
+| `command`    | The command line, when `--name` gives a name that is not the command line. Null otherwise, because the name is then the command line. |
+
+gate-cache reads these values from files and the environment, and it runs no extra git command to get them. The one exception is `repo` for a run without the cache, which needs one git command. When recording is off, gate-cache does none of this work.
+
+### Outcomes
+
+Each event has one outcome:
+
+| Outcome           | Meaning                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `skip`            | A marker matched, so the command did not run. `saved` holds the duration in the marker.  |
+| `pass`            | The command exited 0 and gate-cache wrote a marker.                                      |
+| `pass_unrecorded` | The command exited 0, but gate-cache recorded no pass. The run changed the tree, or gate-cache could not check the tree. |
+| `fail`            | The command exited with a code other than 0.                                             |
+| `uncached`        | The command ran without the cache. `reason` holds the printed cause, such as caching turned off by `CI` or `GATE_CACHE_DISABLE`, or an unknown tree. |
+
+`saved` is empty for a skip whose marker has no valid `duration`.
+
+### Inbox and archive
+
+The dashboard moves events from the inbox into an archive, a SQLite file named `stats.sqlite3` in the data directory. It ingests once at start and then once a second while it runs. For each ingest, it renames the live inbox to `events.<number>.processing`. It reads a renamed file after 2 seconds, so a gate that still writes to the old file finishes first. It skips a line that is not valid, and it ignores a line that it already stored. The archive keeps the full text of each line, so a later version of gate-cache can use fields that an earlier version recorded. An event with an outcome that this version does not know, written by a newer version, stays in the archive, but the dashboard does not count it. When no dashboard runs, events wait in the inbox until the next dashboard start. The archive keeps events for 365 days, and each ingest that adds events deletes older ones.
+
+`gate-cache stats clear` deletes the inbox, the renamed files, the archive, and any `.machine-id.*` temporary files that an interrupted run left. It keeps `machine-id`, so the machine keeps its ID.
+
+### Metrics
+
+The dashboard computes its numbers from the archive, for the repository and the time range that you choose:
+
+- Runs: every recorded event, including `uncached` events.
+- Time saved: the sum of `saved` over `skip` events. A skip with no `saved` adds nothing, and the dashboard counts these skips separately.
+- Skip rate: `skip` events divided by the events in which a gate checked its cache: `skip`, `pass`, `pass_unrecorded`, and `fail`. `uncached` events are not part of it.
+- Average and median run time: the `duration` of `pass` events.
+- Flaky gate: a gate that has, for one tree key, both a `fail` event and a `pass` or `pass_unrecorded` event. The same content both failed and passed, so the result is not stable. The dashboard lists the trees and the runs for each.
+
+Days start and end in the time zone of your browser.

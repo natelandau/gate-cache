@@ -95,6 +95,8 @@ The hook runs at commit time and at push time. At commit time, gate-cache matche
 
 The hook runs in its own virtual environment, and the wrapped command inherits that environment. A command started with `uv run`, or a project command such as `just test`, runs in the project environment. `uv run` prints a warning that `VIRTUAL_ENV` does not match the project. The warning has no effect on the run.
 
+The gate-cache that a hook installs records stats when recording is on, but that install has no dashboard UI. To view the dashboard, run `gate-cache dashboard` from the install that `uv tool install gate-cache` makes.
+
 Hooks, agents, and your terminal all read and write the same markers. When one of them runs `gate-cache -- uv run pytest` and it passes, the others skip `uv run pytest` on the same content.
 
 ## Examples
@@ -267,15 +269,80 @@ gate-cache: removed 3 markers
 GATE_CACHE_DISABLE=1 git push
 ```
 
+## Stats dashboard
+
+gate-cache can record each run of a gate and show the record in a local dashboard. The dashboard shows how much time the skips saved, how often gates skip, and which gates fail and pass on the same content. Recording is off until you turn it on:
+
+```sh
+gate-cache stats on
+```
+
+`gate-cache stats` without an action shows whether recording is on, what decided it, and where the config file and the data live:
+
+```console
+$ gate-cache stats
+  recording:  on
+  decided by: config
+  config:     /path/to/config/gate-cache/config.toml
+  data:       /path/to/state/gate-cache
+```
+
+The paths depend on your system, so run the command to see them. `gate-cache stats off` turns recording off. Both actions write `[stats] enabled` in the config file and keep every other line of the file. Recorded data stays in place when you turn recording off.
+
+To open the dashboard, run:
+
+```sh
+gate-cache dashboard
+```
+
+The dashboard listens on `127.0.0.1` and opens in your browser. It listens on port 7878, or on a free port when 7878 is taken. With `--port N`, it listens on that port only, and the command fails when the port is in use. With `--no-browser`, it does not open a browser. Only one dashboard runs at a time. A second `gate-cache dashboard` prints the address of the running one and opens it, unless you give `--no-browser`. Press Ctrl-C to stop it.
+
+The dashboard has pages for an overview, gates, repositories, recent activity, and flaky gates. It updates while it runs, so new runs appear within seconds. The theme button at the top right cycles between the system theme (the default), light, and dark, and the dashboard remembers your choice.
+
+`gate-cache stats clear` deletes all recorded stats. It keeps the random machine ID. It refuses while the dashboard runs. It does not delete markers. Use `gate-cache clear` for those.
+
+### What gate-cache records
+
+Each run of a gate adds one event with these fields:
+
+- the time the run finished
+- the path of the git directory of the repository
+- the gate name and the `--path` values
+- the tree key that the run used
+- the outcome
+- the run time of the command, and the time that a skip saved
+- the exit code of the command
+- the reason that caching was off, for a run without the cache
+- the gate-cache version, the platform, and what started the run: CI, a git hook, a coding agent, or a terminal
+- the path of the working tree, the directory in it where the gate ran, the branch, and the commit
+- the URL of the `origin` remote, without user names or credentials
+- the host name of the machine and a random machine ID
+- the time that gate-cache took to decide, the age of the marker of a skip, and the CPU time and peak memory of the command
+- the full command line, when `--name` gives a name that is not the command line
+
+An event holds no command output and no file content. The gate name is the command line unless you give `--name`, so a secret in a command line is in the record. When you give `--name`, the event also holds the command line, so a secret that you give to the command as an argument is in the record. Never put a secret in a gate name or in a command line. The working tree path and the host name often contain your user name or your real name. The machine ID is random and does not identify you. Recording is off until you turn it on. The data never leaves your machine, and `gate-cache stats clear` deletes it. The dashboard listens only on `127.0.0.1` and rejects requests for any other host name.
+
+### When recording is on
+
+The setting comes from the first of these that applies:
+
+1. `GATE_CACHE_STATS`, when it is not empty. A value of `0` or `false` turns recording off, and any other value turns it on.
+2. `CI`. When `CI` is on, recording is off.
+3. `[stats] enabled` in the config file.
+4. Off.
+
+A CI runner is not your machine, so CI does not record unless `GATE_CACHE_STATS` is on. Recording never changes whether a command skips, its exit code, or its output. A failure to record is silent.
+
 ## Settings
 
-Three environment variables control gate-cache.
+Four environment variables control gate-cache.
 
 | Variable                  | Effect                                                                         | Default |
 | ------------------------- | ------------------------------------------------------------------------------ | ------- |
 | `GATE_CACHE_DISABLE`      | If on, turns off caching. If `0` or `false`, keeps caching on when `CI` is on. | not set |
 | `CI`                      | If on, turns off caching. A value in `GATE_CACHE_DISABLE` overrides it.        | not set |
 | `GATE_CACHE_MAX_AGE_DAYS` | gate-cache deletes markers older than this number of days.                     | `30`    |
+| `GATE_CACHE_STATS`        | If on, records stats, even in CI. If `0` or `false`, turns recording off. If empty, `CI` and then the config file decide. | not set |
 
 A variable is on when its value is not empty, `0`, or `false`. Case and spaces around the value do not matter.
 
@@ -283,5 +350,5 @@ Each marker is one small file in the `.git` directory of the repository, so all 
 
 ## Learn more
 
-- [How gate-cache works](docs/how-it-works.md) describes the exact rules for a skip, what a marker covers, and the marker format for tools that read markers directly.
+- [How gate-cache works](docs/how-it-works.md) describes the exact rules for a skip, what a marker covers, the marker format for tools that read markers directly, and how gate-cache stores and measures stats.
 - `gate-cache --help` gives the full command reference.

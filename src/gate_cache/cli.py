@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from gate_cache import __version__
-from gate_cache.console import say
+from gate_cache.console import kv, say
 from gate_cache.gate import clear_cache, gate_status, run_gate
+from gate_cache.stats import config as stats_config
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,7 +31,9 @@ _NO_COMMAND = "no command given after --"
 _USAGE = """\
 gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...]
        gate-cache status [--name NAME [--path PATHSPEC]...] [--json]
-       gate-cache clear"""
+       gate-cache clear
+       gate-cache stats [on|off|clear]
+       gate-cache dashboard [--port N] [--no-browser]"""
 
 _HELP = """\
 Skip a lint or test command that already passed on the same git tree. gate-cache
@@ -86,6 +89,8 @@ _RUN_HELP = """\
 subcommands:
   status       Report whether gates would skip, without running anything.
   clear        Delete every recorded pass for this repository.
+  stats        Show, turn on or off, or clear the opt-in recording of run stats.
+  dashboard    Serve a local dashboard of the recorded stats.
 
 run:
   gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...] runs COMMAND
@@ -120,6 +125,24 @@ Delete every recorded pass for this repository.
 Use after something outside git changes, such as a tool upgrade. Exits 1 outside a
 git repository.
 """
+
+_STATS_HELP = """\
+Show or change whether gate-cache records run stats.
+
+Without an action, print whether recording is on and what decided it. `on` and
+`off` write the setting to the config file. GATE_CACHE_STATS overrides the file,
+and CI turns recording off unless GATE_CACHE_STATS is set.
+
+`clear` deletes all recorded stats. It refuses while the dashboard is running.
+"""
+
+_DASHBOARD_HELP = """\
+Serve a local dashboard of the recorded stats on 127.0.0.1 and open it in the browser.
+
+Only one dashboard runs at a time. Without --port, it listens on 7878, or on a free
+port when 7878 is taken.
+"""
+_MAX_PORT = 65535
 
 
 class _UsageError(Exception):
@@ -210,6 +233,71 @@ def _clear_parser() -> argparse.ArgumentParser:
     )
 
 
+def _stats_parser() -> argparse.ArgumentParser:
+    """Build the parser for the stats subcommand."""
+    parser = argparse.ArgumentParser(
+        prog="gate-cache stats",
+        description=_STATS_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
+    )
+    parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["on", "off", "clear"],
+        help="Turn recording on or off, or delete all recorded stats.",
+    )
+    return parser
+
+
+def _port(text: str) -> int:
+    """Parse a TCP port argument."""
+    try:
+        value = int(text)
+    except ValueError:
+        value = -1
+    if not 1 <= value <= _MAX_PORT:
+        msg = f"invalid port: {text!r}"
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
+def _dashboard_parser() -> argparse.ArgumentParser:
+    """Build the parser for the dashboard subcommand."""
+    parser = argparse.ArgumentParser(
+        prog="gate-cache dashboard",
+        description=_DASHBOARD_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
+    )
+    parser.add_argument("--port", type=_port, metavar="N", help="Port to listen on.")
+    parser.add_argument(
+        "--no-browser", action="store_true", help="Do not open the dashboard in a browser."
+    )
+    return parser
+
+
+def _stats(action: str | None) -> int:
+    """Show the stats setting, or change it when an action is given."""
+    if action is not None:
+        try:
+            stats_config.write_enabled(enabled=action == "on")
+        except (OSError, stats_config.ConfigError) as error:
+            reason = error.strerror if isinstance(error, OSError) else error
+            say(f"could not write {stats_config.config_path()}: {reason or error}")
+            return 1
+    setting = stats_config.stats_setting()
+    kv(
+        {
+            "recording": "on" if setting.enabled else "off",
+            "decided by": setting.source,
+            "config": str(stats_config.config_path()),
+            "data": str(stats_config.state_dir()),
+        }
+    )
+    return 0
+
+
 @dataclass(frozen=True)
 class _RunArgs:
     """The options before -- and the command after it."""
@@ -288,6 +376,18 @@ def _dispatch(tokens: list[str]) -> int:
     if tokens and tokens[0] == "clear":
         _clear_parser().parse_args(tokens[1:])
         return clear_cache()
+    if tokens and tokens[0] == "stats":
+        action = _stats_parser().parse_args(tokens[1:]).action
+        if action == "clear":
+            from gate_cache.dashboard.app import stats_clear
+
+            return stats_clear()
+        return _stats(action)
+    if tokens and tokens[0] == "dashboard":
+        args = _dashboard_parser().parse_args(tokens[1:])
+        from gate_cache.dashboard.app import run_dashboard
+
+        return run_dashboard(port=args.port, open_browser=not args.no_browser)
 
     run = _split_run(tokens)
     if not run.command:
