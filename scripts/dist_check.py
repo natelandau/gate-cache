@@ -1,0 +1,75 @@
+"""Check that built distributions ship the dashboard UI."""  # noqa: INP001
+
+from __future__ import annotations
+
+import glob
+import tarfile
+import zipfile
+from pathlib import Path
+
+WHEEL_INDEX = "gate_cache/dashboard/static/index.html"
+SDIST_INDEX_SUFFIX = "src/gate_cache/dashboard/static/index.html"
+WHEEL_MAX_BYTES = 300 * 1024
+
+
+def expand(patterns: tuple[str, ...]) -> list[str]:
+    """Expand paths or glob patterns into a sorted list of unique existing paths.
+
+    Args:
+        patterns (tuple[str, ...]): File paths or glob patterns.
+
+    Returns:
+        list[str]: Matching paths.
+    """
+    return sorted({match for pattern in patterns for match in glob.glob(pattern)})  # noqa: PTH207
+
+
+def check_dist(path: str) -> list[str]:
+    """Return the problems found in one wheel or sdist.
+
+    Args:
+        path (str): Path to a `.whl` or `.tar.gz` file.
+
+    Returns:
+        list[str]: Problem descriptions, empty when the file is fine.
+    """
+    problems = []
+    if path.endswith(".whl"):
+        size = Path(path).stat().st_size
+        with zipfile.ZipFile(path) as archive:
+            has_index = WHEEL_INDEX in archive.namelist()
+        if size > WHEEL_MAX_BYTES:
+            problems.append(f"{path} is {size} bytes, over the {WHEEL_MAX_BYTES} byte limit")
+    elif path.endswith(".tar.gz"):
+        with tarfile.open(path) as archive:
+            has_index = any(name.endswith(SDIST_INDEX_SUFFIX) for name in archive.getnames())
+    else:
+        return [f"{path} is neither a wheel nor an sdist"]
+    if not has_index:
+        problems.append(f"{path} is missing the dashboard UI (static/index.html)")
+    return problems
+
+
+def check_dists(patterns: tuple[str, ...]) -> tuple[list[str], list[str]]:
+    """Check every distribution matched by the given paths or globs.
+
+    Args:
+        patterns (tuple[str, ...]): File paths or glob patterns.
+
+    Returns:
+        tuple[list[str], list[str]]: Report lines and problems. A non-empty problem list means failure.
+    """
+    lines = []
+    problems = []
+    if not patterns:
+        problems.append("no distribution path given")
+    for pattern in patterns:
+        paths = expand((pattern,))
+        if not paths:
+            problems.append(f"no distribution matched: {pattern}")
+        for path in paths:
+            found = check_dist(path)
+            problems.extend(found)
+            if not found:
+                lines.append(f"ok: {path} ({Path(path).stat().st_size} bytes)")
+    return lines, problems
