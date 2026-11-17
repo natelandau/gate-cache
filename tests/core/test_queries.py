@@ -14,8 +14,12 @@ from gate_cache.stats.queries import (
     flaky,
     gate_detail,
     gates,
+    hourly,
+    previous_window,
+    reasons,
     repo_name,
     repos,
+    slowdowns,
     summary,
 )
 
@@ -35,11 +39,12 @@ def insert(
     tree: str | None = "t1",
     duration: float | None = None,
     saved: float | None = None,
+    reason: str | None = None,
 ) -> None:
     """Insert one event row."""
     conn.execute(
-        "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome, duration, saved)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome, duration, saved, reason)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             f"h{conn.total_changes}-{ts}",
             ts,
@@ -50,6 +55,7 @@ def insert(
             outcome,
             duration,
             saved,
+            reason,
         ),
     )
     conn.commit()
@@ -102,10 +108,20 @@ def test_empty_archive(empty_conn: sqlite3.Connection) -> None:
     assert activity(empty_conn, Filters()) == {"events": [], "next_before": None}
 
 
+def test_multi_repo_filter(conn: sqlite3.Connection) -> None:
+    """Several repos match with IN; the unknown repo matches with IS NULL."""
+    insert(conn, BASE + 600, "skip", repo=None, saved=7.0)
+    assert summary(conn, Filters(repos=(REPO_A,)))["runs"] == 5
+    assert summary(conn, Filters(repos=(REPO_A, REPO_B)))["runs"] == 6
+    assert summary(conn, Filters(repos=(None,)))["runs"] == 1
+    assert summary(conn, Filters(repos=(REPO_B, None)))["runs"] == 2
+    assert summary(conn, Filters())["runs"] == 7
+
+
 def test_repo_filter_and_range(conn: sqlite3.Connection) -> None:
     """Repo filters narrow rows, and the range is start-inclusive, end-exclusive."""
-    assert summary(conn, Filters(repo=REPO_B))["runs"] == 1
-    assert summary(conn, Filters(repo=REPO_A))["runs"] == 5
+    assert summary(conn, Filters(repos=(REPO_B,)))["runs"] == 1
+    assert summary(conn, Filters(repos=(REPO_A,)))["runs"] == 5
     assert summary(conn, Filters(start=BASE + 100, end=BASE + 300))["skips"] == 2
     s = summary(conn, Filters(start=BASE + 500))
     assert s["runs"] == 2
@@ -328,14 +344,14 @@ def test_activity_limit_capped_at_500(empty_conn: sqlite3.Connection) -> None:
 
 def test_activity_outcome_filter(conn: sqlite3.Connection) -> None:
     """An outcome filter keeps only events with that outcome, within the other filters."""
-    fails = activity(conn, Filters(repo=REPO_A), outcome="fail")["events"]
+    fails = activity(conn, Filters(repos=(REPO_A,)), outcome="fail")["events"]
     assert [(e["name"], e["outcome"]) for e in fails] == [("test", "fail")]
     skips = activity(conn, Filters(), outcome="skip", limit=2)
     assert [e["outcome"] for e in skips["events"]] == ["skip", "skip"]
     rest = activity(conn, Filters(), outcome="skip", before=skips["next_before"])
     assert [e["outcome"] for e in rest["events"]] == ["skip"]
     assert rest["next_before"] is None
-    assert activity(conn, Filters(repo=REPO_B), outcome="fail")["events"] == []
+    assert activity(conn, Filters(repos=(REPO_B,)), outcome="fail")["events"] == []
 
 
 def test_activity_unknown_outcome(conn: sqlite3.Connection) -> None:
@@ -363,7 +379,7 @@ def test_repo_name() -> None:
 
 def test_gate_detail_ignores_filter_repo(conn: sqlite3.Connection) -> None:
     """Gate detail selects by its own repo argument, not by the filter repo."""
-    body = gate_detail(conn, Filters(repo=REPO_B), repo=REPO_A, name="lint")
+    body = gate_detail(conn, Filters(repos=(REPO_B,)), repo=REPO_A, name="lint")
     assert body["repo"] == REPO_A
     assert len(body["recent"]) == 3
     assert {r["repo"] for r in body["recent"]} == {REPO_A}
@@ -407,3 +423,213 @@ def test_unknown_outcomes_are_not_counted(conn: sqlite3.Connection) -> None:
     ghost = gate_detail(conn, filters, repo="/x/new/.git", name="ghost")
     assert ghost["recent"] == []
     assert ghost["trend"] == []
+
+
+def test_hourly_has_168_cells(empty_conn: sqlite3.Connection) -> None:
+    """An empty archive still yields every hour of the week."""
+    cells = hourly(empty_conn, Filters())["cells"]
+    assert len(cells) == 168
+    assert [(c["weekday"], c["hour"]) for c in cells] == [
+        (d, h) for d in range(7) for h in range(24)
+    ]
+    assert all(c["runs"] == 0 and c["saved"] == 0.0 and c["failures"] == 0 for c in cells)
+
+
+def test_hourly_buckets_in_zone(empty_conn: sqlite3.Connection) -> None:
+    """Events land in the local weekday and hour of the filter's zone."""
+    insert(empty_conn, BASE + 3600, "skip", saved=5.0)
+    cells = hourly(empty_conn, Filters(tz="America/New_York"))["cells"]
+    hit = [c for c in cells if c["runs"]]
+    assert hit == [{"weekday": 1, "hour": 20, "runs": 1, "saved": 5.0, "failures": 0}]
+
+
+def test_hourly_sunday_failures_and_accumulation(empty_conn: sqlite3.Connection) -> None:
+    """Sunday is weekday 0, and events in one hour sum into a single cell."""
+    sunday = BASE - 2 * DAY + 10 * 3600
+    insert(empty_conn, sunday + 60, "skip", saved=10.0)
+    insert(empty_conn, sunday + 1200, "fail", tree="t2", duration=4.0)
+    insert(empty_conn, sunday + 2400, "pass", tree="t3", duration=7.0)
+    cells = hourly(empty_conn, Filters(tz="UTC"))["cells"]
+    hit = [c for c in cells if c["runs"]]
+    assert hit == [{"weekday": 0, "hour": 10, "runs": 3, "saved": 10.0, "failures": 1}]
+
+
+def test_summary_outcomes(conn: sqlite3.Connection) -> None:
+    """Summary counts every outcome separately."""
+    assert summary(conn, Filters())["outcomes"] == {
+        "skip": 3,
+        "pass": 1,
+        "pass_unrecorded": 0,
+        "fail": 1,
+        "uncached": 1,
+    }
+
+
+def test_previous_window_totals(empty_conn: sqlite3.Connection) -> None:
+    """Previous totals cover the window of equal length before the start."""
+    insert(empty_conn, BASE, "skip", saved=10.0)
+    insert(empty_conn, BASE + DAY + 100, "skip", saved=30.0)
+    s = summary(empty_conn, Filters(start=BASE + DAY, end=BASE + 2 * DAY), now=BASE + 2 * DAY)
+    assert s["previous"]["time_saved"] == 10.0
+    assert s["previous"]["days"] == 1.0
+
+
+def test_previous_none_for_all_time(conn: sqlite3.Connection) -> None:
+    """An unbounded range has no previous window."""
+    assert summary(conn, Filters(), now=BASE + 3 * DAY)["previous"] is None
+
+
+def test_previous_none_before_first_event(empty_conn: sqlite3.Connection) -> None:
+    """No previous window starts before the archive's first event."""
+    insert(empty_conn, BASE + DAY + 100, "skip", saved=30.0)
+    s = summary(empty_conn, Filters(start=BASE + DAY, end=BASE + 2 * DAY), now=BASE + 2 * DAY)
+    assert s["previous"] is None
+
+
+def test_previous_none_beyond_retention(empty_conn: sqlite3.Connection) -> None:
+    """No previous window reaches past the retention period."""
+    insert(empty_conn, BASE, "skip", saved=1.0)
+    now = BASE + 400 * DAY
+    assert summary(empty_conn, Filters(start=now - 365 * DAY), now=now)["previous"] is None
+
+
+def test_previous_window_ignores_repo_filter_for_earliest(
+    empty_conn: sqlite3.Connection,
+) -> None:
+    """The earliest-event check spans every repo."""
+    insert(empty_conn, BASE, "skip", repo=REPO_B, saved=1.0)
+    insert(empty_conn, BASE + DAY + 100, "skip", saved=2.0)
+    current = Filters(repos=(REPO_A,), start=BASE + DAY, end=BASE + 2 * DAY)
+    prev = previous_window(empty_conn, current, now=BASE + 2 * DAY)
+    assert prev == Filters(repos=(REPO_A,), start=BASE, end=BASE + DAY)
+
+
+def test_previous_window_open_end_uses_now(empty_conn: sqlite3.Connection) -> None:
+    """An open-ended range compares against a window of the same length ending at its start."""
+    insert(empty_conn, BASE, "skip", saved=1.0)
+    prev = previous_window(empty_conn, Filters(start=BASE + DAY), now=BASE + 2 * DAY)
+    assert prev is not None
+    assert (prev.start, prev.end) == (BASE, BASE + DAY)
+
+
+def test_previous_flaky_gates(empty_conn: sqlite3.Connection) -> None:
+    """Previous flaky gates use the same definition as the current window."""
+    insert(empty_conn, BASE, "skip", name="other", saved=1.0)
+    insert(empty_conn, BASE + 10, "fail", tree="t9")
+    insert(empty_conn, BASE + 20, "pass", tree="t9")
+    s = summary(empty_conn, Filters(start=BASE + DAY, end=BASE + 2 * DAY), now=BASE + 2 * DAY)
+    assert s["previous"]["flaky_gates"] == 1
+    assert s["previous"]["failures"] == 1
+
+
+def test_reasons_counts_and_order(empty_conn: sqlite3.Connection) -> None:
+    """Reasons count uncached and unrecorded passes only, most common first."""
+    off = "GATE_CACHE_DISABLE is set"
+    changed = "files changed during the run"
+    insert(empty_conn, BASE + 1, "uncached", tree="t1", reason=off)
+    insert(empty_conn, BASE + 2, "uncached", tree="t2", reason=off)
+    insert(empty_conn, BASE + 3, "pass_unrecorded", tree="t3", reason=changed)
+    insert(empty_conn, BASE + 4, "fail", tree="t4", reason="ignored")
+    insert(empty_conn, BASE + 5, "uncached", tree="t5")
+    assert reasons(empty_conn, Filters())["reasons"] == [
+        {"outcome": "uncached", "reason": off, "count": 2},
+        {"outcome": "pass_unrecorded", "reason": changed, "count": 1},
+    ]
+
+
+def test_reasons_same_reason_under_two_outcomes(empty_conn: sqlite3.Connection) -> None:
+    """One reason recorded under two outcomes gives one row per outcome."""
+    reason = "files changed during the run"
+    insert(empty_conn, BASE + 1, "uncached", tree="t1", reason=reason)
+    insert(empty_conn, BASE + 2, "pass_unrecorded", tree="t2", reason=reason)
+    insert(empty_conn, BASE + 3, "pass_unrecorded", tree="t3", reason=reason)
+    assert reasons(empty_conn, Filters())["reasons"] == [
+        {"outcome": "pass_unrecorded", "reason": reason, "count": 2},
+        {"outcome": "uncached", "reason": reason, "count": 1},
+    ]
+
+
+def test_activity_reason_filter(empty_conn: sqlite3.Connection) -> None:
+    """The reason filter keeps only events with that exact reason."""
+    insert(empty_conn, BASE + 1, "uncached", tree="t1", reason="a")
+    insert(empty_conn, BASE + 2, "uncached", tree="t2", reason="b")
+    insert(empty_conn, BASE + 3, "pass", tree="t3")
+    events = activity(empty_conn, Filters(), reason="a")["events"]
+    assert [e["tree"] for e in events] == ["t1"]
+
+
+def _passes(
+    conn: sqlite3.Connection, start: float, name: str, duration: float, count: int = 5
+) -> None:
+    """Insert count passing runs of a gate from start, one second apart."""
+    for i in range(count):
+        insert(conn, start + i, "pass", name=name, duration=duration, tree=f"{name}{start}{i}")
+
+
+def _two_windows(conn: sqlite3.Connection, name: str, before: float, now: float) -> None:
+    """Insert five passes in the previous window and five in the current one."""
+    _passes(conn, BASE, name, before)
+    _passes(conn, BASE + DAY + 10, name, now)
+
+
+CURRENT = Filters(start=BASE + DAY)
+
+
+def test_slowdowns_ranks_by_relative_change(empty_conn: sqlite3.Connection) -> None:
+    """Gates sort by relative growth, not absolute seconds."""
+    _two_windows(empty_conn, "b", 100.0, 120.0)
+    _two_windows(empty_conn, "a", 10.0, 15.0)
+    result = slowdowns(empty_conn, CURRENT, now=BASE + 2 * DAY)
+    assert result["comparable"] is True
+    assert [g["name"] for g in result["gates"]] == ["a", "b"]
+    first = result["gates"][0]
+    assert first == {
+        "repo": REPO_A,
+        "repo_name": "proj",
+        "name": "a",
+        "before": 10.0,
+        "now": 15.0,
+        "change": 0.5,
+    }
+
+
+def test_slowdowns_needs_five_runs_each_side(empty_conn: sqlite3.Connection) -> None:
+    """A gate with fewer than five passes in either window is excluded."""
+    _passes(empty_conn, BASE, "lint", 10.0, count=4)
+    _passes(empty_conn, BASE + DAY + 10, "lint", 20.0)
+    assert slowdowns(empty_conn, CURRENT, now=BASE + 2 * DAY)["gates"] == []
+
+
+def test_slowdowns_ignores_speedups(empty_conn: sqlite3.Connection) -> None:
+    """Faster or unchanged gates are not slowdowns."""
+    _two_windows(empty_conn, "fast", 20.0, 10.0)
+    _two_windows(empty_conn, "same", 10.0, 10.0)
+    result = slowdowns(empty_conn, CURRENT, now=BASE + 2 * DAY)
+    assert result == {"gates": [], "comparable": True}
+
+
+def test_slowdowns_not_comparable_for_all_time(conn: sqlite3.Connection) -> None:
+    """An unbounded range has no previous window."""
+    assert slowdowns(conn, Filters(), now=BASE + 3 * DAY) == {"gates": [], "comparable": False}
+
+
+def test_slowdowns_limit(empty_conn: sqlite3.Connection) -> None:
+    """Only the top gates are returned."""
+    for i in range(3):
+        _two_windows(empty_conn, f"g{i}", 10.0, 11.0 + i)
+    result = slowdowns(empty_conn, CURRENT, now=BASE + 2 * DAY, limit=2)
+    assert [g["name"] for g in result["gates"]] == ["g2", "g1"]
+
+
+def test_slowdowns_skips_zero_previous_median(empty_conn: sqlite3.Connection) -> None:
+    """A zero previous median has no relative change and is not listed."""
+    _two_windows(empty_conn, "lint", 0.0, 2.0)
+    result = slowdowns(empty_conn, CURRENT, now=BASE + 2 * DAY)
+    assert result == {"gates": [], "comparable": True}
+
+
+def test_slowdowns_skips_gate_new_in_current_window(empty_conn: sqlite3.Connection) -> None:
+    """A gate with no previous passes is not listed."""
+    _passes(empty_conn, BASE, "old", 10.0)
+    _passes(empty_conn, BASE + DAY + 10, "new", 10.0)
+    assert slowdowns(empty_conn, CURRENT, now=BASE + 2 * DAY)["gates"] == []

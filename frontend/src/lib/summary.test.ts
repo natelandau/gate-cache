@@ -11,6 +11,8 @@ const base: Summary = {
   uncached: 0,
   failures: 0,
   flaky_gates: 0,
+  outcomes: { skip: 1, pass: 1, pass_unrecorded: 0, fail: 0, uncached: 0 },
+  previous: null,
   daily: [],
 };
 
@@ -35,6 +37,24 @@ describe("summaryStats", () => {
     expect(linked[3]).toMatchObject({ tone: "flaky", href: "#/flaky" });
     expect(linked[4]).toMatchObject({ tone: "danger" });
     expect(summaryStats(summary)[3]?.href).toBeUndefined();
+  });
+});
+
+describe("summaryStats deltas", () => {
+  it("leaves deltas off when there is no previous window", () => {
+    expect(summaryStats(base).every((s) => s.delta === undefined)).toBe(true);
+  });
+
+  it("attaches a delta to every stat when there is a previous window", () => {
+    const previous = { ...base, days: 30, runs: 6 };
+    const stats = summaryStats({ ...base, previous });
+    expect(stats.map((s) => s.delta?.text)).toEqual([
+      "No change",
+      "▲ 100%",
+      "No change",
+      "No change",
+      "No change",
+    ]);
   });
 });
 

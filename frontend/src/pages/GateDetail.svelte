@@ -1,6 +1,6 @@
 <!--
   @component
-  One gate's detail as a panel over the Gates table: headline numbers, the pass duration
+  One gate's detail as a panel over the Gates table or the overview: headline numbers, the pass duration
   trend, the latest runs, and flaky trees. Escape anywhere or the close button closes it.
   On narrow screens it covers the page as a modal sheet and the rest of the page is inert.
 
@@ -30,6 +30,7 @@
   import { findGate } from "../lib/gates";
   import { inertOutside } from "../lib/inert";
   import { createQuery } from "../lib/query.svelte";
+  import { UNKNOWN_REPO } from "../lib/router.svelte";
   import { emptyTitle } from "../lib/scope";
   import { clock, filters } from "../lib/state.svelte";
 
@@ -49,7 +50,7 @@
       // The totals are extra: when they fail to load, the detail still shows without them.
       const [detail, rows] = await Promise.allSettled([
         getGate(name, repo, { signal }),
-        getGates({ signal, repo }),
+        getGates({ signal, repos: [repo ?? UNKNOWN_REPO] }),
       ]);
       if (detail.status === "rejected") throw detail.reason;
       return {

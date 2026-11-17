@@ -1,13 +1,17 @@
 <script lang="ts">
-  import DailyChart from "../lib/components/DailyChart.svelte";
-  import EmptyState from "../lib/components/EmptyState.svelte";
-  import Notice from "../lib/components/Notice.svelte";
-  import StatStrip from "../lib/components/StatStrip.svelte";
   import type { Query } from "../lib/query.svelte";
-  import { href } from "../lib/router.svelte";
-  import { emptyHint, emptyTitle } from "../lib/scope";
-  import { filters, freshness } from "../lib/state.svelte";
-  import { summaryNote, summaryStats, type SummaryView } from "../lib/summary";
+  import type { SummaryView } from "../lib/summary";
+  import CalendarModule from "./overview/CalendarModule.svelte";
+  import DailyModule from "./overview/DailyModule.svelte";
+  import FailuresModule from "./overview/FailuresModule.svelte";
+  import FlakyModule from "./overview/FlakyModule.svelte";
+  import HourlyModule from "./overview/HourlyModule.svelte";
+  import OutcomeModule from "./overview/OutcomeModule.svelte";
+  import ReasonsModule from "./overview/ReasonsModule.svelte";
+  import ReposModule from "./overview/ReposModule.svelte";
+  import SlowdownsModule from "./overview/SlowdownsModule.svelte";
+  import StatsModule from "./overview/StatsModule.svelte";
+  import TopGatesModule from "./overview/TopGatesModule.svelte";
 
   interface Props {
     /** The shell's summary query, shared with the sidebar's flaky badge. */
@@ -16,55 +20,58 @@
   }
 
   let { query, repoLabel }: Props = $props();
-
-  const stats = $derived(
-    query.data ? summaryStats(query.data.summary, { flakyHref: href({ page: "flaky" }) }) : [],
-  );
-  const note = $derived(query.data ? summaryNote(query.data.summary) : undefined);
 </script>
 
 <section class="page" aria-labelledby="overview-title">
   <h1 id="overview-title" class="page-title">Overview</h1>
 
-  {#if query.error}
-    <Notice tone="error">Could not load the summary: {query.error.message}</Notice>
-  {/if}
+  <StatsModule {query} />
+  <CalendarModule {query} {repoLabel} />
+  <DailyModule {query} {repoLabel} />
 
-  {#if query.data}
-    {#if query.data.summary.runs === 0}
-      <div class="panel">
-        <EmptyState
-          title={emptyTitle("runs", { range: filters.range, repoLabel })}
-          detail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
-        />
-      </div>
-    {:else}
-      <StatStrip {stats} {note} busy={query.loading} />
-      <div>
-        <h2 class="section-title">Daily</h2>
-        <DailyChart days={query.data.days} />
-      </div>
-    {/if}
-  {:else if query.loading}
-    <p class="loading" aria-live="polite">Loading summary</p>
-  {/if}
+  <div class="row halves">
+    <HourlyModule {repoLabel} />
+    <TopGatesModule {repoLabel} />
+  </div>
+  <div class="row thirds">
+    <OutcomeModule {query} {repoLabel} />
+    <FlakyModule {repoLabel} />
+    <ReasonsModule {repoLabel} />
+  </div>
+  <div class="row wide-narrow">
+    <FailuresModule {repoLabel} />
+    <SlowdownsModule {repoLabel} />
+  </div>
+  <ReposModule />
 </section>
 
 <style>
   .page {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-4);
   }
 
-  .panel {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
+  .row {
+    display: grid;
+    gap: var(--space-4);
   }
 
-  .loading {
-    margin: 0;
-    color: var(--text-muted);
+  .halves {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .thirds {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .wide-narrow {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+
+  @media (max-width: 900px) {
+    .row {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 </style>

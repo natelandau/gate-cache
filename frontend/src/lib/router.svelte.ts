@@ -4,25 +4,33 @@
  *
  * - `#/overview` (also the default for an empty or unknown hash)
  * - `#/gates`, `#/gates/<repo>/<name>` with each part URI-encoded and `-` for the unknown repo
- * - `#/repos`, `#/repos/<repo>` with the repo URI-encoded
- * - `#/activity`, `#/flaky`
+ * - `#/activity`, with optional `?outcome=<outcome>&reason=<reason>` filters, URI-encoded
+ * - `#/flaky`
+ *
+ * Old `#/repos/<repo>` links parse as the overview with `selectRepo` set; `startRouter` turns
+ * that into a repo filter. `startRouter` replaces any old `#/repos` hash with `#/overview`.
  */
 
+import type { Outcome } from "./api";
+import { OUTCOMES } from "./events";
+import { setRepos } from "./state.svelte";
+
 export type Route =
-  | { page: "overview" }
+  | { page: "overview"; selectRepo?: string }
   | { page: "gates" }
   | { page: "gate"; repo: string | null; name: string }
-  | { page: "repos" }
-  | { page: "repo"; repo: string }
-  | { page: "activity" }
+  | { page: "activity"; outcome?: Outcome; reason?: string }
   | { page: "flaky" };
 
 export type Page = Route["page"];
 
-/** Stands in for a null repo in a gate route; a git common directory is never `-`. */
-const UNKNOWN_REPO = "-";
+/**
+ * Stands in for a null repo in gate routes, API repo parameters, and repo filters; a git
+ * common directory is never `-`.
+ */
+export const UNKNOWN_REPO = "-";
 
-const SIMPLE_PAGES = new Set(["overview", "gates", "repos", "activity", "flaky"]);
+const SIMPLE_PAGES = new Set(["overview", "gates", "activity", "flaky"]);
 
 function decode(part: string): string | null {
   try {
@@ -32,10 +40,28 @@ function decode(part: string): string | null {
   }
 }
 
+function isOutcome(value: string | null): value is Outcome {
+  return value !== null && Object.hasOwn(OUTCOMES, value);
+}
+
+function activityRoute(query: string): Route {
+  const params = new URLSearchParams(query);
+  const outcome = params.get("outcome");
+  const reason = params.get("reason");
+  return {
+    page: "activity",
+    ...(isOutcome(outcome) ? { outcome } : {}),
+    ...(reason ? { reason } : {}),
+  };
+}
+
 /** Parse a location hash such as `#/gates` into a route. */
 export function parseHash(hash: string): Route {
-  const parts = hash.replace(/^#\/?/, "").split("/");
-  const [head = "", ...rest] = parts;
+  const body = hash.replace(/^#\/?/, "");
+  const mark = body.indexOf("?");
+  const path = mark === -1 ? body : body.slice(0, mark);
+  const query = mark === -1 ? "" : body.slice(mark + 1);
+  const [head = "", ...rest] = path.split("/");
   if (head === "gates" && rest.length === 2) {
     const repo = decode(rest[0] ?? "");
     const name = decode(rest[1] ?? "");
@@ -45,8 +71,9 @@ export function parseHash(hash: string): Route {
   }
   if (head === "repos" && rest.length === 1) {
     const repo = decode(rest[0] ?? "");
-    if (repo) return { page: "repo", repo };
+    if (repo) return { page: "overview", selectRepo: repo };
   }
+  if (head === "activity" && rest.length === 0) return activityRoute(query);
   if (rest.length === 0 && SIMPLE_PAGES.has(head)) return { page: head } as Route;
   return { page: "overview" };
 }
@@ -57,7 +84,12 @@ export function href(route: Route): string {
     const repo = encodeURIComponent(route.repo ?? UNKNOWN_REPO);
     return `#/gates/${repo}/${encodeURIComponent(route.name)}`;
   }
-  if (route.page === "repo") return `#/repos/${encodeURIComponent(route.repo)}`;
+  if (route.page === "activity") {
+    const params: string[] = [];
+    if (route.outcome) params.push(`outcome=${encodeURIComponent(route.outcome)}`);
+    if (route.reason) params.push(`reason=${encodeURIComponent(route.reason)}`);
+    return params.length ? `#/activity?${params.join("&")}` : "#/activity";
+  }
   return `#/${route.page}`;
 }
 
@@ -88,13 +120,17 @@ export function openerAfter(
 }
 
 /**
- * Return the repo whose detail page shows for `route`: the repo page itself, or the repo page
- * a gate panel was opened from, which stays underneath the panel. Null for any other page.
+ * Return the page a gate panel opens over: the overview when the gate was opened from it, the
+ * Gates page for any other open gate, and null when no gate is open.
  */
-export function repoPageRepo(route: Route, opener: Route | null): string | null {
-  if (route.page === "repo") return route.repo;
-  if (route.page === "gate" && opener?.page === "repo") return opener.repo;
-  return null;
+export function panelHost(route: Route, opener: Route | null): "overview" | "gates" | null {
+  if (route.page !== "gate") return null;
+  return opener?.page === "overview" ? "overview" : "gates";
+}
+
+/** Return whether a hash is an old `#/repos` route, which the overview replaced. */
+function isReposHash(hash: string): boolean {
+  return /^#?\/?repos(?:[/?]|$)/.test(hash);
 }
 
 /** Set by `navigate` with `replace` and consumed by the next hash change. */
@@ -119,9 +155,14 @@ export function navigate(route: Route, options: { replace?: boolean } = {}): voi
 export function startRouter(): () => void {
   let loaded = false;
   const sync = () => {
-    const next = parseHash(location.hash);
+    let next = parseHash(location.hash);
     const replaced = pendingReplace;
     pendingReplace = false;
+    if (next.page === "overview" && isReposHash(location.hash)) {
+      if (next.selectRepo !== undefined) setRepos([next.selectRepo]);
+      next = { page: "overview" };
+      navigate(next, { replace: true });
+    }
     router.opener = openerAfter(loaded ? router.route : null, next, router.opener, replaced);
     router.route = next;
     loaded = true;

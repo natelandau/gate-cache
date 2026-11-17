@@ -14,6 +14,7 @@
   - `activeKey`: the `rowKey` of a row to highlight, such as the one a detail panel shows
   - `empty`: snippet shown in place of the body when `rows` is empty
   - `busy`: dims the rows while newer data loads
+  - `bare`: drops the outer border and background, for a table inside a panel such as `Module`
 
   Each row carries `data-key` with its `rowKey`, so a page can return focus to it.
 
@@ -57,6 +58,7 @@
     activeKey?: string | null;
     empty?: Snippet;
     busy?: boolean;
+    bare?: boolean;
   }
 
   let {
@@ -71,6 +73,7 @@
     activeKey = null,
     empty,
     busy = false,
+    bare = false,
   }: Props = $props();
 
   const sorted = $derived(sortRows(rows, columns, sort));
@@ -109,7 +112,7 @@
   }
 </script>
 
-<div class="table-wrap" aria-busy={busy}>
+<div class="table-wrap" class:bare aria-busy={busy}>
   <table class:busy>
     <caption class="visually-hidden">{label}</caption>
     <colgroup>
@@ -173,6 +176,12 @@
     border-radius: var(--radius);
     background: var(--surface);
     overflow-x: auto;
+  }
+
+  .table-wrap.bare {
+    border: 0;
+    border-radius: 0;
+    background: none;
   }
 
   table {

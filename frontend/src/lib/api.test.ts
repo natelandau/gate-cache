@@ -1,7 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiUrl, getActivity, getGate, getGates, getSummary } from "./api";
+import {
+  ApiError,
+  apiUrl,
+  getActivity,
+  getGate,
+  getGates,
+  getHourly,
+  getReasons,
+  getSlowdowns,
+  getSummary,
+} from "./api";
 
-const scope = { repo: "/work/app/.git", from: 100, tz: "Europe/Paris" };
+const scope = { repos: ["/work/app/.git"], from: 100, tz: "Europe/Paris" };
 
 function respond(status: number, body: unknown): void {
   vi.stubGlobal(
@@ -26,6 +36,11 @@ describe("apiUrl", () => {
     );
     expect(apiUrl("freshness")).toBe("/api/v1/freshness");
   });
+
+  it("repeats a parameter once per list entry", () => {
+    expect(apiUrl("gates", { repo: ["a", "-"] })).toContain("repo=a&repo=-");
+    expect(apiUrl("gates", { repo: [], tz: "UTC" })).toBe("/api/v1/gates?tz=UTC");
+  });
 });
 
 describe("fetchers", () => {
@@ -40,33 +55,64 @@ describe("fetchers", () => {
     expect(url.searchParams.get("tz")).toBe("Europe/Paris");
   });
 
-  it("send the gate's own repo, and omit it for the unknown repo", async () => {
+  it("send the gate's own repo, with - for the unknown repo", async () => {
     respond(200, {});
-    await getGate("lint", null, { scope });
-    expect(calledUrl().searchParams.has("repo")).toBe(false);
+    await getGate("lint", null, { scope: { ...scope, repos: ["/a/.git", "/b/.git"] } });
+    expect(calledUrl().searchParams.getAll("repo")).toEqual(["-"]);
     expect(calledUrl().searchParams.get("name")).toBe("lint");
-  });
-
-  it("send an explicit repo in place of the scope's repo", async () => {
-    respond(200, { daily: [] });
-    await getSummary({ scope, repo: "/work/other/.git" });
-    expect(calledUrl().searchParams.get("repo")).toBe("/work/other/.git");
     expect(calledUrl().searchParams.get("from")).toBe("100");
   });
 
-  it("drop the repo when the override is null", async () => {
+  it("send a known gate repo as the only repo", async () => {
+    respond(200, {});
+    await getGate("lint", "/work/other/.git", { scope });
+    expect(calledUrl().searchParams.getAll("repo")).toEqual(["/work/other/.git"]);
+  });
+
+  it("send explicit repos in place of the scope's repos", async () => {
+    respond(200, { daily: [] });
+    await getSummary({ scope, repos: ["/work/other/.git", "-"] });
+    expect(calledUrl().searchParams.getAll("repo")).toEqual(["/work/other/.git", "-"]);
+    expect(calledUrl().searchParams.get("from")).toBe("100");
+  });
+
+  it("drop the repo when the override is empty", async () => {
     respond(200, { gates: [] });
-    await getGates({ scope, repo: null });
+    await getGates({ scope, repos: [] });
     expect(calledUrl().searchParams.has("repo")).toBe(false);
   });
 
-  it("send the activity outcome, limit, and repo override", async () => {
+  it("send the activity outcome, reason, limit, and repo override", async () => {
     respond(200, { events: [], next_before: null });
-    await getActivity({ limit: 20, outcome: "fail" }, { scope, repo: "/work/other/.git" });
+    await getActivity(
+      { limit: 20, outcome: "uncached", reason: "dirty tree" },
+      { scope, repos: ["/work/other/.git"] },
+    );
     const params = calledUrl().searchParams;
-    expect(params.get("outcome")).toBe("fail");
+    expect(params.get("outcome")).toBe("uncached");
+    expect(params.get("reason")).toBe("dirty tree");
     expect(params.get("limit")).toBe("20");
-    expect(params.get("repo")).toBe("/work/other/.git");
+    expect(params.getAll("repo")).toEqual(["/work/other/.git"]);
+  });
+
+  it("unwrap the hourly cells and the reasons", async () => {
+    const cell = { weekday: 0, hour: 9, runs: 2, saved: 1.5, failures: 0 };
+    respond(200, { cells: [cell] });
+    expect(await getHourly({ scope })).toEqual([cell]);
+    expect(calledUrl().pathname).toBe("/api/v1/hourly");
+    vi.unstubAllGlobals();
+    const reason = { outcome: "uncached", reason: "dirty tree", count: 3 };
+    respond(200, { reasons: [reason] });
+    expect(await getReasons({ scope })).toEqual([reason]);
+    expect(calledUrl().pathname).toBe("/api/v1/reasons");
+  });
+
+  it("return slowdowns with whether a comparison exists", async () => {
+    const body = { gates: [], comparable: false };
+    respond(200, body);
+    expect(await getSlowdowns({ scope })).toEqual(body);
+    expect(calledUrl().pathname).toBe("/api/v1/slowdowns");
+    expect(calledUrl().searchParams.getAll("repo")).toEqual(["/work/app/.git"]);
   });
 
   it("throw the server's error message with the status", async () => {

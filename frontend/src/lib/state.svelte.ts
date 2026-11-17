@@ -3,43 +3,13 @@
  * clock for relative times. Every page reads from here; only the setters write.
  */
 
-export type Range = "24h" | "7d" | "30d" | "90d" | "all";
+import { parseRangeSpec, type RangeSpec } from "./range";
 
-/** The range presets in display order. */
-export const RANGES: readonly { value: Range; label: string; long: string }[] = [
-  { value: "24h", label: "24h", long: "Last 24 hours" },
-  { value: "7d", label: "7d", long: "Last 7 days" },
-  { value: "30d", label: "30d", long: "Last 30 days" },
-  { value: "90d", label: "90d", long: "Last 90 days" },
-  { value: "all", label: "All", long: "All time" },
-];
-
-const RANGE_SECONDS: Record<Exclude<Range, "all">, number> = {
-  "24h": 86400,
-  "7d": 7 * 86400,
-  "30d": 30 * 86400,
-  "90d": 90 * 86400,
-};
-
-const DEFAULT_RANGE: Range = "30d";
+const DEFAULT_RANGE: RangeSpec = { kind: "preset", preset: "30d" };
 const STORAGE_KEY = "gate-cache.filters";
 export const POLL_INTERVAL_MS = 2500;
 /** Consecutive failed polls before the dashboard calls itself stale. */
 export const STALE_AFTER_FAILURES = 2;
-
-/** Return whether `value` is a known range preset. */
-export function isRange(value: unknown): value is Range {
-  return typeof value === "string" && RANGES.some((range) => range.value === value);
-}
-
-/**
- * Return the API bounds for a range preset, in Unix seconds.
- *
- * Ranges end at the present, so only `from` is set; `all` sets neither.
- */
-export function rangeBounds(range: Range, now: number): { from?: number; to?: number } {
-  return range === "all" ? {} : { from: now - RANGE_SECONDS[range] };
-}
 
 /** The browser's IANA time zone, which the API uses to bucket days. */
 export function timeZone(): string {
@@ -52,26 +22,37 @@ export function nowSeconds(): number {
 }
 
 export interface Filters {
-  /** Git common directory of the selected repo, or null for every repo. */
-  repo: string | null;
-  range: Range;
+  /** Git common directories of the selected repos, with `-` for the unknown repo; empty for every repo. */
+  repos: string[];
+  range: RangeSpec;
+}
+
+/**
+ * Return the filters stored as JSON in `raw`, falling back to the defaults for anything
+ * missing or malformed. The older `{repo, range}` shape with one repo and a bare preset loads too.
+ */
+export function parseStoredFilters(raw: string | null): Filters {
+  const fallback: Filters = { repos: [], range: DEFAULT_RANGE };
+  if (!raw) return fallback;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+  if (typeof parsed !== "object" || parsed === null) return fallback;
+  const { repos, repo, range } = parsed as Record<string, unknown>;
+  const listed = Array.isArray(repos) ? repos : typeof repo === "string" ? [repo] : [];
+  const valid = listed.filter((r): r is string => typeof r === "string" && r !== "");
+  return { repos: [...new Set(valid)], range: parseRangeSpec(range) ?? DEFAULT_RANGE };
 }
 
 function loadFilters(): Filters {
-  const fallback: Filters = { repo: null, range: DEFAULT_RANGE };
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return fallback;
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return fallback;
-    const { repo, range } = parsed as Record<string, unknown>;
-    return {
-      repo: typeof repo === "string" && repo !== "" ? repo : null,
-      range: isRange(range) ? range : DEFAULT_RANGE,
-    };
+    return parseStoredFilters(localStorage.getItem(STORAGE_KEY));
   } catch {
     // Storage can be missing or blocked; the defaults still work.
-    return fallback;
+    return parseStoredFilters(null);
   }
 }
 
@@ -86,15 +67,15 @@ function saveFilters(): void {
 /** The global repo and range filters. Read freely; change them with the setters below. */
 export const filters: Filters = $state(loadFilters());
 
-/** Select one repo by its git common directory, or every repo with null. */
-export function setRepo(repo: string | null): void {
-  filters.repo = repo;
+/** Select repos by git common directory, with `-` for the unknown repo, or every repo with []. */
+export function setRepos(repos: string[]): void {
+  filters.repos = [...new Set(repos)];
   saveFilters();
 }
 
-/** Select a range preset. */
-export function setRange(range: Range): void {
-  filters.range = range;
+/** Select a date range. */
+export function setRange(spec: RangeSpec): void {
+  filters.range = spec;
   saveFilters();
 }
 

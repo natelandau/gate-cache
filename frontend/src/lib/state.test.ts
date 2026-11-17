@@ -1,30 +1,38 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   freshness,
-  isRange,
+  parseStoredFilters,
   POLL_INTERVAL_MS,
-  rangeBounds,
   startFreshnessPolling,
 } from "./state.svelte";
 
-describe("rangeBounds", () => {
-  it("starts the window the range length before now", () => {
-    expect(rangeBounds("7d", 1_000_000)).toEqual({ from: 1_000_000 - 7 * 86400 });
-    expect(rangeBounds("24h", 1_000_000)).toEqual({ from: 1_000_000 - 86400 });
-    expect(rangeBounds("30d", 10_000_000)).toEqual({ from: 10_000_000 - 30 * 86400 });
-    expect(rangeBounds("90d", 10_000_000)).toEqual({ from: 10_000_000 - 90 * 86400 });
+describe("parseStoredFilters", () => {
+  const fallback = { repos: [], range: { kind: "preset", preset: "30d" } };
+
+  it("migrates the old single-repo shape", () => {
+    expect(parseStoredFilters('{"repo":"/x/.git","range":"7d"}')).toEqual({
+      repos: ["/x/.git"],
+      range: { kind: "preset", preset: "7d" },
+    });
+    expect(parseStoredFilters('{"repo":null,"range":"all"}')).toEqual({
+      repos: [],
+      range: { kind: "preset", preset: "all" },
+    });
   });
 
-  it("leaves all time unbounded", () => {
-    expect(rangeBounds("all", 1)).toEqual({});
+  it("loads the current shape", () => {
+    const stored = { repos: ["/a/.git", "-"], range: { kind: "period", period: "last_week" } };
+    expect(parseStoredFilters(JSON.stringify(stored))).toEqual(stored);
   });
-});
 
-describe("isRange", () => {
-  it("accepts only known presets", () => {
-    expect(isRange("7d")).toBe(true);
-    expect(isRange("1y")).toBe(false);
-    expect(isRange(null)).toBe(false);
+  it("drops bad entries and falls back to the defaults", () => {
+    expect(parseStoredFilters(null)).toEqual(fallback);
+    expect(parseStoredFilters("not json")).toEqual(fallback);
+    expect(parseStoredFilters('"7d"')).toEqual(fallback);
+    expect(parseStoredFilters('{"repos":["/a/.git","",3,"/a/.git"],"range":"2w"}')).toEqual({
+      repos: ["/a/.git"],
+      range: fallback.range,
+    });
   });
 });
 

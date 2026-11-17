@@ -2,12 +2,14 @@
  * Typed fetchers for the dashboard JSON API under `/api/v1/`.
  *
  * Every fetcher except `getFreshness` scopes its query with the global filters unless the
- * caller passes an explicit `scope` or `repo`. Failures throw `ApiError`.
+ * caller passes an explicit `scope` or `repos`. Failures throw `ApiError`.
  */
 
 import type { DayBucket } from "./fill";
 import type { FreshnessReading } from "./state.svelte";
-import { filters, nowSeconds, rangeBounds, timeZone } from "./state.svelte";
+import { resolveRange } from "./range";
+import { UNKNOWN_REPO } from "./router.svelte";
+import { filters, nowSeconds, timeZone } from "./state.svelte";
 
 export type { DayBucket };
 
@@ -27,8 +29,64 @@ export interface Summary {
   uncached: number;
   failures: number;
   flaky_gates: number;
+  /** Event counts per outcome. */
+  outcomes: Record<Outcome, number>;
+  /**
+   * Totals for the window of equal length just before this one, or null when the range has no
+   * start or that window reaches past retention or the first recorded event.
+   */
+  previous: PreviousTotals | null;
   /** Days with at least one event, in order. Gaps are not filled. */
   daily: DayBucket[];
+}
+
+export interface PreviousTotals {
+  time_saved: number;
+  runs: number;
+  skips: number;
+  skip_rate: number | null;
+  failures: number;
+  flaky_gates: number;
+  /** Length of the previous window in days. */
+  days: number;
+}
+
+/** Activity in one hour of the week, in the query's time zone. */
+export interface HourCell {
+  /** 0 is Sunday. */
+  weekday: number;
+  /** 0 to 23. */
+  hour: number;
+  runs: number;
+  /** Seconds saved by skips. */
+  saved: number;
+  failures: number;
+}
+
+/** How often gates ran without the cache for one reason. */
+export interface ReasonRow {
+  outcome: "uncached" | "pass_unrecorded";
+  reason: string;
+  count: number;
+}
+
+/** A gate whose median passing run time grew since the previous window. */
+export interface SlowdownRow {
+  repo: string | null;
+  repo_name: string;
+  name: string;
+  /** Median passing run time in seconds in the previous window. */
+  before: number;
+  /** Median passing run time in seconds in this window. */
+  now: number;
+  /** Relative growth, such as 0.25 for 25% slower. */
+  change: number;
+}
+
+export interface Slowdowns {
+  gates: SlowdownRow[];
+  /** False when no previous window exists to compare against. */
+  comparable: boolean;
 }
 
 export interface GateRow {
@@ -116,10 +174,10 @@ export class ApiError extends Error {
   }
 }
 
-/** The repo, time range, and zone a query covers. */
+/** The repos, time range, and zone a query covers. */
 export interface QueryScope {
-  /** Git common directory, or null for every repo. */
-  repo: string | null;
+  /** Git common directories, with `-` for the unknown repo; empty for every repo. */
+  repos: string[];
   /** Inclusive lower bound in Unix seconds. */
   from?: number;
   /** Exclusive upper bound in Unix seconds. */
@@ -134,28 +192,43 @@ export interface RequestOptions {
   /** Overrides the scope derived from the global filters. */
   scope?: QueryScope;
   /**
-   * Overrides the scope's repo, such as a detail page's own repo; null drops the repo
-   * parameter. The range and zone still come from the scope.
+   * Overrides the scope's repos, such as a gate's own repo; an empty list selects every repo.
+   * The range and zone still come from the scope, and the repo filter is not read.
    */
-  repo?: string | null;
+  repos?: string[];
 }
 
-/** Return the scope the global filters select at `now`. */
-export function currentScope(now: number = nowSeconds()): QueryScope {
-  return { repo: filters.repo, ...rangeBounds(filters.range, now), tz: timeZone() };
+/**
+ * Return the scope the global filters select at `now`, with `repos` in place of the repo filter
+ * when given. The repo filter is read only without `repos`, so a reactive caller that passes
+ * them does not reload on a filter change.
+ */
+export function currentScope(now: number = nowSeconds(), repos?: string[]): QueryScope {
+  return {
+    repos: repos ?? [...filters.repos],
+    ...resolveRange(filters.range, new Date(now * 1000)),
+    tz: timeZone(),
+  };
 }
 
-type Params = Record<string, string | number | null | undefined>;
+type Params = Record<string, string | number | string[] | null | undefined>;
 
 function scopeParams(scope: QueryScope): Params {
-  return { repo: scope.repo, from: scope.from, to: scope.to, tz: scope.tz };
+  return { repo: scope.repos, from: scope.from, to: scope.to, tz: scope.tz };
 }
 
-/** Return the path and query string for an endpoint, dropping null and undefined values. */
+/**
+ * Return the path and query string for an endpoint. A list value repeats its key once per
+ * entry, and null and undefined values are dropped.
+ */
 export function apiUrl(endpoint: string, params: Params = {}): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== null && value !== undefined) query.set(key, String(value));
+    if (Array.isArray(value)) {
+      for (const item of value) query.append(key, item);
+    } else if (value !== null && value !== undefined) {
+      query.set(key, String(value));
+    }
   }
   const text = query.toString();
   return `/api/v1/${endpoint}${text ? `?${text}` : ""}`;
@@ -189,8 +262,8 @@ async function request<T>(endpoint: string, params: Params, signal?: AbortSignal
 }
 
 function scoped(options: RequestOptions): Params {
-  const scope = options.scope ?? currentScope();
-  return scopeParams(options.repo === undefined ? scope : { ...scope, repo: options.repo });
+  const scope = options.scope ?? currentScope(undefined, options.repos);
+  return scopeParams(options.repos === undefined ? scope : { ...scope, repos: options.repos });
 }
 
 export function getSummary(options: RequestOptions = {}): Promise<Summary> {
@@ -211,7 +284,8 @@ export function getGate(
   repo: string | null,
   options: RequestOptions = {},
 ): Promise<GateDetail> {
-  return request("gate", { ...scoped({ ...options, repo }), name }, options.signal);
+  const params = { ...scoped({ ...options, repos: [repo ?? UNKNOWN_REPO] }), name };
+  return request("gate", params, options.signal);
 }
 
 export async function getRepos(options: RequestOptions = {}): Promise<RepoRow[]> {
@@ -221,19 +295,43 @@ export async function getRepos(options: RequestOptions = {}): Promise<RepoRow[]>
 
 /**
  * Fetch one page of events, newest first. Pass the previous page's `next_before` to continue,
- * and an `outcome` to keep only events with that outcome.
+ * an `outcome` to keep only events with that outcome, and a `reason` to keep only events
+ * recorded with that reason.
  */
 export function getActivity(
-  page: { limit?: number; before?: string | null; outcome?: Outcome } = {},
+  page: { limit?: number; before?: string | null; outcome?: Outcome; reason?: string } = {},
   options: RequestOptions = {},
 ): Promise<ActivityPage> {
-  const params = { ...scoped(options), limit: page.limit, before: page.before, outcome: page.outcome };
+  const params = {
+    ...scoped(options),
+    limit: page.limit,
+    before: page.before,
+    outcome: page.outcome,
+    reason: page.reason,
+  };
   return request("activity", params, options.signal);
 }
 
 export async function getFlaky(options: RequestOptions = {}): Promise<FlakyGate[]> {
   const body = await request<{ gates: FlakyGate[] }>("flaky", scoped(options), options.signal);
   return body.gates;
+}
+
+/** Fetch activity for each of the 168 hours of the week, Sunday first. */
+export async function getHourly(options: RequestOptions = {}): Promise<HourCell[]> {
+  const body = await request<{ cells: HourCell[] }>("hourly", scoped(options), options.signal);
+  return body.cells;
+}
+
+/** Fetch why gates ran without the cache, most common first. */
+export async function getReasons(options: RequestOptions = {}): Promise<ReasonRow[]> {
+  const body = await request<{ reasons: ReasonRow[] }>("reasons", scoped(options), options.signal);
+  return body.reasons;
+}
+
+/** Fetch the gates whose run time grew most since the previous window. */
+export function getSlowdowns(options: RequestOptions = {}): Promise<Slowdowns> {
+  return request("slowdowns", scoped(options), options.signal);
 }
 
 export function getFreshness(options: { signal?: AbortSignal } = {}): Promise<Freshness> {

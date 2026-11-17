@@ -75,4 +75,12 @@ describe("DataTable", () => {
     expect(body).toContain('data-key="lint"');
     expect(body).toMatch(/data-key="test"[^>]*class="[^"]*active/);
   });
+
+  it("marks a bare table so it drops its own border", () => {
+    const props = { label: "Gates", rows: [{ name: "lint", runs: 2 }], columns, rowKey: (r: Row) => r.name };
+    expect(render(DataTable<Row>, { props: { ...props, bare: true } }).body).toMatch(
+      /class="table-wrap[^"]*\bbare\b/,
+    );
+    expect(render(DataTable<Row>, { props }).body).not.toMatch(/class="table-wrap[^"]*\bbare\b/);
+  });
 });

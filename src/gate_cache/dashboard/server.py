@@ -11,11 +11,12 @@ import re
 import socket
 import sqlite3
 import threading
+import time
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from gate_cache.console import say
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 HOST = "127.0.0.1"
+UNKNOWN_REPO = "-"
 NO_UI_MESSAGE = "This install has no dashboard UI. Install with: uv tool install gate-cache"
 
 _MAX_LIMIT = 500
@@ -79,10 +81,20 @@ def _text(params: dict[str, list[str]], key: str) -> str | None:
     return params[key][-1] or None if key in params else None
 
 
+def _repo_value(text: str) -> str | None:
+    """Return the repo a parameter names; the unknown repo becomes None."""
+    return None if text == UNKNOWN_REPO else text
+
+
+def _repos(params: dict[str, list[str]]) -> tuple[str | None, ...]:
+    """Return the distinct non-empty repo parameters in order."""
+    return tuple(dict.fromkeys(_repo_value(v) for v in params.get("repo", []) if v))
+
+
 def _filters(params: dict[str, list[str]]) -> Filters:
     """Build query filters from the common parameters."""
     return Filters(
-        repo=_text(params, "repo"),
+        repos=_repos(params),
         start=_time(params, "from"),
         end=_time(params, "to"),
         tz=_text(params, "tz") or "UTC",
@@ -203,10 +215,15 @@ def _gate_detail(server: DashboardServer, params: dict[str, list[str]]) -> dict[
     if name is None:
         msg = "name is required"
         raise _BadRequestError(msg)
+    repo_param = _text(params, "repo")
+    if repo_param is None:
+        msg = "repo is required"
+        raise _BadRequestError(msg)
+    repo = _repo_value(repo_param)
     filters = _filters(params)
     return _query(
         server,
-        lambda c: queries.gate_detail(c, filters, repo=filters.repo, name=name),
+        lambda c: queries.gate_detail(c, filters, repo=repo, name=name),
     )
 
 
@@ -219,9 +236,12 @@ def _activity(server: DashboardServer, params: dict[str, list[str]]) -> dict[str
     limit = max(1, min(int(text), _MAX_LIMIT))
     before = _text(params, "before")
     outcome = _text(params, "outcome")
+    reason = _text(params, "reason")
     return _query(
         server,
-        lambda c: queries.activity(c, filters, limit=limit, before=before, outcome=outcome),
+        lambda c: queries.activity(
+            c, filters, limit=limit, before=before, outcome=outcome, reason=reason
+        ),
     )
 
 
@@ -235,14 +255,38 @@ def _simple(
     return route
 
 
+class _TimedQuery(Protocol):
+    """A query that compares against a window ending at the current time."""
+
+    def __call__(
+        self, conn: sqlite3.Connection, filters: Filters, *, now: float | None = None
+    ) -> dict[str, Any]: ...
+
+
+def _timed(
+    func: _TimedQuery,
+) -> Callable[[DashboardServer, dict[str, list[str]]], dict[str, Any]]:
+    """Return a route for a query that also takes the current time as `now`."""
+
+    def route(server: DashboardServer, params: dict[str, list[str]]) -> dict[str, Any]:
+        filters = _filters(params)
+        now = time.time()
+        return _query(server, lambda c: func(c, filters, now=now))
+
+    return route
+
+
 _ROUTES: dict[str, Callable[[DashboardServer, dict[str, list[str]]], dict[str, Any]]] = {
     "freshness": _freshness,
-    "summary": _simple(queries.summary),
+    "summary": _timed(queries.summary),
+    "hourly": _simple(queries.hourly),
+    "reasons": _simple(queries.reasons),
     "gates": _simple(queries.gates),
     "gate": _gate_detail,
     "repos": _simple(queries.repos),
     "activity": _activity,
     "flaky": _simple(queries.flaky),
+    "slowdowns": _timed(queries.slowdowns),
 }
 
 

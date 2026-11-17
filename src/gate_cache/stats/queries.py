@@ -5,17 +5,20 @@ from __future__ import annotations
 import math
 import re
 import statistics
+import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 from zoneinfo import ZoneInfo
 
+from gate_cache.stats.archive import RETENTION_DAYS
 from gate_cache.stats.recorder import Outcome
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Iterator
 
 _RAN = "('skip', 'pass', 'pass_unrecorded', 'fail')"
 _GOOD = "('pass', 'pass_unrecorded')"
@@ -43,13 +46,14 @@ class Filters:
     """Restrict queries to a repo and a half-open time range.
 
     Attributes:
-        repo: Git common directory to match, or None for every repo.
+        repos: Git common directories to match; None selects the unknown repo.
+            Empty means every repo.
         start: Inclusive lower bound as Unix seconds.
         end: Exclusive upper bound as Unix seconds.
         tz: IANA time zone name used to bucket days.
     """
 
-    repo: str | None = None
+    repos: tuple[str | None, ...] = ()
     start: float | None = None
     end: float | None = None
     tz: str = "UTC"
@@ -84,9 +88,15 @@ def _where(
     if exact_repo is not None:
         clauses.append("repo IS ?")
         params.append(exact_repo[0])
-    elif filters.repo is not None:
-        clauses.append("repo = ?")
-        params.append(filters.repo)
+    elif filters.repos:
+        known = [r for r in filters.repos if r is not None]
+        parts: list[str] = []
+        if known:
+            parts.append(f"repo IN ({', '.join('?' * len(known))})")
+            params.extend(known)
+        if None in filters.repos:
+            parts.append("repo IS NULL")
+        clauses.append(f"({' OR '.join(parts)})")
     if name is not None:
         clauses.append("name = ?")
         params.append(name)
@@ -140,17 +150,8 @@ def _event_row(raw: tuple[Any, ...]) -> dict[str, Any]:
     }
 
 
-def summary(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
-    """Return headline totals and per-day buckets.
-
-    Args:
-        conn: Archive connection.
-        filters: Repo and range filters.
-
-    Returns:
-        Totals, with runs counting every recorded event including uncached ones.
-    """
-    zone = _zone(filters.tz)
+def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
+    """Return the headline totals and per-outcome counts for the filtered events."""
     where, params = _where(filters)
     row = conn.execute(
         "SELECT COUNT(*),"  # noqa: S608
@@ -159,24 +160,13 @@ def summary(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         " COALESCE(SUM(outcome = 'uncached'), 0),"
         " COALESCE(SUM(outcome = 'fail'), 0),"
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
-        " COALESCE(SUM(outcome = 'skip' AND saved IS NULL), 0)"
+        " COALESCE(SUM(outcome = 'skip' AND saved IS NULL), 0),"
+        " COALESCE(SUM(outcome = 'pass'), 0),"
+        " COALESCE(SUM(outcome = 'pass_unrecorded'), 0)"
         " FROM events" + where,
         params,
     ).fetchone()
-    runs, skips, ran, uncached, failures, saved, unknown = row
-    buckets: dict[str, list[float]] = defaultdict(lambda: [0.0, 0, 0])
-    for bucket_id, bucket_saved, bucket_failures, bucket_runs in conn.execute(
-        "SELECT " + _BUCKET + ","  # noqa: S608
-        " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
-        " SUM(outcome = 'fail'), COUNT(*)"
-        " FROM events" + where + " GROUP BY 1",
-        params,
-    ):
-        start = datetime.fromtimestamp(bucket_id * _BUCKET_SECONDS, tz=UTC)
-        bucket = buckets[start.astimezone(zone).date().isoformat()]
-        bucket[0] += bucket_saved
-        bucket[1] += bucket_failures
-        bucket[2] += bucket_runs
+    runs, skips, ran, uncached, failures, saved, unknown, passes, unrecorded = row
     return {
         "time_saved": float(saved),
         "unknown_saved_skips": unknown,
@@ -186,11 +176,139 @@ def summary(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         "uncached": uncached,
         "failures": failures,
         "flaky_gates": len({(r[0], r[1]) for r in _flaky_trees(conn, where, params)}),
+        "outcomes": {
+            "skip": skips,
+            "pass": passes,
+            "pass_unrecorded": unrecorded,
+            "fail": failures,
+            "uncached": uncached,
+        },
+    }
+
+
+@dataclass
+class _Tally:
+    """Runs, seconds saved by skips, and failures, summed over some events."""
+
+    runs: int = 0
+    saved: float = 0.0
+    failures: int = 0
+
+    def add(self, other: _Tally) -> None:
+        """Add another tally's counts to this one."""
+        self.runs += other.runs
+        self.saved += other.saved
+        self.failures += other.failures
+
+
+def _local_buckets(conn: sqlite3.Connection, filters: Filters) -> Iterator[tuple[datetime, _Tally]]:
+    """Yield the local start and tally of each quarter-hour bucket that holds an event.
+
+    Raises:
+        ValueError: If the filter's time zone is unknown.
+    """
+    zone = _zone(filters.tz)
+    where, params = _where(filters)
+    for bucket_id, saved, failures, runs in conn.execute(
+        "SELECT " + _BUCKET + ","  # noqa: S608
+        " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
+        " SUM(outcome = 'fail'), COUNT(*)"
+        " FROM events" + where + " GROUP BY 1",
+        params,
+    ):
+        start = datetime.fromtimestamp(bucket_id * _BUCKET_SECONDS, tz=UTC).astimezone(zone)
+        yield start, _Tally(runs=int(runs), saved=float(saved), failures=int(failures))
+
+
+def previous_window(conn: sqlite3.Connection, filters: Filters, *, now: float) -> Filters | None:
+    """Return the window of equal length that ends where the filtered range starts.
+
+    Args:
+        conn: Archive connection.
+        filters: The current range; its end defaults to now.
+        now: Current Unix time in seconds.
+
+    Returns:
+        The previous window, or None when the range has no start, the window starts beyond
+        retention, or it starts before the archive's first event in any repo.
+    """
+    if filters.start is None:
+        return None
+    end = filters.end if filters.end is not None else now
+    length = end - filters.start
+    previous_start = filters.start - length
+    if length <= 0 or previous_start < now - RETENTION_DAYS * 86400:
+        return None
+    earliest = conn.execute("SELECT MIN(ts) FROM events WHERE " + _KNOWN).fetchone()[0]  # noqa: S608
+    if earliest is None or previous_start < earliest:
+        return None
+    return Filters(repos=filters.repos, start=previous_start, end=filters.start, tz=filters.tz)
+
+
+def summary(
+    conn: sqlite3.Connection, filters: Filters, *, now: float | None = None
+) -> dict[str, Any]:
+    """Return headline totals, outcome counts, previous-period totals, and per-day buckets.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters.
+        now: Current Unix time in seconds; defaults to the clock.
+
+    Returns:
+        Totals, with runs counting every recorded event including uncached ones, plus a
+        previous-period block that is None when no comparable window exists.
+    """
+    result = _totals(conn, filters)
+    window = previous_window(conn, filters, now=time.time() if now is None else now)
+    previous: dict[str, Any] | None = None
+    if window is not None and window.start is not None and window.end is not None:
+        totals = _totals(conn, window)
+        previous = {
+            key: totals[key]
+            for key in ("time_saved", "runs", "skips", "skip_rate", "failures", "flaky_gates")
+        }
+        previous["days"] = (window.end - window.start) / 86400
+    days: dict[str, _Tally] = defaultdict(_Tally)
+    for start, tally in _local_buckets(conn, filters):
+        days[start.date().isoformat()].add(tally)
+    return {
+        **result,
+        "previous": previous,
         "daily": [
-            {"day": day, "saved": float(b[0]), "failures": int(b[1]), "runs": int(b[2])}
-            for day, b in sorted(buckets.items())
+            {"day": day, "saved": t.saved, "failures": t.failures, "runs": t.runs}
+            for day, t in sorted(days.items())
         ],
     }
+
+
+def hourly(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
+    """Return activity for each hour of the week in the filter's time zone.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters.
+
+    Returns:
+        168 cells ordered by weekday then hour, with weekday 0 as Sunday.
+    """
+    grid: dict[tuple[int, int], _Tally] = defaultdict(_Tally)
+    for start, tally in _local_buckets(conn, filters):
+        grid[(start.isoweekday() % 7, start.hour)].add(tally)
+    cells: list[dict[str, Any]] = []
+    for weekday in range(7):
+        for hour in range(24):
+            cell = grid.get((weekday, hour), _Tally())
+            cells.append(
+                {
+                    "weekday": weekday,
+                    "hour": hour,
+                    "runs": cell.runs,
+                    "saved": cell.saved,
+                    "failures": cell.failures,
+                }
+            )
+    return {"cells": cells}
 
 
 def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
@@ -232,6 +350,71 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         )
     out.sort(key=lambda g: (-g["time_saved"], g["repo_name"], g["name"]))
     return {"gates": out}
+
+
+def _median_passes(
+    conn: sqlite3.Connection, filters: Filters
+) -> dict[tuple[str | None, str], tuple[float, int]]:
+    """Return the median passing duration and pass count for each gate."""
+    where, params = _where(filters)
+    durations: dict[tuple[str | None, str], list[float]] = defaultdict(list)
+    for repo, name, duration in conn.execute(
+        "SELECT repo, name, duration FROM events"  # noqa: S608
+        + _and(where, "outcome = 'pass' AND duration IS NOT NULL"),
+        params,
+    ):
+        durations[(repo, name)].append(duration)
+    return {key: (float(statistics.median(d)), len(d)) for key, d in durations.items()}
+
+
+def slowdowns(
+    conn: sqlite3.Connection,
+    filters: Filters,
+    *,
+    now: float | None = None,
+    min_runs: int = 5,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Return the gates whose median passing run time grew since the previous window.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters; the range is the current window.
+        now: Current Unix time in seconds; defaults to the clock.
+        min_runs: Passing runs a gate needs in each window to be compared.
+        limit: Most gates to return.
+
+    Returns:
+        Gates sorted by relative growth, and whether a previous window exists.
+    """
+    current_time = time.time() if now is None else now
+    window = previous_window(conn, filters, now=current_time)
+    if window is None:
+        return {"gates": [], "comparable": False}
+    current = replace(filters, end=filters.end if filters.end is not None else current_time)
+    before = _median_passes(conn, window)
+    after = _median_passes(conn, current)
+    out: list[dict[str, Any]] = []
+    for (repo, name), (median_now, runs_now) in after.items():
+        median_before, runs_before = before.get((repo, name), (0.0, 0))
+        if (
+            min(runs_now, runs_before) < min_runs
+            or median_before <= 0
+            or median_now <= median_before
+        ):
+            continue
+        out.append(
+            {
+                "repo": repo,
+                "repo_name": repo_name(repo),
+                "name": name,
+                "before": median_before,
+                "now": median_now,
+                "change": median_now / median_before - 1,
+            }
+        )
+    out.sort(key=lambda g: (-g["change"], g["repo_name"], g["name"]))
+    return {"gates": out[:limit], "comparable": True}
 
 
 def gate_detail(
@@ -318,6 +501,7 @@ def activity(
     limit: int = 100,
     before: str | None = None,
     outcome: str | None = None,
+    reason: str | None = None,
 ) -> dict[str, Any]:
     """Return one page of events, newest first.
 
@@ -327,6 +511,7 @@ def activity(
         limit: Page size, clamped to 1..500.
         before: Opaque cursor from a previous page's next_before.
         outcome: Keep only events with this outcome, or every event when None.
+        reason: Keep only events with exactly this reason, or every event when None.
 
     Returns:
         The events and the cursor for the next page, or None on the last page.
@@ -342,6 +527,9 @@ def activity(
             raise ValueError(msg)
         where = _and(where, "outcome = ?")
         params = [*params, outcome]
+    if reason is not None:
+        where = _and(where, "reason = ?")
+        params = [*params, reason]
     if before is not None:
         ts, event_id = _parse_cursor(before)
         where = _and(where, "(ts < ? OR (ts = ? AND id < ?))")
@@ -356,6 +544,18 @@ def activity(
         "events": [_event_row(r[:-1]) for r in page],
         "next_before": f"{page[-1][0]!r}:{page[-1][-1]}" if more else None,
     }
+
+
+def reasons(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
+    """Return why gates ran without the cache, most common first."""
+    where, params = _where(filters)
+    rows = conn.execute(
+        "SELECT outcome, reason, COUNT(*) AS n FROM events"  # noqa: S608
+        + _and(where, "outcome IN ('uncached', 'pass_unrecorded') AND reason IS NOT NULL")
+        + " GROUP BY outcome, reason ORDER BY n DESC, reason, outcome",
+        params,
+    ).fetchall()
+    return {"reasons": [{"outcome": o, "reason": r, "count": n} for o, r, n in rows]}
 
 
 def flaky(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:

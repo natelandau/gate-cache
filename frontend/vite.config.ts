@@ -78,5 +78,7 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
     environment: "node",
+    // A zone with daylight saving time, so tests of local day boundaries are deterministic.
+    env: { TZ: "America/New_York" },
   },
 });

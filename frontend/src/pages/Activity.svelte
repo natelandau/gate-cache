@@ -1,27 +1,55 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { addPage, feedView, PAGE_SIZE, type PagedFeed } from "../lib/activity";
-  import { getActivity, type EventRow } from "../lib/api";
+  import { activityHint, activitySubject, addPage, feedView, PAGE_SIZE, type PagedFeed } from "../lib/activity";
+  import { getActivity, type EventRow, type Outcome } from "../lib/api";
+  import Badge from "../lib/components/Badge.svelte";
   import Button from "../lib/components/Button.svelte";
   import DataTable, { type Column } from "../lib/components/DataTable.svelte";
   import EmptyState from "../lib/components/EmptyState.svelte";
   import Notice from "../lib/components/Notice.svelte";
   import OutcomeBadge from "../lib/components/OutcomeBadge.svelte";
+  import Select from "../lib/components/Select.svelte";
   import { eventKeys, eventTitle, OUTCOMES, timeText } from "../lib/events";
   import { formatCount, formatRelative, formatTimestamp } from "../lib/format";
   import { createQuery } from "../lib/query.svelte";
   import { navigate } from "../lib/router.svelte";
-  import { emptyHint, emptyTitle } from "../lib/scope";
+  import { emptyTitle } from "../lib/scope";
   import { clock, filters, freshness } from "../lib/state.svelte";
 
   interface Props {
     repoLabel: string | null;
+    /** Show only runs with this outcome; page-local, from the hash route. */
+    outcome?: Outcome;
+    /** Show only runs with this exact reason; page-local, from the hash route. */
+    reason?: string;
   }
 
-  let { repoLabel }: Props = $props();
+  let { repoLabel, outcome, reason }: Props = $props();
 
   // The first page follows the archive live; see lib/activity.ts for why later pages do not.
-  const first = createQuery((signal) => getActivity({ limit: PAGE_SIZE }, { signal }));
+  const first = createQuery(
+    (signal) => getActivity({ limit: PAGE_SIZE, outcome, reason }, { signal }),
+    () => [outcome, reason],
+  );
+
+  const outcomeOptions = [
+    { value: "", label: "All outcomes" },
+    ...Object.entries(OUTCOMES).map(([value, { label }]) => ({ value, label })),
+  ];
+
+  // Filter changes replace the history entry, so going back leaves the page instead of
+  // stepping through every filter tried.
+  function showOutcome(value: string): void {
+    navigate(
+      { page: "activity", ...(value ? { outcome: value as Outcome } : {}), ...(reason ? { reason } : {}) },
+      { replace: true },
+    );
+  }
+
+  function removeReason(): void {
+    navigate({ page: "activity", ...(outcome ? { outcome } : {}) }, { replace: true });
+    heading.focus();
+  }
 
   let paged: PagedFeed | null = $state(null);
   let loadingMore = $state(false);
@@ -37,12 +65,12 @@
   }
 
   $effect(() => {
-    void [filters.repo, filters.range];
+    void [filters.repos, filters.range, outcome, reason];
     resetPaging();
   });
 
   // Pages loaded under other filters never mix with the first page of the current ones.
-  const inputs = $derived(JSON.stringify([filters.repo, filters.range]));
+  const inputs = $derived(JSON.stringify([filters.repos, filters.range, outcome, reason]));
   const view = $derived(feedView(first.data, paged, inputs));
 
   type Row = EventRow & { key: string };
@@ -62,7 +90,7 @@
     },
     { key: "name", label: "Gate", sortable: false, cell: gate },
     { key: "repo_name", label: "Repo", sortable: false, title: (e) => e.repo ?? undefined },
-    { key: "outcome", label: "Outcome", sortable: false, cell: outcome },
+    { key: "outcome", label: "Outcome", sortable: false, cell: outcomeCell },
     { key: "time", label: "Time", sortable: false, align: "right", text: timeText },
   ];
 
@@ -81,7 +109,10 @@
     loadingMore = true;
     moreError = undefined;
     try {
-      const page = await getActivity({ limit: PAGE_SIZE, before }, { signal: controller.signal });
+      const page = await getActivity(
+        { limit: PAGE_SIZE, before, outcome, reason },
+        { signal: controller.signal },
+      );
       if (controller.signal.aborted || inputs !== at) return;
       paged = addPage(paged, live, page, at);
       await tick();
@@ -109,13 +140,25 @@
 
 {#snippet when(e: Row)}{formatRelative(e.ts, clock.now)}{/snippet}
 {#snippet gate(e: Row)}<span class="gate">{e.name}</span>{/snippet}
-{#snippet outcome(e: Row)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} />{/snippet}
+{#snippet outcomeCell(e: Row)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} />{/snippet}
 
 <section class="page" aria-labelledby="activity-title">
   <div class="head">
     <h1 id="activity-title" class="page-title" tabindex="-1" bind:this={heading}>Activity</h1>
     {#if view.newer}
       <Button tone="accent" onclick={showLatest}>New runs. Show latest</Button>
+    {/if}
+  </div>
+
+  <div class="filters">
+    <Select label="Outcome" value={outcome ?? ""} options={outcomeOptions} onchange={showOutcome} />
+    {#if reason}
+      <span class="chip">
+        <Badge title={reason}><span class="reason">Reason: {reason}</span></Badge>
+        <Button square label="Remove reason filter" title="Remove reason filter" onclick={removeReason}>
+          ×
+        </Button>
+      </span>
     {/if}
   </div>
 
@@ -137,8 +180,11 @@
       >
         {#snippet empty()}
           <EmptyState
-            title={emptyTitle("runs", { range: filters.range, repoLabel })}
-            detail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
+            title={emptyTitle(activitySubject({ outcome, reason }), { range: filters.range, repoLabel })}
+            detail={activityHint(
+              { outcome, reason },
+              { range: filters.range, repoLabel, recording: freshness.recording },
+            )}
           />
         {/snippet}
       </DataTable>
@@ -179,6 +225,28 @@
     justify-content: space-between;
     gap: var(--space-3);
     min-height: var(--control-height);
+  }
+
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Reasons can be long error text; the badge title carries the full reason. */
+  .reason {
+    max-width: 48ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .page-title:focus {

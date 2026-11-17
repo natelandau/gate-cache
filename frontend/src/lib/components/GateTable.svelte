@@ -1,6 +1,6 @@
 <!--
   @component
-  The gates table shared by the Gates page and the repo detail page. Rows open the gate panel.
+  The gates table on the Gates page. Rows open the gate panel.
 
   Props:
   - `rows`: the gates
