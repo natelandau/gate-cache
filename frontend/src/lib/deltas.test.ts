@@ -5,6 +5,10 @@ import { deltaLabel, statDeltas } from "./deltas";
 const current: Summary = {
   time_saved: 100,
   unknown_saved_skips: 0,
+  overhead: 0,
+  waited: 0,
+  net_saved: 100,
+  cost_unknown_runs: 0,
   runs: 10,
   skips: 5,
   skip_rate: 0.5,
@@ -18,6 +22,7 @@ const current: Summary = {
 
 const previous: PreviousTotals = {
   time_saved: 100,
+  net_saved: 100,
   runs: 10,
   skips: 5,
   skip_rate: 0.5,
@@ -30,6 +35,15 @@ describe("statDeltas", () => {
   it("shows time saved as a percentage, up is good", () => {
     const deltas = statDeltas({ ...current, time_saved: 118 }, previous);
     expect(deltas.time_saved).toEqual({ text: "▲ 18%", tone: "good" });
+  });
+
+  it("shows net saved as an absolute duration, even across zero", () => {
+    const deltas = statDeltas({ ...current, net_saved: -20 }, previous);
+    expect(deltas.net_saved).toEqual({ text: "▼ 2m 0s", tone: "bad" });
+  });
+
+  it("leaves net saved out when the previous window has no comparable value", () => {
+    expect(statDeltas(current, { ...previous, net_saved: null }).net_saved).toBeUndefined();
   });
 
   it("shows failures as a percentage, up is bad", () => {

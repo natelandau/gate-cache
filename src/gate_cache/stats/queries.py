@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import statistics
@@ -27,11 +28,7 @@ _MAX_PAGE = 500
 _OUTCOMES: frozenset[str] = frozenset(get_args(Outcome))
 # The archive keeps outcomes from newer gate-cache versions; only known ones count.
 _KNOWN = "outcome IN (" + ", ".join(f"'{o}'" for o in sorted(_OUTCOMES)) + ")"
-# `reported` lives only in the raw line; json_valid guards rows whose raw is NULL or odd.
-_ROW_COLUMNS = (
-    "ts, repo, name, outcome, duration, saved, exit_code, reason, tree,"
-    " CASE WHEN json_valid(raw) THEN json_extract(raw, '$.reported') IS 1 ELSE 0 END"
-)
+_ROW_COLUMNS = "ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported"
 # Every real UTC offset is a whole number of quarter hours, so no bucket spans two local days.
 _BUCKET_SECONDS = 900
 # Floor division: CAST truncates toward zero, which is one bucket too high for negative ts.
@@ -239,14 +236,35 @@ def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
         " COALESCE(SUM(outcome = 'skip' AND saved IS NULL), 0),"
         " COALESCE(SUM(outcome = 'pass'), 0),"
-        " COALESCE(SUM(outcome = 'pass_unrecorded'), 0)"
+        " COALESCE(SUM(outcome = 'pass_unrecorded'), 0),"
+        " COALESCE(SUM(overhead), 0.0),"
+        " COALESCE(SUM(waited), 0.0),"
+        # Uncached runs never record overhead, so only runs that checked the cache count.
+        " COALESCE(SUM(outcome IN " + _RAN + " AND (overhead IS NULL OR wait_known = 0)), 0)"
         " FROM events" + where,
         params,
     ).fetchone()
-    runs, skips, ran, uncached, failures, saved, unknown, passes, unrecorded = row
+    (
+        runs,
+        skips,
+        ran,
+        uncached,
+        failures,
+        saved,
+        unknown,
+        passes,
+        unrecorded,
+        overhead,
+        waited,
+        cost_unknown,
+    ) = row
     return {
         "time_saved": float(saved),
         "unknown_saved_skips": unknown,
+        "overhead": float(overhead),
+        "waited": float(waited),
+        "net_saved": float(saved) - float(overhead) - float(waited),
+        "cost_unknown_runs": cost_unknown,
         "runs": runs,
         "skips": skips,
         "skip_rate": _skip_rate(skips, ran),
@@ -343,9 +361,20 @@ def summary(
         totals = _totals(conn, window)
         previous = {
             key: totals[key]
-            for key in ("time_saved", "runs", "skips", "skip_rate", "failures", "flaky_gates")
+            for key in (
+                "time_saved",
+                "net_saved",
+                "runs",
+                "skips",
+                "skip_rate",
+                "failures",
+                "flaky_gates",
+            )
         }
         previous["days"] = (window.end - window.start) / 86400
+        # Windows that leave out different costs cannot be compared.
+        if result["cost_unknown_runs"] or totals["cost_unknown_runs"]:
+            previous["net_saved"] = None
     days: dict[str, _Tally] = defaultdict(_Tally)
     for start, tally in _local_buckets(conn, filters):
         days[start.date().isoformat()].add(tally)
@@ -356,6 +385,54 @@ def summary(
             {"day": day, "saved": t.saved, "failures": t.failures, "runs": t.runs}
             for day, t in sorted(days.items())
         ],
+    }
+
+
+def coalescing(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
+    """Return how often runs waited for a concurrent run of the same gate, and how it ended.
+
+    A run that waited then skipped on the pass of the run it waited for, reported that
+    run's failure without running, or ran the command itself: after a failed or
+    interrupted run, after its key changed during the wait, or after the wait timed out.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters.
+
+    Returns:
+        Counts of runs that waited and of each ending, the total and median wait in
+        seconds, the seconds saved by the skips after a wait, and how many runs that checked
+        the cache came from a gate-cache that did not record waits.
+    """
+    where, params = _where(filters)
+    # A run that waited can still end uncached when its new snapshot has no tree key.
+    row = conn.execute(
+        "SELECT COALESCE(SUM(outcome IN " + _RAN + " OR waited IS NOT NULL), 0),"  # noqa: S608
+        " COALESCE(SUM(outcome IN " + _RAN + " AND wait_known = 0), 0),"
+        " COUNT(waited),"
+        " COALESCE(SUM(waited IS NOT NULL AND outcome = 'skip'), 0),"
+        " COALESCE(SUM(waited IS NOT NULL AND reported), 0),"
+        " COALESCE(SUM(waited IS NOT NULL AND wait_timed_out), 0),"
+        " COALESCE(SUM(waited), 0.0),"
+        " COALESCE(SUM(CASE WHEN waited IS NOT NULL AND outcome = 'skip' THEN saved END), 0.0),"
+        # Each wait, for the median, collected in the same pass over the range.
+        " json_group_array(waited) FILTER (WHERE waited IS NOT NULL)"
+        " FROM events" + where,
+        params,
+    ).fetchone()
+    checked, unknown, waited, skipped, reported, timed_out, total_wait, saved, waits_json = row
+    waits = json.loads(waits_json)
+    return {
+        "runs": checked,
+        "unknown_runs": unknown,
+        "waited": waited,
+        "skipped": skipped,
+        "reported": reported,
+        "ran": waited - skipped - reported,
+        "timed_out": timed_out,
+        "total_wait": float(total_wait),
+        "median_wait": float(statistics.median(waits)) if waits else None,
+        "saved": float(saved),
     }
 
 

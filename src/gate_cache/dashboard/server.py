@@ -322,6 +322,7 @@ _ROUTES: dict[str, Callable[[DashboardServer, dict[str, list[str]]], dict[str, A
     "summary": _timed(queries.summary),
     "hourly": _simple(queries.hourly),
     "reasons": _simple(queries.reasons),
+    "coalescing": _simple(queries.coalescing),
     "gates": _simple(queries.gates),
     "gate": _gate_detail,
     "repos": _simple(queries.repos),

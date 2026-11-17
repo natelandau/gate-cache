@@ -321,7 +321,7 @@ GATE_CACHE_DISABLE=1 git push
 
 ## Stats dashboard
 
-gate-cache can record each run of a gate and show the record in a local dashboard. The dashboard shows how much time the skips saved, how often gates skip, and which gates fail and pass on the same content. Recording is off until you turn it on:
+gate-cache can record each run of a gate and show the record in a local dashboard. The dashboard shows how much time the skips saved, and how much remains after the time that gate-cache itself used. It also shows how often gates skip, how often a run waited for another run of the same gate, and which gates fail and pass on the same content. Recording is off until you turn it on:
 
 ```sh
 gate-cache stats on

@@ -74,6 +74,7 @@ Use an existing component before you write markup of your own. If a page needs a
 | Activity by weekday and hour                         | `HourHeatmap`                     |
 | A numbered top-N list, such as Top gates             | `RankedList`                      |
 | The share of each outcome as one stacked bar         | `OutcomeMix`                      |
+| The share of each part of another whole, such as how waits ended | `ShareMix`             |
 | A bar per repo with numeric columns, such as Repos   | `BarList`                         |
 | The repo filter, the date range, and freshness        | `TopBar` (already in the app shell), with `RepoPicker` and `RangePicker` |
 

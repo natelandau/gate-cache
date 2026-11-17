@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlakyGate, GateRow } from "./api";
-import { outcomeShares, rankGates, rankValue, topFlaky } from "./rank";
+import { partShares, rankGates, rankValue, topFlaky } from "./rank";
 
 function gate(name: string, overrides: Partial<GateRow> = {}): GateRow {
   return {
@@ -85,10 +85,11 @@ describe("topFlaky", () => {
   });
 });
 
-describe("outcomeShares", () => {
-  it("lists every outcome in display order with its count and whole percent", () => {
-    const shares = outcomeShares({ skip: 6, pass: 3, pass_unrecorded: 0, fail: 1, uncached: 0 });
-    expect(shares.map((s) => [s.outcome, s.count, s.percent])).toEqual([
+describe("partShares", () => {
+  it("lists every part in order with its count and whole percent", () => {
+    const counts = { skip: 6, pass: 3, pass_unrecorded: 0, fail: 1, uncached: 0 };
+    const shares = partShares(Object.keys(counts) as (keyof typeof counts)[], (k) => counts[k]);
+    expect(shares.map((s) => [s.part, s.count, s.percent])).toEqual([
       ["skip", 6, "60%"],
       ["pass", 3, "30%"],
       ["pass_unrecorded", 0, "0%"],
@@ -99,12 +100,12 @@ describe("outcomeShares", () => {
   });
 
   it("shows <1% for a nonzero count that rounds to zero", () => {
-    const shares = outcomeShares({ skip: 999, pass: 0, pass_unrecorded: 0, fail: 1, uncached: 0 });
-    expect(shares.find((s) => s.outcome === "fail")!.percent).toBe("<1%");
+    const shares = partShares([999, 0, 1], (n) => n);
+    expect(shares[2]!.percent).toBe("<1%");
   });
 
-  it("gives every outcome a zero share when nothing ran", () => {
-    const shares = outcomeShares({ skip: 0, pass: 0, pass_unrecorded: 0, fail: 0, uncached: 0 });
+  it("gives every part a zero share when the total is zero", () => {
+    const shares = partShares([0, 0, 0], (n) => n);
     expect(shares.every((s) => s.share === 0 && s.percent === "0%")).toBe(true);
   });
 });

@@ -8,6 +8,10 @@ import Overview from "./Overview.svelte";
 const summary: Summary = {
   time_saved: 118,
   unknown_saved_skips: 0,
+  overhead: 0,
+  waited: 0,
+  net_saved: 118,
+  cost_unknown_runs: 0,
   runs: 12,
   skips: 6,
   skip_rate: 0.5,
@@ -17,6 +21,7 @@ const summary: Summary = {
   outcomes: { skip: 6, pass: 6, pass_unrecorded: 0, fail: 0, uncached: 0 },
   previous: {
     time_saved: 100,
+    net_saved: 100,
     runs: 12,
     skips: 6,
     skip_rate: 0.5,

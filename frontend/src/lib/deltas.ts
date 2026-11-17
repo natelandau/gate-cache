@@ -4,13 +4,21 @@ import { formatCount, formatDuration } from "./format";
 
 export type Delta = NonNullable<Stat["delta"]>;
 
-export type DeltaKey = "time_saved" | "runs" | "skip_rate" | "flaky_gates" | "failures";
+export type DeltaKey =
+  | "time_saved"
+  | "net_saved"
+  | "runs"
+  | "skip_rate"
+  | "flaky_gates"
+  | "failures";
 
 type Kind = "percent" | "points" | "count";
 
 /** How each stat measures change and which direction is better. */
 const RULES: Record<DeltaKey, { kind: Kind; upIsGood: boolean; duration?: boolean }> = {
   time_saved: { kind: "percent", upIsGood: true, duration: true },
+  // Net time saved can cross zero, where a percentage means nothing.
+  net_saved: { kind: "count", upIsGood: true, duration: true },
   runs: { kind: "percent", upIsGood: true },
   skip_rate: { kind: "points", upIsGood: true },
   flaky_gates: { kind: "count", upIsGood: false },
@@ -40,7 +48,8 @@ function delta(now: number, before: number, rule: (typeof RULES)[DeltaKey]): Del
  * Return the change of each headline stat against the previous window. Skip rate changes in
  * percentage points, flaky gates and any stat with a zero previous value change by an absolute
  * amount, and the rest by a whole percentage. A change too small to round to 1 reads "<1". Skip
- * rate has no delta when either window has no rate.
+ * rate has no delta when either window has no rate. Net time saved changes by an absolute
+ * duration, and has no delta when the previous window has no comparable net value.
  */
 export function statDeltas(
   current: Summary,
@@ -50,8 +59,13 @@ export function statDeltas(
     current.skip_rate === null || previous.skip_rate === null
       ? undefined
       : delta(current.skip_rate, previous.skip_rate, RULES.skip_rate);
+  const net =
+    previous.net_saved === null
+      ? undefined
+      : delta(current.net_saved, previous.net_saved, RULES.net_saved);
   return {
     time_saved: delta(current.time_saved, previous.time_saved, RULES.time_saved),
+    net_saved: net,
     runs: delta(current.runs, previous.runs, RULES.runs),
     skip_rate: rate,
     flaky_gates: delta(current.flaky_gates, previous.flaky_gates, RULES.flaky_gates),

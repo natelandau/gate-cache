@@ -17,6 +17,17 @@ export function formatDuration(seconds: number | null): string {
   return `${Math.floor(minutes / MINUTE)}h ${minutes % MINUTE}m`;
 }
 
+/** Return whether a duration reads as at least one whole second below zero. */
+export function isNegativeDuration(seconds: number): boolean {
+  // formatDuration shows anything under a second as "<1s", which carries no sign.
+  return seconds <= -1;
+}
+
+/** Render a duration that can be negative, with a leading minus sign (U+2212) when it is. */
+export function formatSignedDuration(seconds: number): string {
+  return isNegativeDuration(seconds) ? `\u2212${formatDuration(-seconds)}` : formatDuration(seconds);
+}
+
 /** Render an axis tick duration: ticks fall on whole units, so `10m 0s` reads as `10m`. */
 export function formatAxisDuration(seconds: number): string {
   return seconds === 0 ? "0" : formatDuration(seconds).replace(/ 0[sm]$/, "");
@@ -42,6 +53,11 @@ const countFormat = new Intl.NumberFormat("en-US");
 /** Render an integer count with thousands separators. */
 export function formatCount(value: number): string {
   return countFormat.format(value);
+}
+
+/** Render a count with its noun, such as "1 skip" or "1,204 skips". */
+export function plural(count: number, one: string, many: string): string {
+  return `${formatCount(count)} ${count === 1 ? one : many}`;
 }
 
 const timestampFormat = new Intl.DateTimeFormat(undefined, {

@@ -3,7 +3,7 @@
   A row of headline numbers separated by hairlines. Wraps on narrow screens.
 
   Props:
-  - `stats`: the cells, each `{ label, value, hint?, tone?, href?, delta? }`. `tone` "danger" or
+  - `stats`: the cells, each `{ label, value, hint?, title?, tone?, href?, delta? }`. `tone` "danger" or
     "flaky" colors a non-zero problem count; `href` turns the value into a link (for example to the
     Flaky page); `delta` adds a line with the change against the previous window, from
     `statDeltas` in `src/lib/deltas.ts`.
@@ -17,6 +17,8 @@
     value: string;
     /** Secondary text under the value, such as a count the value excludes. */
     hint?: string;
+    /** How the value is computed, shown as a tooltip on the label. */
+    title?: string;
     tone?: "default" | "danger" | "flaky";
     href?: string;
     /** Change against the previous window; its arrow and text carry the meaning, not the tone. */
@@ -39,7 +41,7 @@
   <dl class="strip" class:busy>
     {#each stats as stat (stat.label)}
       <div class="cell">
-        <dt>{stat.label}</dt>
+        <dt title={stat.title}>{stat.label}</dt>
         <dd class:danger={stat.tone === "danger"} class:flaky={stat.tone === "flaky"}>
           {#if stat.href}
             <a href={stat.href}>{stat.value}</a>
@@ -111,6 +113,7 @@
 
   .hint {
     margin-top: 0;
+    white-space: normal;
     font-size: var(--text-xs);
     font-weight: 400;
     color: var(--text-muted);
