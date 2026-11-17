@@ -43,6 +43,11 @@ _SERVER_ERROR = 500
 _UNAVAILABLE = 503
 _INTEGER_RE = re.compile(r"-?[0-9]+")
 _PROBE_TIMEOUT = 0.2
+# Vite puts a content hash in the name of every file it writes under assets/.
+_HASHED_ASSETS = "assets"
+_IMMUTABLE = "public, max-age=31536000, immutable"
+# Files without a hash in the name, such as index.html, revalidate so a new release loads.
+_REVALIDATE = "no-cache"
 
 
 class _BadRequestError(ValueError):
@@ -118,12 +123,14 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """Silence request logging."""
 
-    def _send(self, status: int, body: bytes, content_type: str) -> None:
+    def _send(
+        self, status: int, body: bytes, content_type: str, cache_control: str = "no-store"
+    ) -> None:
         self._headers_sent = True
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.end_headers()
         self.wfile.write(body)
 
@@ -185,7 +192,8 @@ class _Handler(BaseHTTPRequestHandler):
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         if content_type.startswith("text/") or content_type.endswith(("javascript", "json")):
             content_type += "; charset=utf-8"
-        self._send(_OK, target.read_bytes(), content_type)
+        hashed = target.is_relative_to(base / _HASHED_ASSETS)
+        self._send(_OK, target.read_bytes(), content_type, _IMMUTABLE if hashed else _REVALIDATE)
 
 
 def _query(

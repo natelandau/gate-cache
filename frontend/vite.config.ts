@@ -66,6 +66,7 @@ export default defineConfig({
   // The server always mounts the app at the root, so absolute asset URLs also load on deep paths.
   base: "/",
   build: {
+    // The server caches everything under assets/ as immutable, so every file name there needs a hash.
     outDir: "../src/gate_cache/dashboard/static",
     emptyOutDir: true,
   },
