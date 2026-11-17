@@ -182,17 +182,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(_UNAVAILABLE, NO_UI_MESSAGE.encode(), "text/plain; charset=utf-8")
             return
         base = root.resolve()
+        assets = base / _HASHED_ASSETS
         target = base / "index.html"
         try:
             candidate = (base / unquote(path).lstrip("/")).resolve()
             if candidate.is_relative_to(base) and candidate.is_file():
                 target = candidate
+            elif candidate.is_relative_to(assets):
+                # A tab open across an upgrade can ask for chunks the new build removed.
+                self._send(_NOT_FOUND, b"not found", "text/plain; charset=utf-8")
+                return
         except (OSError, ValueError):
             pass
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         if content_type.startswith("text/") or content_type.endswith(("javascript", "json")):
             content_type += "; charset=utf-8"
-        hashed = target.is_relative_to(base / _HASHED_ASSETS)
+        hashed = target.is_relative_to(assets)
         self._send(_OK, target.read_bytes(), content_type, _IMMUTABLE if hashed else _REVALIDATE)
 
 

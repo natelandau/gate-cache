@@ -171,10 +171,9 @@ def test_hashed_asset_is_immutable(server: DashboardServer) -> None:
     [
         ("/", b'<div id="app">'),
         ("/gates", b'<div id="app">'),
-        ("/assets/missing.js", b'<div id="app">'),
         ("/favicon.svg", b"<svg"),
     ],
-    ids=["index", "spa-fallback", "missing-asset", "unhashed-file"],
+    ids=["index", "spa-fallback", "unhashed-file"],
 )
 def test_unhashed_static_revalidates(server: DashboardServer, path: str, marker: bytes) -> None:
     """index.html and files outside assets/ revalidate on every load."""
@@ -182,6 +181,14 @@ def test_unhashed_static_revalidates(server: DashboardServer, path: str, marker:
     assert status == 200
     assert marker in body
     assert headers["Cache-Control"] == "no-cache"
+
+
+def test_missing_asset_404(server: DashboardServer) -> None:
+    """A missing file under assets/ is a 404, not index.html served as a script."""
+    status, headers, body = fetch(server, "/assets/missing.js")
+    assert status == 404
+    assert body == b"not found"
+    assert headers["Cache-Control"] == "no-store"
 
 
 @pytest.mark.parametrize("path", ["/../../etc/passwd", "/%2e%2e/%2e%2e/etc/passwd", "/a%00b"])
