@@ -27,7 +27,11 @@ _MAX_PAGE = 500
 _OUTCOMES: frozenset[str] = frozenset(get_args(Outcome))
 # The archive keeps outcomes from newer gate-cache versions; only known ones count.
 _KNOWN = "outcome IN (" + ", ".join(f"'{o}'" for o in sorted(_OUTCOMES)) + ")"
-_ROW_COLUMNS = "ts, repo, name, outcome, duration, saved, exit_code, reason, tree"
+# `reported` lives only in the raw line; json_valid guards rows whose raw is NULL or odd.
+_ROW_COLUMNS = (
+    "ts, repo, name, outcome, duration, saved, exit_code, reason, tree,"
+    " CASE WHEN json_valid(raw) THEN json_extract(raw, '$.reported') IS 1 ELSE 0 END"
+)
 # Every real UTC offset is a whole number of quarter hours, so no bucket spans two local days.
 _BUCKET_SECONDS = 900
 # Floor division: CAST truncates toward zero, which is one bucket too high for negative ts.
@@ -135,7 +139,7 @@ def _flaky_trees(
 
 def _event_row(raw: tuple[Any, ...]) -> dict[str, Any]:
     """Convert a row selected with _ROW_COLUMNS into an API dict."""
-    ts, repo, name, outcome, duration, saved, exit_code, reason, tree = raw
+    ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported = raw
     return {
         "ts": ts,
         "repo": repo,
@@ -147,6 +151,7 @@ def _event_row(raw: tuple[Any, ...]) -> dict[str, Any]:
         "exit_code": exit_code,
         "reason": reason,
         "tree": tree,
+        "reported": bool(reported),
     }
 
 

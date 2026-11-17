@@ -15,6 +15,7 @@ function ev(ts: number): EventRow {
     exit_code: 0,
     reason: null,
     tree: null,
+    reported: false,
   };
 }
 

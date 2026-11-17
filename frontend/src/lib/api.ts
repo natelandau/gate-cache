@@ -114,6 +114,8 @@ export interface EventRow {
   exit_code: number | null;
   reason: string | null;
   tree: string | null;
+  /** True when the run reported the failure of the run it waited for, without running. */
+  reported: boolean;
 }
 
 export interface FlakyTree {

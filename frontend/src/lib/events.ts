@@ -22,8 +22,9 @@ export const OUTCOMES: Record<Outcome, { label: string; tone: OutcomeTone; descr
   uncached: { label: "Uncached", tone: "neutral", description: "Ran without the cache." },
 };
 
-/** Return "saved 1m 31s" for a skip, or "ran 54s" for a run. */
+/** Return "saved 1m 31s" for a skip, "ran 54s" for a run, or "not rerun" for a reported failure. */
 export function timeText(event: EventRow): string {
+  if (event.reported) return "not rerun";
   const skip = event.outcome === "skip";
   const seconds = skip ? event.saved : event.duration;
   const verb = skip ? "saved" : "ran";
