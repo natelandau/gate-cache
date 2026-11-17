@@ -1,4 +1,4 @@
-"""Check that built distributions ship the dashboard UI."""  # noqa: INP001
+"""Check that built distributions ship the dashboard UI and the agent guides."""  # noqa: INP001
 
 from __future__ import annotations
 
@@ -7,8 +7,12 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-WHEEL_INDEX = "gate_cache/dashboard/static/index.html"
-SDIST_INDEX_SUFFIX = "src/gate_cache/dashboard/static/index.html"
+# Package files that a build must ship, as paths inside the wheel
+REQUIRED_FILES = (
+    "gate_cache/dashboard/static/index.html",
+    "gate_cache/agent/skill.md",
+    "gate_cache/agent/prompt.md",
+)
 WHEEL_MAX_BYTES = 300 * 1024
 
 
@@ -37,16 +41,18 @@ def check_dist(path: str) -> list[str]:
     if path.endswith(".whl"):
         size = Path(path).stat().st_size
         with zipfile.ZipFile(path) as archive:
-            has_index = WHEEL_INDEX in archive.namelist()
+            names = set(archive.namelist())
         if size > WHEEL_MAX_BYTES:
             problems.append(f"{path} is {size} bytes, over the {WHEEL_MAX_BYTES} byte limit")
     elif path.endswith(".tar.gz"):
         with tarfile.open(path) as archive:
-            has_index = any(name.endswith(SDIST_INDEX_SUFFIX) for name in archive.getnames())
+            # An sdist holds `<name>-<version>/src/<package path>`
+            names = {name.split("/src/", 1)[1] for name in archive.getnames() if "/src/" in name}
     else:
         return [f"{path} is neither a wheel nor an sdist"]
-    if not has_index:
-        problems.append(f"{path} is missing the dashboard UI (static/index.html)")
+    problems.extend(
+        f"{path} is missing {required}" for required in REQUIRED_FILES if required not in names
+    )
     return problems
 
 

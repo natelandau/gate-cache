@@ -918,6 +918,17 @@ def test_status_json_when_disabled(
     assert data["reason"] == "caching disabled by GATE_CACHE_DISABLE"
 
 
+def test_status_json_when_disabled_keeps_scope_keys(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a disabled scoped status --json carries the same keys as an enabled one."""
+    monkeypatch.setenv("GATE_CACHE_DISABLE", "1")
+    assert gate_status(NAME, as_json=True, paths=["a.txt"]) == 1
+    data = json.loads(capfd.readouterr().out)
+    assert data["paths"] == ["a.txt"]
+    assert data["full_tree"] is None
+
+
 def test_skip_worktree_runs_uncached(git_repo: Path, counter: Counter) -> None:
     """A skip-worktree entry keeps every run uncached."""
     git("update-index", "--skip-worktree", "a.txt", cwd=git_repo)

@@ -163,7 +163,12 @@ def test_help_is_self_describing(
         "gate-cache --name pytest -- ",
         "gate-cache -- uv run pytest",
         "--path",
-        "gate-cache --name api-test --path api/ -- ",
+        "gate-cache --name api-test --path api/ --path uv.lock -- ",
+        "GATE_CACHE_STATS",
+        "id gate-cache",
+        f"rev v{gate_cache.__version__}",
+        "already",
+        "run `gate-cache --skill`",
     ):
         assert text in out
     flat = " ".join(out.split())
@@ -172,9 +177,74 @@ def test_help_is_self_describing(
     assert "If it is empty or not set, CI decides the same way" in flat
     assert "put its value in --name" in flat
     assert "from the top of the work tree" in flat
-    assert "a path left out is a skip that should have run" in flat
+    assert "a path that is missing from the list hides a change that must run" in flat
+    assert cli.FILES_CHANGED_NOTICE in flat
     assert 'gate-cache --name "test-$(git hash-object .env)" -- ' in out
     assert "empty-command" not in out
+
+
+def _frontmatter(text: str) -> dict[str, str]:
+    """Parse the simple `key: value` frontmatter that opens a SKILL.md file."""
+    lines = text.splitlines()
+    assert lines[0] == "---"
+    end = lines.index("---", 1)
+    return dict(line.split(": ", 1) for line in lines[1:end])
+
+
+def test_skill_flag_prints_skill_file(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify --skill prints a SKILL.md with frontmatter and every token filled in."""
+    assert invoke(monkeypatch, "--skill") == 0
+    out = capfd.readouterr().out
+    meta = _frontmatter(out)
+    assert meta["name"] == "gate-cache"
+    assert "already passed on" in meta["description"]
+    assert f"rev: v{gate_cache.__version__}" in out
+    assert "{{" not in out
+
+
+@pytest.mark.parametrize(
+    ("quoted", "source_fragments"),
+    [
+        ("already passed on tree", ["already passed on {snapshot.label}", 'f"tree {']),
+        ("already passed on paths", ["already passed on {snapshot.label}", 'f"paths {']),
+        (cli.FILES_CHANGED_NOTICE, []),
+        (", running without cache", [", running without cache"]),
+        ("caching disabled in CI", ["caching disabled in CI"]),
+        ("matches no files", ["matches no files"]),
+        ("warning: could not record pass: ", ["warning: could not record pass: "]),
+    ],
+)
+def test_skill_quotes_messages_the_code_prints(quoted: str, source_fragments: list[str]) -> None:
+    """Verify each message the skill tells agents to look for still comes from the code."""
+    source = "".join(
+        path.read_text(encoding="utf-8") for path in Path(cli.__file__).parent.rglob("*.py")
+    )
+    assert quoted in cli.agent_text("skill.md")
+    for fragment in source_fragments:
+        assert fragment in source
+
+
+def test_prompt_flag_points_agent_to_skill(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify --prompt prints the setup task and sends the agent to --skill."""
+    assert invoke(monkeypatch, "--prompt") == 0
+    out = capfd.readouterr().out
+    assert out.startswith("# Add gate-cache to this repository")
+    assert "gate-cache --skill" in out
+    assert "{{" not in out
+
+
+def test_skill_sections_named_in_prompt_exist() -> None:
+    """Verify every guide section the prompt names is a heading in the skill."""
+    skill = cli.agent_text("skill.md")
+    prompt = cli.agent_text("prompt.md")
+    headings = {line.lstrip("#").strip() for line in skill.splitlines() if line.startswith("#")}
+    named = re.findall(r'the "([^"]+)" section of the guide', prompt)
+    assert named
+    assert set(named) <= headings
 
 
 def test_version_flag(monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
@@ -187,6 +257,7 @@ def test_version_flag(monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixt
     "args",
     [
         ["--name", "a", "--version", "--", "x"],
+        ["--name", "a", "--skill", "--", "x"],
         ["--name", "a", "--help", "--", "x"],
         ["--name", "a", "false", "--version", "--", "x"],
         ["--name", "a", "false", "--help", "--", "x"],
@@ -283,6 +354,8 @@ def test_repeated_name_is_usage_error(
         (["status", "--help"], ["gate-cache status", "--name", "--json", "list the gates"]),
         (["status", "-h"], ["gate-cache status", "--json"]),
         (["clear", "--help"], ["gate-cache clear", "Permanently delete every recorded pass"]),
+        (["stats", "--help"], ["Recording never changes", "GATE_CACHE_STATS", "no file content"]),
+        (["dashboard", "--help"], ["prints the address of the running", "Ctrl-C"]),
         (["-h"], ["status", "clear", "GATE_CACHE_DISABLE"]),
     ],
 )

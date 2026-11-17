@@ -47,6 +47,7 @@ _DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
 _CI_REASON = f"caching disabled in CI ({DISABLE_ENV}=0 keeps it on)"
 _NO_COMMON_DIR_REASON = "could not locate git directory"
 _FILES_CHANGED = "files changed during the run"
+FILES_CHANGED_NOTICE = f"{_FILES_CHANGED}, not recording pass"
 
 
 def disabled_reason(environ: Mapping[str, str] | None = None) -> str | None:
@@ -394,7 +395,7 @@ class _Attempt:
             except Exception as error:  # noqa: BLE001
                 say(f"warning: could not record pass: {error}")
             return True
-        say(f"{_FILES_CHANGED}, not recording pass")
+        say(FILES_CHANGED_NOTICE)
         self.record_miss(exit_code=0, reason=_FILES_CHANGED)
         return False
 
@@ -527,7 +528,11 @@ def gate_status(
     reason = disabled_reason()
     if reason is not None:
         if as_json:
-            empty = _named_report(name) if name is not None else {"passed": [], "missed": []}
+            empty = (
+                _named_report(name, paths=paths)
+                if name is not None
+                else {"passed": [], "missed": []}
+            )
             _print_json({"enabled": False, "tree": None, "reason": reason, **empty})
         else:
             say(reason)
@@ -561,6 +566,8 @@ def _named_report(
     hit: bool = False,
     last_run: dict[str, Any] | None = None,
     duration: float | None = None,
+    paths: Sequence[str] = (),
+    full_tree: str | None = None,
 ) -> dict[str, Any]:
     """Build the per-gate keys of a `status --name --json` report.
 
@@ -572,6 +579,7 @@ def _named_report(
         "result": "hit" if hit else "miss",
         "last_run": last_run,
         "duration": duration,
+        **scope_fields(paths, full_tree),
     }
 
 
@@ -612,8 +620,9 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
                     hit=hit,
                     last_run=last_run,
                     duration=duration,
+                    paths=snapshot.paths,
+                    full_tree=snapshot.tree,
                 ),
-                **scope_fields(snapshot.paths, snapshot.tree),
             }
         )
         return 0 if hit else 1

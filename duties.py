@@ -266,7 +266,7 @@ def frontend_build(ctx: Context) -> None:
 
 @duty
 def dist_check(ctx: Context, *paths: str) -> None:  # noqa: ARG001
-    """Fail unless each wheel and sdist ships the dashboard UI and wheels fit the size budget.
+    """Fail unless each wheel and sdist ships the dashboard UI and agent guides, and wheels fit the size budget.
 
     Args:
         ctx (Context): Duty context.

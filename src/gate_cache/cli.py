@@ -10,7 +10,14 @@ from typing import TYPE_CHECKING
 
 from gate_cache import __version__
 from gate_cache.console import kv, say
-from gate_cache.gate import clear_cache, gate_status, run_gate
+from gate_cache.gate import (
+    DEFAULT_MAX_AGE_DAYS,
+    FILES_CHANGED_NOTICE,
+    clear_cache,
+    gate_status,
+    run_gate,
+)
+from gate_cache.markers import MARKER_DIRNAME
 from gate_cache.stats import config as stats_config
 
 if TYPE_CHECKING:
@@ -18,7 +25,7 @@ if TYPE_CHECKING:
 
 _USAGE_ERROR = 2
 _INTERRUPTED = 130
-_INFO_FLAGS = {"-h", "--help", "--version"}
+_INFO_FLAGS = {"-h", "--help", "--version", "--skill", "--prompt"}
 _NAME_NEEDS_VALUE = "--name needs a value, e.g. gate-cache --name pytest -- uv run pytest"
 _NEEDS_SEPARATOR = "put -- before the command, e.g. gate-cache -- uv run pytest"
 _NEEDS_VALUE = {
@@ -33,119 +40,192 @@ gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...]
        gate-cache status [--name NAME [--path PATHSPEC]...] [--json]
        gate-cache clear [--yes]
        gate-cache stats [on|off|clear [--yes]]
-       gate-cache dashboard [--port N] [--no-browser]"""
+       gate-cache dashboard [--port N] [--no-browser]
+       gate-cache --skill | --prompt"""
 
-_HELP = """\
-Skip a lint or test command that already passed on the same git tree. gate-cache
+_HELP = f"""\
+Skip a lint or test command that already passed on the same content. gate-cache
 runs the command, records a pass keyed on the git tree of the working copy
 (tracked and untracked, non-ignored files), and skips the command next time the
 tree is identical. A pass on uncommitted work therefore skips when the same
-content is committed.
+content is committed. A skip prints one line to stderr, such as "pytest already
+passed on tree aaff74984ccc, skipping", and exits 0.
 
--- is required, and only --name and --path may come before it. Everything after
--- is the command, verbatim. Without --name, the gate name is the command
-itself, so each set of arguments has its own records. Give --name to share
-records between commands that check the same thing, or to key on inputs that the
-tree does not cover.
+AI agents: run `gate-cache --skill` and read the guide before you run, add, or
+change a gate.
 
-Exit codes:
-  run     the command's own exit code, or 0 when a recorded pass lets it skip.
-          Usage errors exit 2.
-  status  0 when the named gate, or any gate without --name, passed on the
-          current tree. 1 otherwise. --json prints one JSON object instead.
-  clear   0 on success, 1 on failure or when not confirmed.
-
-GATE_CACHE_DISABLE and CI are on when the value is not empty, 0, or false (any
-case). If GATE_CACHE_DISABLE is on, the command always runs without the cache.
-If it is 0 or false, caching stays on. If it is empty or not set, CI decides the
-same way.
-Set GATE_CACHE_MAX_AGE_DAYS to a positive whole number to change how many days a
-recorded pass lasts (default 30).
+-- is required, and only --name and --path can come before it. Everything after
+-- is the command, verbatim. gate-cache does not use a shell. Without --name,
+the gate name is the command itself, so each set of arguments has its own
+records. Give --name to share records between commands that check the same
+thing, or to key on inputs that the tree does not cover.
 
 Only the name and the file content are keyed. The working directory is not, so
 a command whose meaning depends on it needs a distinct --name. To also key on an
 ignored file, an environment variable, or a tool version, put its value in
 --name. A changed value gives a new name, so the command runs again. Never put a
-secret in a name, because markers and status store it as plain text. Without
---name the command line is the name, so give --name to a command that takes a
-secret argument. Never wrap checks that depend on the commit message or the
-branch name.
+secret in a name, because markers and status store it as plain text. Give --name
+to a command that takes a secret argument.
 
 --path scopes a gate to the files it reads, so a change elsewhere in the
 repository does not run it again. Each --path is a git pathspec, read from the
-top of the work tree whatever the current directory, and globs and :(exclude)
-work. Repeat --path for each path. The gate skips when nothing under its paths changed,
-so a path left out is a skip that should have run. A path that matches no file
-runs the command without the cache.
+top of the work tree. The working directory has no effect. Repeat --path for
+each path. The gate skips when nothing under its paths changed, so a path that
+is missing from the list hides a change that must run the command. A path that
+matches no file runs the command without the cache.
+
+A pass is recorded only when the command exits 0 and leaves the files
+unchanged. A command that changes files prints:
+  {FILES_CHANGED_NOTICE}
+
+Hook (prek, pre-commit 3.2+): repo https://github.com/natelandau/gate-cache,
+rev v{__version__}, id gate-cache. Its args are the same as the command line.
+
+Exit codes:
+  run        the command's own exit code, or 0 when a recorded pass makes it
+             skip. 127 when the command is not found, 126 when it cannot
+             run, 128+N when signal N stops it. Usage errors exit 2 and run
+             nothing.
+  status     0 when the named gate, or any gate without --name, passed on the
+             current tree. 1 otherwise.
+  clear      0 on success, 1 on failure or when not confirmed.
+  stats      0 on success, 1 on failure or when clear is not confirmed.
+  dashboard  0 after a clean stop or when one already runs, 1 when it cannot
+             start.
+
+Environment:
+  GATE_CACHE_DISABLE and CI are on when the value is not empty, 0, or false (any
+  case). If GATE_CACHE_DISABLE is on, the command always runs without the cache.
+  If it is 0 or false, caching stays on. If it is empty or not set, CI decides
+  the same way.
+  GATE_CACHE_MAX_AGE_DAYS: a positive whole number of days that a recorded pass
+  lasts (default {DEFAULT_MAX_AGE_DAYS}).
+  GATE_CACHE_STATS: if on, record run stats even in CI. If 0 or false, do not
+  record. If empty or not set, CI and then the config file decide.
 
 Typical use:
   gate-cache -- uv run pytest -x
   gate-cache --name pytest -- uv run pytest -x
   gate-cache --name "test-$(git hash-object .env)" -- uv run pytest
-  gate-cache --name api-test --path api/ -- uv run pytest
+  gate-cache --name api-test --path api/ --path uv.lock -- uv run pytest api
 """
 
 _RUN_HELP = """\
 subcommands:
-  status       Report whether gates would skip, without running anything.
+  status       Report which gates skip on the current content. Nothing runs.
   clear        Delete every recorded pass for this repository.
   stats        Show, turn on or off, or clear the opt-in recording of run stats.
   dashboard    Serve a local dashboard of the recorded stats.
 
 run:
-  gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...] runs COMMAND
-  unless it already passed on the current git tree, or on the same content under
-  its paths. On a skip, it prints one line to stderr and
-  exits 0 without running anything. Otherwise it runs the command and exits with
-  its exit code. The command runs without caching (and nothing is recorded) when
-  GATE_CACHE_DISABLE or CI turns caching off, the tree is unknown (for example an
-  unmerged index), or this is not a git repository. A pass is recorded only when
-  the command exits 0 and the run leaves the tree unchanged.
+  The command runs without caching, and nothing is recorded, when
+  GATE_CACHE_DISABLE or CI turns caching off, when this is not a git repository,
+  or when the tree is unknown, such as during a merge conflict. The printed
+  reason names the cause. A failed run is recorded as a miss that status
+  reports.
 
 Run gate-cache SUBCOMMAND --help for the options of a subcommand.
 """
 
 _STATUS_HELP = """\
-Report whether gates would skip, without running anything.
+Report which gates skip on the current content. Nothing runs.
 
-With --name, print the tree hash (or why it is unknown), the marker path,
-hit or miss, and how the last run on this tree failed when it did. Exit 0 on a
-hit, 1 otherwise. Repeat --path with --name to look up a gate scoped to those
-paths.
+With --name, print the name, the tree hash (or why it is unknown), the marker
+path, hit or miss, how long the passing run took, and how the last run on this
+tree failed when it did. Exit 0 on a hit, 1 otherwise. A gate that ran without
+--name has the command line as its name, with shell quoting, such as
+--name "uv run ruff check .". A name built with $(...) must be given expanded.
+For a gate scoped with --path, give the same --path values with --name. The
+report adds "paths" and "scope" lines.
 
 Without --name, list the gates that passed on the current tree and the gates
-that ran on it without passing. Scoped gates are listed when they passed or
-missed on the current content of their paths. Exit 0 when at least one gate
-passed, 1 otherwise.
+that ran on it without passing, with the exit code. Scoped gates are listed
+when they passed or missed on the current content of their paths. Exit 0 when
+at least one gate passed, 1 otherwise.
+
+--json prints one object with "enabled", "tree", "reason" (why the tree is
+unknown, or null), and either "passed" and "missed" (without --name) or "name",
+"marker", "result", "last_run", and "duration" (with --name). With --path,
+"tree" holds the scope and the object adds "paths" and "full_tree".
 """
 
 _CLEAR_HELP = """\
 Permanently delete every recorded pass for this repository.
 
-Use after something outside git changes, such as a tool upgrade. It asks you to type
-`yes` first, and refuses when stdin is not a terminal unless you give --yes. Exits 1
-outside a git repository.
+Use after something outside git changes, such as a tool upgrade. Every gate then
+runs again in full. It also deletes the records of missed runs. It does not
+delete recorded stats. Use `gate-cache stats clear` for those. It asks you to
+type `yes` first, and refuses when stdin is not a terminal unless you give
+--yes. Exits 1 outside a git repository.
 """
 
 _STATS_HELP = """\
 Show or change whether gate-cache records run stats.
 
-Without an action, print whether recording is on and what decided it. `on` and
-`off` write the setting to the config file. GATE_CACHE_STATS overrides the file,
-and CI turns recording off unless GATE_CACHE_STATS is set.
+Recording is off until you turn it on. Without an action, print whether
+recording is on, what decided it, the config file, and the data directory.
+`on` and `off` write [stats] enabled to the config file and keep its other
+lines. The setting comes from the first of: GATE_CACHE_STATS when not empty
+(0 or false is off, any other value is on), CI (on means off), the config file,
+and then off.
 
-`clear` permanently deletes all recorded stats. It asks you to type `yes` first, and
-refuses when stdin is not a terminal unless you give --yes. It refuses while the
-dashboard is running.
+Recording never changes whether a command skips, its exit code, or its output,
+and a failure to record is silent. Each run adds one event: the gate name, the
+--path values, the tree key, the outcome, timings, the exit code, the CPU time
+and peak memory of the command, the gate-cache version, the platform, what
+started the run (CI, a git hook, a coding agent, or a terminal), the repository
+and working tree paths, the directory where the gate ran, the branch and
+commit, the URL of origin (or the first remote) without credentials, the host
+name, a random machine ID, and the command line when --name differs from it.
+An event holds no command output and no file content. The data stays on this
+machine.
+
+`clear` permanently deletes all recorded stats. It asks you to type `yes`
+first, and refuses when stdin is not a terminal unless you give --yes. It
+refuses while the dashboard is running. It does not delete markers. Use
+`gate-cache clear` for those.
 """
 
-_DASHBOARD_HELP = """\
-Serve a local dashboard of the recorded stats on 127.0.0.1 and open it in the browser.
+_DASHBOARD_HELP = f"""\
+Serve a local dashboard of the recorded stats on 127.0.0.1 and open it in the
+browser. Press Ctrl-C to stop it.
 
-Only one dashboard runs at a time. Without --port, it listens on 7878, or on a free
-port when 7878 is taken.
+Without --port, it listens on {stats_config.DASHBOARD_PORT}, or on a free port when {stats_config.DASHBOARD_PORT} is taken. With
+--port, it listens on that port only and fails when the port is in use. Only
+one dashboard runs at a time. A second one prints the address of the running
+one and opens it, unless you give --no-browser. It also exits 0 without serving
+while `gate-cache stats clear` waits at its prompt.
+
+The dashboard reads the stats that `gate-cache stats on` records. The copy of
+gate-cache that a prek or pre-commit hook installs has no dashboard UI. Run the
+dashboard from a `uv tool install gate-cache` install.
 """
 _MAX_PORT = 65535
+
+
+def agent_text(filename: str) -> str:
+    """Read a guide for coding agents that ships inside the package.
+
+    The guides ship with the code so that an agent always reads the text that matches the
+    installed version.
+
+    Args:
+        filename: File name in the package's agent directory, such as `skill.md`.
+
+    Returns:
+        str: The guide, with each `{{token}}` replaced by the installed value.
+    """
+    from importlib import resources  # lazy: keeps the import cost off every gate run
+
+    text = resources.files("gate_cache").joinpath(f"agent/{filename}").read_text(encoding="utf-8")
+    values = {
+        "version": __version__,
+        "max_age_days": str(DEFAULT_MAX_AGE_DAYS),
+        "marker_dir": f".git/{MARKER_DIRNAME}/",
+    }
+    for token, value in values.items():
+        text = text.replace(f"{{{{{token}}}}}", value)
+    return text
 
 
 class _UsageError(Exception):
@@ -168,7 +248,7 @@ class _StoreOnce(argparse.Action):
 
 
 def _main_parser() -> argparse.ArgumentParser:
-    """Build the top-level parser, which serves only --help and --version.
+    """Build the top-level parser, which serves only --help, --version, --skill, and --prompt.
 
     The run form is not parsed here because everything after -- must reach the wrapped
     command verbatim. The parser still declares --name so that --help documents it.
@@ -182,6 +262,20 @@ def _main_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
     )
     parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument(
+        "--skill",
+        action="store_const",
+        dest="guide",
+        const="skill.md",
+        help="Print the guide for coding agents that use gate-cache, as a SKILL.md file.",
+    )
+    parser.add_argument(
+        "--prompt",
+        action="store_const",
+        dest="guide",
+        const="prompt.md",
+        help="Print a prompt that has a coding agent add gate-cache to a repository.",
+    )
     parser.add_argument(
         "--name",
         metavar="NAME",
@@ -388,7 +482,10 @@ def _dispatch(tokens: list[str]) -> int:
         _UsageError: When a run invocation is malformed.
     """
     if tokens and tokens[0] in _INFO_FLAGS:
-        _main_parser().parse_args(tokens)  # prints help or the version, then exits
+        # --help and --version print and exit inside parse_args
+        args = _main_parser().parse_args(tokens)
+        sys.stdout.write(agent_text(args.guide))
+        return 0
     if tokens and tokens[0] == "status":
         parser = _status_parser()
         args = parser.parse_args(tokens[1:])
