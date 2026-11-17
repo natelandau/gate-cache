@@ -179,10 +179,12 @@ class _Stats:
             return {}
         return {"cpu": round(after.cpu - before.cpu, 3), "max_rss": after.max_rss}
 
-    def common_dir(self) -> Path | None:
-        """Look up the git common directory for an event whose caller has none; never raise."""
+    def common_dir(self, snapshot: Snapshot | None) -> Path | None:
+        """Return the snapshot's git common directory, else look it up; never raise."""
         if not self.enabled:
             return None
+        if snapshot is not None and snapshot.common_dir is not None:
+            return snapshot.common_dir
         try:
             return git_common_dir()
         except Exception:  # noqa: BLE001
@@ -300,7 +302,7 @@ def _run_uncached(
         name=name,
         command=command,
         worktree=snapshot.root if snapshot is not None else None,
-        common_dir=stats.common_dir() if resolve_repo else None,
+        common_dir=stats.common_dir(snapshot) if resolve_repo else None,
         **usage,
         tree=snapshot.key if snapshot is not None else None,
         paths=tuple(paths),
@@ -434,7 +436,7 @@ def run_gate(name: str, command: Sequence[str], paths: Sequence[str] = ()) -> in
             snapshot=snapshot,
         )
 
-    common_dir = git_common_dir()
+    common_dir = snapshot.common_dir
     if common_dir is None:
         return _run_uncached(
             _NO_COMMON_DIR_REASON,
@@ -533,7 +535,7 @@ def gate_status(
     if name is None:
         return _list_gates(as_json=as_json)
     snapshot = take_snapshot(paths=paths)
-    common_dir = git_common_dir() if snapshot.known else None
+    common_dir = snapshot.common_dir if snapshot.known else None
     return _named_status(name, snapshot, common_dir, as_json=as_json)
 
 

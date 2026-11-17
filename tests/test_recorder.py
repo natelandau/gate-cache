@@ -18,7 +18,7 @@ from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot, git_common_dir
 from gate_cache.stats import context
 from gate_cache.stats.recorder import MAX_LINE_BYTES, Event, inbox_path
-from tests.conftest import Counter, git
+from tests.conftest import Counter, git, hide_common_dir
 
 SECRET = "tok3nS3cretValue"  # noqa: S105
 
@@ -80,6 +80,28 @@ def test_uncached_disabled(
     assert event["paths"] == ["a.txt"]
     assert "GATE_CACHE_DISABLE" in str(event["reason"])
     assert event["exit_code"] == 0
+
+
+def test_unknown_tree_records_repo_without_another_lookup(
+    git_repo: Path,
+    stats_dirs: tuple[Path, Path],
+    stats_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify an unknown tree records the repo the snapshot found, without asking git again."""
+    git("update-index", "--assume-unchanged", "a.txt", cwd=git_repo)
+    repo = git_common_dir()
+
+    def no_lookup() -> None:
+        msg = "the snapshot already found the common dir"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("gate_cache.gate.git_common_dir", no_lookup)
+    assert run_gate("t", ["true"]) == 0
+    (event,) = read_events(stats_dirs[1])
+    assert event["outcome"] == "uncached"
+    assert str(event["reason"]).startswith("skip-worktree or assume-unchanged entry")
+    assert event["repo"] == str(repo)
 
 
 def test_off_writes_nothing(git_repo: Path, stats_dirs: tuple[Path, Path]) -> None:
@@ -244,18 +266,12 @@ def test_no_common_dir_is_uncached(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A missing common directory records uncached with the tree and no repo."""
-    calls: list[int] = []
-
-    def no_common_dir() -> None:
-        calls.append(1)
-
-    monkeypatch.setattr("gate_cache.gate.git_common_dir", no_common_dir)
+    hide_common_dir(monkeypatch)
     assert run_gate("t", ["true"]) == 0
     (event,) = read_events(stats_dirs[1])
     assert event["outcome"] == "uncached"
     assert event["tree"]
     assert event["repo"] is None
-    assert calls == [1]
 
 
 def test_interrupted_run_records_nothing(

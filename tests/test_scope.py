@@ -10,11 +10,17 @@ from typing import Any
 
 import pytest
 
-from gate_cache import snapshot as snapshot_module
 from gate_cache.gate import gate_status, run_gate
-from gate_cache.git import GitResult
 from gate_cache.snapshot import take_snapshot, take_snapshots
-from tests.conftest import Counter, expected_tree, git, markers, misses, read_records
+from tests.conftest import (
+    Counter,
+    expected_tree,
+    git,
+    intercept_run_git,
+    markers,
+    misses,
+    read_records,
+)
 
 
 @pytest.fixture
@@ -356,14 +362,12 @@ def test_undecodable_listing_leaves_other_path_sets_known(
     scoped_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Verify a path set whose listing cannot decode leaves the whole-tree key known."""
-    real_run_git = snapshot_module.run_git
 
-    def run_git(*args: str, **kwargs: Any) -> GitResult:
+    def undecodable_listing(args: tuple[str, ...], _kwargs: dict[str, Any]) -> None:
         if "--error-unmatch" in args:
             b"\xff".decode()
-        return real_run_git(*args, **kwargs)
 
-    monkeypatch.setattr(snapshot_module, "run_git", run_git)
+    intercept_run_git(monkeypatch, undecodable_listing)
     whole, scoped = take_snapshots([(), ("src",)])
     assert whole.key == expected_tree(scoped_repo)
     assert scoped.key is None
