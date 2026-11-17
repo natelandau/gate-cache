@@ -150,6 +150,8 @@ test *args:
 
 If the recipe gives `--name`, the arguments are not part of the name. Put them in the name, or a pass of `just test -k unit` also skips `just test`.
 
+An absolute path in the command, such as `{{ justfile_directory() }}/tests`, puts the location of the worktree in the name. Each worktree then has its own markers, so a pass in one worktree never skips the gate in another. To share markers across worktrees, use relative paths.
+
 ### Inputs that git does not track
 
 A marker does not cover ignored files, environment variables, or tool versions. To make a gate depend on one of these inputs, put its value in the name. When the value changes, the name changes, so no marker matches and the command runs again:
@@ -381,7 +383,7 @@ Four environment variables control gate-cache.
 | ------------------------- | ------------------------------------------------------------------------------ | ------- |
 | `GATE_CACHE_DISABLE`      | If on, turns off caching. If `0` or `false`, keeps caching on when `CI` is on. | not set |
 | `CI`                      | If on, turns off caching. A value in `GATE_CACHE_DISABLE` overrides it.        | not set |
-| `GATE_CACHE_MAX_AGE_DAYS` | gate-cache deletes markers older than this number of days.                     | `30`    |
+| `GATE_CACHE_MAX_AGE_DAYS` | Each time gate-cache records a result, it deletes markers older than this number of days. | `30`    |
 | `GATE_CACHE_STATS`        | If on, records stats, even in CI. If `0` or `false`, turns recording off. If empty, `CI` and then the config file decide. | not set |
 
 A variable is on when its value is not empty, `0`, or `false`. Case and spaces around the value do not matter.

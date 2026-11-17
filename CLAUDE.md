@@ -2,6 +2,11 @@
 
 gate-cache is a CLI that wraps a lint or test command. It skips the command when the same named command already passed on the same git tree. The code is in `src/gate_cache/` and the tests are in `tests/`. `README.md` and `docs/how-it-works.md` hold the user documentation. `src/gate_cache/agent/skill.md` and `prompt.md` hold the guides for coding agents that `gate-cache --skill` and `--prompt` print. When a change alters behavior, an option, or a message that a guide describes, update the guide in the same change.
 
+## Conventions
+
+- A command that deletes data on request, such as `clear` and `stats clear`, calls `console.confirm_deletion` and offers `-y`/`--yes`. Automatic cleanup, such as marker pruning, archive retention, and temp files, deletes with no prompt.
+- `gate-cache --help` stays short and written for people. One line tells agents to run `--skill`. Agent guidance, such as rules, pitfalls, and workflows, goes in `src/gate_cache/agent/skill.md`. `prompt.md` holds only a few steps and the questions for the user. The agent learns the rest from the skill.
+
 ## Worktrees
 
 Do all work in a git worktree under `.worktrees/`, never in the main checkout. Several sessions can work on this repository at the same time, and they all share the main checkout. Create the worktree with `git worktree add .worktrees/<name> -b <branch>`, then run `uv sync` in it before you run any duty.
