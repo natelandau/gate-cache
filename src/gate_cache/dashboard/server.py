@@ -29,7 +29,10 @@ if TYPE_CHECKING:
 
 HOST = "127.0.0.1"
 UNKNOWN_REPO = "-"
-NO_UI_MESSAGE = "This install has no dashboard UI. Install with: uv tool install gate-cache"
+NO_UI_MESSAGE = (
+    "This install has no dashboard UI. Install a release with `uv tool install gate-cache`, "
+    "or build the UI in a source checkout with `uv run duty frontend_build`."
+)
 
 _MAX_LIMIT = 500
 _OK = 200

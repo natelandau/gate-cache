@@ -200,9 +200,11 @@ one dashboard runs at a time. A second one prints the address of the running
 one and opens it, unless you give --no-browser. It also exits 0 without serving
 while `gate-cache stats clear` waits at its prompt.
 
-The dashboard reads the stats that `gate-cache stats on` records. The copy of
-gate-cache that a prek or pre-commit hook installs has no dashboard UI. Run the
-dashboard from a `uv tool install gate-cache` install.
+The dashboard reads the stats that `gate-cache stats on` records. Only a
+release wheel contains the dashboard UI. A copy installed from source, such as
+the copy that a prek or pre-commit hook installs, or a git or path dependency,
+has no UI. Run the dashboard from a `uv tool install gate-cache` install. In a
+source checkout of gate-cache, run `uv run duty frontend_build` first.
 """
 _MAX_PORT = 65535
 

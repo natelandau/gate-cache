@@ -117,7 +117,7 @@ The hook runs at commit time and at push time. At commit time, gate-cache matche
 
 The hook runs in its own virtual environment, and the wrapped command inherits that environment. A command started with `uv run`, or a project command such as `just test`, runs in the project environment. `uv run` prints a warning that `VIRTUAL_ENV` does not match the project. The warning has no effect on the run.
 
-The gate-cache that a hook installs records stats when recording is on, but that install has no dashboard UI. To view the dashboard, run `gate-cache dashboard` from the install that `uv tool install gate-cache` makes.
+The gate-cache that a hook installs records stats when recording is on, but that install has no dashboard UI. Only a release wheel contains the UI, and a hook builds gate-cache from source. A git or path dependency also builds from source and has no UI. To view the dashboard, run `gate-cache dashboard` from the install that `uv tool install gate-cache` makes.
 
 Hooks, agents, and your terminal all read and write the same markers. When one of them runs `gate-cache -- uv run pytest` and it passes, the others skip `uv run pytest` on the same content.
 
