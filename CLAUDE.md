@@ -2,6 +2,10 @@
 
 gate-cache is a CLI that wraps a lint or test command. It skips the command when the same named command already passed on the same git tree. The code is in `src/gate_cache/` and the tests are in `tests/`. `README.md` and `docs/how-it-works.md` hold the user documentation.
 
+## Worktrees
+
+Do all work in a git worktree under `.worktrees/`, never in the main checkout. Several sessions can work on this repository at the same time, and they all share the main checkout. Create the worktree with `git worktree add .worktrees/<name> -b <branch>`, then run `uv sync` in it before you run any duty.
+
 ## Commands
 
 Run linters and tests only through these duties, never directly, so every run shares the same gate-cache markers.
