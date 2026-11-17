@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 from gate_cache.console import say
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Sequence
+    from collections.abc import Callable, Generator, Sequence
+    from contextlib import AbstractContextManager
     from types import FrameType
 
 _EXIT_NOT_EXECUTABLE = 126
@@ -70,30 +71,71 @@ def _forward(proc: subprocess.Popen[bytes], signum: int) -> None:
         proc.send_signal(signum)
 
 
+class Terminated(Exception):  # noqa: N818
+    """SIGTERM or SIGHUP arrived while gate-cache ran no child.
+
+    Attributes:
+        exit_code: 128 + signal, the code a shell reports for a death by this signal.
+    """
+
+    def __init__(self, signum: int) -> None:
+        """Keep the exit code of a death by the signal that ended the run."""
+        super().__init__(signum)
+        self.exit_code = _SIGNAL_EXIT_BASE + signum
+
+
+def _raise_terminated(signum: int, _frame: FrameType | None) -> None:
+    raise Terminated(signum)
+
+
+def raise_on_termination() -> AbstractContextManager[None]:
+    """Turn SIGTERM and SIGHUP into Terminated while no child runs, such as during a wait.
+
+    Without this, Python dies of the signal and a parent sees a negative status instead
+    of the 128 + signal that an interrupted child run returns.
+
+    Returns:
+        A context manager that installs the handlers and restores the previous ones.
+    """
+    return _install(_raise_terminated, _FORWARDED_SIGNALS)
+
+
 @contextlib.contextmanager
 def _trap_signals(state: _SignalState) -> Generator[None]:
     """Route SIGINT, SIGTERM, and SIGHUP to state, restoring the previous handlers after.
 
     Python handlers reset to the default on exec, so the child keeps normal signal
-    behavior. Ignored signals stay ignored so the child inherits that disposition, as
-    under `nohup` or a background job. Handlers can only be set from the main thread;
-    elsewhere signals keep their current disposition.
+    behavior.
+    """
+    with _install(state.handle, (signal.SIGINT, *_FORWARDED_SIGNALS)):
+        yield
+
+
+@contextlib.contextmanager
+def _install(
+    handler: Callable[[int, FrameType | None], None], signums: Sequence[int]
+) -> Generator[None]:
+    """Set a handler for signals, restoring the previous handlers after.
+
+    Ignored signals stay ignored so a child inherits that disposition, as under `nohup`
+    or a background job. Handlers can only be set from the main thread; elsewhere
+    signals keep their current disposition.
     """
     if threading.current_thread() is not threading.main_thread():
         yield
         return
     previous = {
-        signum: signal.signal(signum, state.handle)
-        for signum in (signal.SIGINT, *_FORWARDED_SIGNALS)
+        signum: signal.signal(signum, handler)
+        for signum in signums
         if signal.getsignal(signum) is not signal.SIG_IGN
     }
     try:
         yield
     finally:
-        for signum, handler in previous.items():
+        for signum, earlier in previous.items():
             # None means a handler installed outside Python, which cannot be reinstated.
-            if handler is not None:
-                signal.signal(signum, handler)
+            if earlier is not None:
+                signal.signal(signum, earlier)
 
 
 def run_child(argv: Sequence[str]) -> ChildResult:

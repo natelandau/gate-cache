@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 
 from gate_cache import cli, snapshot
+from gate_cache import config as core_config
+from gate_cache.gate_lock import HELD_ENV
 from gate_cache.git import GitResult
 from gate_cache.markers import MISS_SUFFIX, marker_dir
 from gate_cache.stats import config as stats_config
@@ -57,6 +59,12 @@ def isolate_user_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME"):
         monkeypatch.setenv(var, str(tmp_path / "xdg" / var.lower()))
     return data
+
+
+@pytest.fixture(autouse=True)
+def _no_held_locks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the held-locks variable that a gate-cache run wrapping the test suite sets."""
+    monkeypatch.delenv(HELD_ENV, raising=False)
 
 
 @pytest.fixture
@@ -231,7 +239,7 @@ def stats_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
     """Point the stats config file and state directory under tmp_path; return both."""
     config_file = tmp_path / "cfg" / "config.toml"
     state = tmp_path / "state"
-    monkeypatch.setattr(stats_config, "config_path", lambda: config_file)
+    monkeypatch.setattr(core_config, "config_path", lambda: config_file)
     monkeypatch.setenv(stats_config.DATA_DIR_ENV, str(state))
     monkeypatch.delenv(stats_config.STATS_ENV, raising=False)
     monkeypatch.delenv("CI", raising=False)

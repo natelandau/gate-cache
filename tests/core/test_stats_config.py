@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 from platformdirs import user_state_path
 
+from gate_cache.config import config_path
 from gate_cache.stats.config import (
     DATA_DIR_ENV,
     ConfigError,
     StatsSetting,
-    config_path,
     state_dir,
     stats_setting,
     write_enabled,

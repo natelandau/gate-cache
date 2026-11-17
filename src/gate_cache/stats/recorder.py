@@ -58,6 +58,10 @@ class Event:
         platform: `sys.platform` of the machine.
         command_truncated: Whether `command` was dropped to fit the line limit.
         name_truncated: Whether `name` was cut to a prefix to fit the line limit.
+        waited: Seconds the run waited for another run of the same gate.
+        wait_timed_out: Whether the wait ended at the timeout.
+        reported: Whether the run reported the failure of the run it waited for instead
+            of running the command.
     """
 
     ts: float
@@ -90,6 +94,9 @@ class Event:
     platform: str | None = None
     command_truncated: bool = False
     name_truncated: bool = False
+    waited: float | None = None
+    wait_timed_out: bool = False
+    reported: bool = False
 
     def _encode(self, paths: list[str], *, truncated: bool, name: str | None = None) -> bytes:
         """Encode the event as one newline-terminated JSON line.
@@ -132,7 +139,12 @@ class Event:
             "hook_stage": self.hook_stage,
             "agent": self.agent,
             "platform": self.platform,
+            "waited": self.waited,
         }
+        if self.wait_timed_out:
+            data["wait_timed_out"] = True
+        if self.reported:
+            data["reported"] = True
         if self.command_truncated:
             data["command_truncated"] = True
         if self.name_truncated or name is not None:

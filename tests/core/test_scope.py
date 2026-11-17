@@ -386,13 +386,13 @@ def test_status_listing_reads_each_record_once(
     run_gate("failing", counter.argv(exit_code=1), paths=["a.txt"])
     run_gate("plain", counter.argv())
     files = len(markers(scoped_repo)) + len(misses(scoped_repo))
-    real = markers_module._read_record
+    real = markers_module.read_record
     reads: list[Path] = []
 
     def counting(path: Path) -> dict[str, object] | None:
         reads.append(path)
         return real(path)
 
-    monkeypatch.setattr(markers_module, "_read_record", counting)
+    monkeypatch.setattr(markers_module, "read_record", counting)
     gate_status(as_json=True)
     assert len(reads) == files

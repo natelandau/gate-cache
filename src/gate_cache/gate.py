@@ -8,13 +8,21 @@ import os
 import shlex
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gate_cache import __version__
 from gate_cache.console import confirm_deletion, format_duration, kv, say, stdin_isatty
 from gate_cache.env import CI_ENV, flag_on
+from gate_cache.gate_lock import (
+    GateLock,
+    held_by_ancestor,
+    held_env,
+    lock_path,
+    prune_locks,
+    read_holder,
+)
 from gate_cache.markers import (
     RecordIndex,
     clear_markers,
@@ -29,11 +37,12 @@ from gate_cache.markers import (
     write_marker,
     write_miss,
 )
-from gate_cache.runner import run_child
+from gate_cache.runner import Terminated, raise_on_termination, run_child
 from gate_cache.snapshot import git_common_dir, normalize_paths, take_snapshot, take_snapshots
 from gate_cache.stats import config as stats_config
 from gate_cache.stats import context as run_context
 from gate_cache.stats.recorder import Event, Outcome, record_event
+from gate_cache.wait_settings import WaitSettings, wait_settings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -48,6 +57,7 @@ _CI_REASON = f"caching disabled in CI ({DISABLE_ENV}=0 keeps it on)"
 _NO_COMMON_DIR_REASON = "could not locate git directory"
 _FILES_CHANGED = "files changed during the run"
 FILES_CHANGED_NOTICE = f"{_FILES_CHANGED}, not recording pass"
+REPORTED_FAILURE_REASON = "failed in another run, not rerun"
 
 
 def disabled_reason(environ: Mapping[str, str] | None = None) -> str | None:
@@ -269,54 +279,6 @@ class _Stats:
         }
 
 
-def _run_uncached(
-    reason: str,
-    command: Sequence[str],
-    *,
-    name: str,
-    paths: Sequence[str],
-    stats: _Stats,
-    resolve_repo: bool = False,
-    snapshot: Snapshot | None = None,
-) -> int:
-    """Explain why caching is off, then run the command and record the run.
-
-    Args:
-        reason: Why caching is off, printed and stored.
-        command: Command and arguments to run.
-        name: Gate name.
-        paths: Normalized pathspecs of the gate.
-        stats: Stats recording for this run.
-        resolve_repo: Look up the git common directory for the event, because the caller
-            has not tried to.
-        snapshot: The snapshot taken before caching turned out to be off, if any.
-
-    Returns:
-        The command's exit code.
-    """
-    say(f"{reason}, running without cache")
-    before = stats.usage()
-    result = run_child(command)
-    usage = stats.usage_since(before)
-    if result.interrupted:
-        return result.exit_code
-    stats.record(
-        name=name,
-        command=command,
-        worktree=snapshot.root if snapshot is not None else None,
-        common_dir=stats.common_dir(snapshot) if resolve_repo else None,
-        **usage,
-        tree=snapshot.key if snapshot is not None else None,
-        paths=tuple(paths),
-        outcome="uncached",
-        duration=result.duration,
-        saved=None,
-        exit_code=result.exit_code,
-        reason=reason,
-    )
-    return result.exit_code
-
-
 @dataclass(frozen=True)
 class _Attempt:
     """One run of a gate on a known snapshot, and how to record its outcome.
@@ -335,13 +297,28 @@ class _Attempt:
     snapshot: Snapshot
     key: str
 
+    @property
+    def marker(self) -> Path:
+        """Return the marker path of the key and name."""
+        return marker_path(self.common_dir, self.key, self.name)
+
+    @property
+    def miss(self) -> Path:
+        """Return the miss record path of the key and name."""
+        return miss_path(self.common_dir, self.key, self.name)
+
+    @property
+    def lock_file(self) -> Path:
+        """Return the gate lock file of the key and name."""
+        return lock_path(self.common_dir, self.key, self.name)
+
     def record_pass(self, duration: float) -> None:
-        """Write the marker, drop any earlier miss, and prune old files; a failure only warns.
+        """Write the marker and drop any earlier miss; a failure only warns.
 
         Args:
             duration: Seconds the command ran, stored for later skips to report.
         """
-        path = marker_path(self.common_dir, self.key, self.name)
+        path = self.marker
         try:
             write_marker(
                 path,
@@ -356,14 +333,13 @@ class _Attempt:
             say(f"warning: could not record pass: {error}")
             return
         with contextlib.suppress(OSError):
-            miss_path(self.common_dir, self.key, self.name).unlink(missing_ok=True)
-        prune_markers(path.parent, max_age_days=marker_max_age_days())
+            self.miss.unlink(missing_ok=True)
 
     def record_miss(self, *, exit_code: int, reason: str) -> None:
         """Record that the gate ran on the key without passing, so status can report it."""
         # Reporting is best effort: nothing about a miss record may change the exit code.
+        path = self.miss
         try:
-            path = miss_path(self.common_dir, self.key, self.name)
             write_miss(
                 path,
                 tree=self.key,
@@ -374,9 +350,14 @@ class _Attempt:
                 paths=self.snapshot.paths,
                 full_tree=self.snapshot.tree,
             )
-            prune_markers(path.parent, max_age_days=marker_max_age_days())
         except Exception as error:  # noqa: BLE001
             say(f"warning: could not record miss: {error}")
+
+    def prune(self) -> None:
+        """Delete old markers, miss records, and free lock files; both prunes ignore errors."""
+        max_age_days = marker_max_age_days()
+        prune_markers(marker_dir(self.common_dir), max_age_days=max_age_days)
+        prune_locks(self.common_dir, max_age_days=max_age_days)
 
     def record_if_unchanged(self, duration: float) -> bool:
         """Record the pass only when the run left the content it was keyed on untouched.
@@ -400,114 +381,417 @@ class _Attempt:
         return False
 
 
-def run_gate(name: str, command: Sequence[str], paths: Sequence[str] = ()) -> int:
+@dataclass(frozen=True)
+class _Wait:
+    """A wait for another run that held the gate lock.
+
+    Attributes:
+        started: Wall-clock time the wait began; older miss records are not this wait's.
+        holder: Where the awaited run runs, for messages.
+    """
+
+    started: float
+    holder: str
+
+
+@dataclass(frozen=True)
+class _Acquired:
+    """The outcome of taking a gate lock.
+
+    Attributes:
+        lock: The held lock, or None when the run goes ahead without it.
+        wait: The wait for another run, or None when this attempt did not wait.
+    """
+
+    lock: GateLock | None
+    wait: _Wait | None = None
+
+
+@dataclass
+class _GateRun:
+    """One cached run of a gate: the marker check, any wait for another run, and the outcome.
+
+    Attributes:
+        name: Gate name.
+        command: Command and arguments to run.
+        stats: Stats recording for this run.
+        started: Start of the overhead measurement, or None when stats are off.
+        wait: The wait settings, or None to read them when a wait first needs them.
+        waited: Seconds spent blocked on other runs, or None when the run never waited.
+        wait_timed_out: Whether a wait ended at the timeout.
+        ran: The attempt whose command ran to completion, so its directory gets pruned.
+    """
+
+    name: str
+    command: Sequence[str]
+    stats: _Stats
+    started: float | None = None
+    wait: WaitSettings | None = None
+    waited: float | None = None
+    wait_timed_out: bool = False
+    ran: _Attempt | None = None
+
+    def run(self, snapshot: Snapshot) -> int:
+        """Skip on a recorded pass, else run the command, waiting for a run with the same key.
+
+        Args:
+            snapshot: The snapshot of the content about to be tested.
+
+        Returns:
+            The command's exit code, 0 for a skip, or a reported exit code of another run.
+        """
+        code = self._run(snapshot)
+        # Pruning waits until the lock is released, so it never delays a waiting run.
+        if self.ran is not None:
+            self.ran.prune()
+        return code
+
+    def _run(self, snapshot: Snapshot) -> int:
+        """Decide, taking the gate lock first unless the run ends before that."""
+        while True:
+            attempt = self._attempt(snapshot)
+            if isinstance(attempt, int):
+                return attempt
+            acquired = self._acquire(attempt.lock_file)
+            if acquired.lock is None:
+                if acquired.wait is None:
+                    # A run that skipped the lock still lists it, so a nested call never
+                    # waits on another run that this run did not wait for.
+                    with held_env(attempt.lock_file):
+                        return self._execute(attempt)
+                # The wait ended without the lock; run unlocked on the content as it is now.
+                return self._run_unlocked(take_snapshot(paths=snapshot.paths))
+            with acquired.lock as lock:
+                # A lock file keeps the last holder's record, so replace it before any check.
+                lock.write_holder(snapshot.root)
+                # Files can change during a long wait, so a run that waited looks again.
+                fresh = (
+                    take_snapshot(paths=snapshot.paths) if acquired.wait is not None else snapshot
+                )
+                if fresh.key != attempt.key:
+                    # Never hold the lock of a key this run is not running.
+                    snapshot = fresh
+                    continue
+                return self._run_locked(replace(attempt, snapshot=fresh), acquired.wait)
+
+    def _attempt(self, snapshot: Snapshot) -> _Attempt | int:
+        """Return the attempt on a snapshot, or the exit code when the run ends before locking.
+
+        A snapshot without a key or git directory runs without the cache, and a recorded
+        pass skips.
+        """
+        key = snapshot.key
+        if key is None:
+            return self.run_uncached(snapshot.reason or "tree unknown", snapshot, resolve_repo=True)
+        common_dir = snapshot.common_dir
+        if common_dir is None:
+            return self.run_uncached(_NO_COMMON_DIR_REASON, snapshot)
+        attempt = _Attempt(
+            common_dir=common_dir, name=self.name, command=self.command, snapshot=snapshot, key=key
+        )
+        if marker_exists(attempt.marker):
+            return self._skip(attempt)
+        return attempt
+
+    def _run_unlocked(self, snapshot: Snapshot) -> int:
+        """Run without the lock after a wait that ended without it."""
+        attempt = self._attempt(snapshot)
+        if isinstance(attempt, int):
+            return attempt
+        # The awaited holder may still run; a nested call must not wait on it again.
+        with held_env(attempt.lock_file):
+            return self._execute(attempt)
+
+    def _acquire(self, lock_file: Path) -> _Acquired:
+        """Take the gate lock, waiting while another run holds it.
+
+        Every wait of one run shares a single budget of `timeout` seconds, so a key that
+        changes during a wait cannot stack waits.
+
+        Args:
+            lock_file: The lock file of the key and name.
+
+        Returns:
+            The held lock, or no lock when the run goes ahead without it: a parent process
+            holds it, it cannot be taken, waiting is off, or the wait timed out. The wait
+            is set whenever the run waited, however the wait ended.
+        """
+        if held_by_ancestor(lock_file):
+            return _Acquired(lock=None)
+        # Taken before the lock check, so a miss the holder writes right after counts.
+        began = time.time()
+        try:
+            lock = GateLock.try_acquire(lock_file)
+        except OSError as error:
+            say(f"warning: could not lock {self.name}: {error}")
+            return _Acquired(lock=None)
+        if lock is not None:
+            return _Acquired(lock=lock)
+        settings = self._settings()
+        if settings.timeout == 0:
+            return _Acquired(lock=None)
+
+        holder, since = _describe_holder(lock_file)
+        say(f"{self.name} is running in {holder}{since}, waiting")
+        wait = _Wait(started=began, holder=holder)
+        remaining = max(settings.timeout - (self.waited or 0.0), 0.0)
+        wait_began = time.monotonic()
+        try:
+            with raise_on_termination():
+                lock = GateLock.wait(lock_file, timeout=remaining)
+        except OSError as error:
+            say(f"warning: could not lock {self.name}: {error}")
+            return _Acquired(lock=None, wait=wait)
+        finally:
+            self.waited = (self.waited or 0.0) + time.monotonic() - wait_began
+        if lock is None:
+            self.wait_timed_out = True
+            say(
+                f"{self.name} still running in {holder} after "
+                f"{format_duration(settings.timeout)}, running anyway"
+            )
+        return _Acquired(lock=lock, wait=wait)
+
+    def _run_locked(self, attempt: _Attempt, wait: _Wait | None) -> int:
+        """Decide and run while holding the lock, so other runs with the key wait on this one.
+
+        Args:
+            attempt: The run on the current snapshot.
+            wait: The wait that led to the lock, if any.
+
+        Returns:
+            The exit code of the run.
+        """
+        # Another run may have recorded a pass after the first marker check.
+        if marker_exists(attempt.marker):
+            return self._skip(attempt)
+        if wait is not None:
+            reported = self._reported_failure(attempt, wait)
+            if reported is not None:
+                return reported
+        with held_env(attempt.lock_file):
+            return self._execute(attempt)
+
+    def _reported_failure(self, attempt: _Attempt, wait: _Wait) -> int | None:
+        """Report the failure of the awaited run instead of running again, when asked to.
+
+        Args:
+            attempt: The run on the current snapshot.
+            wait: The wait for the awaited run.
+
+        Returns:
+            The awaited run's exit code, or None when this run must run the command.
+        """
+        if self._settings().failed != "report":
+            return None
+        try:
+            # Miss timestamps have whole-second resolution; the file time is finer.
+            if attempt.miss.stat().st_mtime < wait.started:
+                return None
+        except OSError:
+            return None
+        record = miss_record(attempt.common_dir, attempt.key, self.name)
+        code = record.get("exit_code") if record is not None else None
+        # A miss with exit 0 means files changed during the run, not a failure.
+        if not isinstance(code, int) or isinstance(code, bool) or code == 0:
+            return None
+        say(
+            f"{self.name} failed on {attempt.snapshot.label} in {wait.holder} "
+            f"(exit {code}), not running again"
+        )
+        self._record(
+            attempt.snapshot,
+            common_dir=attempt.common_dir,
+            overhead=self._overhead(),
+            outcome="fail",
+            exit_code=code,
+            reason=REPORTED_FAILURE_REASON,
+            reported=True,
+        )
+        return code
+
+    def _skip(self, attempt: _Attempt) -> int:
+        """Report and record a skip on the attempt's marker."""
+        path, snapshot = attempt.marker, attempt.snapshot
+        duration = marker_duration(path)
+        saved = f" (saved {format_duration(duration)})" if duration is not None else ""
+        say(f"{self.name} already passed on {snapshot.label}, skipping{saved}")
+        self._record(
+            snapshot,
+            common_dir=attempt.common_dir,
+            overhead=self._overhead(),
+            marker=path,
+            outcome="skip",
+            saved=duration,
+        )
+        return 0
+
+    def _execute(self, attempt: _Attempt) -> int:
+        """Run the command on the attempt's snapshot, then record its pass or miss."""
+        overhead = self._overhead()
+        before = self.stats.usage()
+        result = run_child(self.command)
+        usage = self.stats.usage_since(before)
+        if result.interrupted:
+            return result.exit_code
+        self.ran = attempt
+        outcome: Outcome = "fail"
+        if result.exit_code != 0:
+            attempt.record_miss(exit_code=result.exit_code, reason=f"exit code {result.exit_code}")
+        else:
+            outcome = "pass_unrecorded"
+            # Recording is best effort: nothing after a passing run may change its exit code.
+            try:
+                if attempt.record_if_unchanged(result.duration):
+                    outcome = "pass"
+            except Exception as error:  # noqa: BLE001
+                say(f"warning: could not record pass: {error}")
+        self._record(
+            attempt.snapshot,
+            common_dir=attempt.common_dir,
+            overhead=overhead,
+            **usage,
+            outcome=outcome,
+            duration=result.duration,
+            exit_code=result.exit_code,
+        )
+        return result.exit_code
+
+    def run_uncached(
+        self,
+        reason: str,
+        snapshot: Snapshot | None,
+        *,
+        paths: Sequence[str] = (),
+        resolve_repo: bool = False,
+    ) -> int:
+        """Explain why caching is off, then run the command and record the run.
+
+        Args:
+            reason: Why caching is off, printed and stored.
+            snapshot: The snapshot taken before caching turned out to be off, if any.
+            paths: Normalized pathspecs of the gate, when there is no snapshot.
+            resolve_repo: Look up the git common directory for the event, because the
+                caller has not tried to.
+
+        Returns:
+            The command's exit code.
+        """
+        say(f"{reason}, running without cache")
+        before = self.stats.usage()
+        result = run_child(self.command)
+        usage = self.stats.usage_since(before)
+        if result.interrupted:
+            return result.exit_code
+        self._record(
+            snapshot,
+            common_dir=self.stats.common_dir(snapshot) if resolve_repo else None,
+            paths=paths,
+            **usage,
+            outcome="uncached",
+            duration=result.duration,
+            exit_code=result.exit_code,
+            reason=reason,
+        )
+        return result.exit_code
+
+    def _record(
+        self,
+        snapshot: Snapshot | None,
+        *,
+        common_dir: Path | None,
+        paths: Sequence[str] = (),
+        **fields: Any,
+    ) -> None:
+        """Record the run's stats event; the outcome fields not given are None.
+
+        Args:
+            snapshot: The snapshot the run used, if any; it gives the worktree, tree,
+                and paths.
+            common_dir: Git common directory, when known.
+            paths: Normalized pathspecs of the gate, when there is no snapshot.
+            **fields: The fields that differ by outcome, plus `overhead` and `marker`.
+        """
+        self.stats.record(
+            name=self.name,
+            command=self.command,
+            worktree=snapshot.root if snapshot is not None else None,
+            common_dir=common_dir,
+            tree=snapshot.key if snapshot is not None else None,
+            paths=tuple(snapshot.paths if snapshot is not None else paths),
+            **{"duration": None, "saved": None, "exit_code": None, "reason": None, **fields},
+            waited=_round(self.waited, 3),
+            wait_timed_out=self.wait_timed_out,
+        )
+
+    def _settings(self) -> WaitSettings:
+        """Return the wait settings, reading the config file on first use only."""
+        if self.wait is None:
+            self.wait = wait_settings()
+        return self.wait
+
+    def _overhead(self) -> float | None:
+        """Return the seconds spent deciding, without the time spent waiting."""
+        overhead = self.stats.elapsed(self.started)
+        if overhead is None or self.waited is None:
+            return overhead
+        return max(overhead - self.waited, 0.0)
+
+
+def _describe_holder(lock_file: Path) -> tuple[str, str]:
+    """Return where the run holding a lock runs, and a note of how long ago it started.
+
+    Args:
+        lock_file: The held lock file.
+
+    Returns:
+        The holder's worktree, or "another process" when unknown, and a " (started ...
+        ago)" note, or "" when the holder record cannot be read.
+    """
+    info = read_holder(lock_file)
+    if info is None:
+        return "another process", ""
+    since = f" (started {format_duration(max(time.time() - info.started, 0.0))} ago)"
+    return info.worktree or "another process", since
+
+
+def run_gate(
+    name: str,
+    command: Sequence[str],
+    paths: Sequence[str] = (),
+    *,
+    wait: WaitSettings | None = None,
+) -> int:
     """Run a gate command unless it already passed on the content about to be tested.
+
+    A run that finds another run with the same key in progress waits for it, then skips
+    on its pass.
 
     Args:
         name: Gate name that, with the key, identifies a recorded pass.
         command: Command and arguments to run.
         paths: Git pathspecs that scope the key to the files the gate reads. Empty keys
             on the whole tree.
+        wait: How long to wait for another run and what to do when it failed. None reads
+            the config file.
 
     Returns:
-        The command's exit code, or 0 when a recorded pass lets it skip.
+        The command's exit code, 0 when a recorded pass lets it skip, or the exit code of
+        the awaited run when the wait settings report its failure.
     """
     stats = _Stats.load()
     reason = disabled_reason()
     if reason is not None:
-        return _run_uncached(
-            reason,
-            command,
-            name=name,
-            paths=normalize_paths(paths),
-            stats=stats,
-            resolve_repo=True,
+        return _GateRun(name=name, command=command, stats=stats).run_uncached(
+            reason, None, paths=normalize_paths(paths), resolve_repo=True
         )
 
-    started = stats.now()
-    snapshot = take_snapshot(paths=paths)
-    key = snapshot.key
-    if key is None:
-        return _run_uncached(
-            snapshot.reason or "tree unknown",
-            command,
-            name=name,
-            paths=snapshot.paths,
-            stats=stats,
-            resolve_repo=True,
-            snapshot=snapshot,
-        )
-
-    common_dir = snapshot.common_dir
-    if common_dir is None:
-        return _run_uncached(
-            _NO_COMMON_DIR_REASON,
-            command,
-            name=name,
-            paths=snapshot.paths,
-            stats=stats,
-            snapshot=snapshot,
-        )
-
-    path = marker_path(common_dir, key, name)
-    hit = marker_exists(path)
-    overhead = stats.elapsed(started)
-    if hit:
-        duration = marker_duration(path)
-        saved = f" (saved {format_duration(duration)})" if duration is not None else ""
-        say(f"{name} already passed on {snapshot.label}, skipping{saved}")
-        stats.record(
-            name=name,
-            command=command,
-            worktree=snapshot.root,
-            common_dir=common_dir,
-            overhead=overhead,
-            marker=path,
-            tree=key,
-            paths=snapshot.paths,
-            outcome="skip",
-            duration=None,
-            saved=duration,
-            exit_code=None,
-            reason=None,
-        )
-        return 0
-
-    attempt = _Attempt(
-        common_dir=common_dir, name=name, command=command, snapshot=snapshot, key=key
-    )
-    before = stats.usage()
-    result = run_child(command)
-    usage = stats.usage_since(before)
-    if result.interrupted:
-        return result.exit_code
-    outcome: Outcome = "fail"
-    if result.exit_code != 0:
-        attempt.record_miss(exit_code=result.exit_code, reason=f"exit code {result.exit_code}")
-    else:
-        outcome = "pass_unrecorded"
-        # Recording is best effort: nothing after a passing run may change its exit code.
-        try:
-            if attempt.record_if_unchanged(result.duration):
-                outcome = "pass"
-        except Exception as error:  # noqa: BLE001
-            say(f"warning: could not record pass: {error}")
-    stats.record(
-        name=name,
-        command=command,
-        worktree=snapshot.root,
-        common_dir=common_dir,
-        overhead=overhead,
-        **usage,
-        tree=key,
-        paths=snapshot.paths,
-        outcome=outcome,
-        duration=result.duration,
-        saved=None,
-        exit_code=result.exit_code,
-        reason=None,
-    )
-    return result.exit_code
+    gate_run = _GateRun(name=name, command=command, stats=stats, started=stats.now(), wait=wait)
+    try:
+        return gate_run.run(take_snapshot(paths=paths))
+    except Terminated as stop:
+        # Like an interrupted command run, a run stopped while waiting records nothing.
+        return stop.exit_code
 
 
 def gate_status(

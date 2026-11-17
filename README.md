@@ -73,6 +73,20 @@ gate-cache exits with the exit code of the command, or with 0 when it skips the 
 
 The tree includes uncommitted edits and untracked files that git does not ignore. A gate that passes on uncommitted work therefore skips in the commit hook when you commit the same content. gate-cache computes the tree from a private copy of the index, so it never stages files or changes your index.
 
+## Run the same gate twice at once
+
+If a run finds another run of the same gate in progress on the same content, it waits. The two runs have the same name and the same tree, and they can be in different worktrees of the repository. The waiting run prints a line that names the worktree of the other run and its age:
+
+```console
+$ gate-cache -- uv run pytest
+gate-cache: uv run pytest is running in /work/app-feature (started 1m 12s ago), waiting
+gate-cache: uv run pytest already passed on tree aaff74984ccc, skipping (saved 1m 34s)
+```
+
+The wait is not a hang. When the other run ends, gate-cache checks the content again. If the other run passed, the waiting run skips. Otherwise it runs the command.
+
+A run waits at most 15 minutes in total. After that, gate-cache prints `running anyway` and runs the command. [Settings](#settings) shows how to change the limit and how to report the failure of the other run instead of running again. Waiting works on macOS and Linux.
+
 ## Scope a gate to its paths
 
 In a repository with several parts, a change to the docs or to one part does not change the result of the tests of another part. A gate that has `--path` options matches only the content under those paths:
@@ -361,6 +375,7 @@ Each run of a gate adds one event with these fields:
 - the host name of the machine and a random machine ID
 - the time that gate-cache took to decide, the age of the marker of a skip, and the CPU time and peak memory of the command
 - the full command line, when `--name` gives a name that is not the command line
+- the time the run waited for another run of the same gate, whether the wait reached its limit, and whether the run reported the failure of that run instead of running the command
 
 An event holds no command output and no file content. The gate name is the command line unless you give `--name`, so a secret in a command line is in the record. When you give `--name`, the event also holds the command line, so a secret that you give to the command as an argument is in the record. Never put a secret in a gate name or in a command line. The working tree path and the host name often contain your user name or your real name. The machine ID is random and does not identify you. Recording is off until you turn it on. The data never leaves your machine, and `gate-cache stats clear` deletes it. The dashboard listens only on `127.0.0.1` and rejects requests for any other host name.
 
@@ -411,7 +426,24 @@ Five environment variables control gate-cache.
 
 A variable is on when its value is not empty, `0`, or `false`. Case and spaces around the value do not matter.
 
-Each marker is one small file in the `.git` directory of the repository, so all worktrees of the repository share the markers.
+### Waiting for a concurrent run
+
+The `[wait]` table of the config file, the file that `gate-cache stats` shows, sets two values. Each flag below goes before `--` and overrides its config value.
+
+| Config key | Flag                             | Effect                                                                                                                                            | Default |
+| ---------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `timeout`  | `--wait-timeout SECONDS`         | The longest total wait of one run, in whole seconds. `0` turns waiting off.                                                                       | `900`   |
+| `failed`   | `--on-wait-failure rerun\|report` | What a run does when the run that it waited for failed. `rerun` runs the command. `report` prints `NAME failed on tree HASH in WORKTREE (exit N), not running again` and exits with that code. | `rerun` |
+
+```toml
+[wait]
+timeout = 300
+failed = "report"
+```
+
+An invalid value in the config file prints a warning and uses the default. With `report`, only a command that exited with a code other than 0 counts as a failure. A run that passed but changed files, or a run that was interrupted, does not.
+
+Each marker is one small file in the `.git` directory of the repository, so all worktrees of the repository share the markers. Waiting uses lock files in `.git/gate-cache-locks/`. gate-cache deletes old lock files with old markers, and `gate-cache clear` leaves them in place.
 
 ## Learn more
 

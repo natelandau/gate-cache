@@ -11,8 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from platformdirs import user_config_path, user_state_path
+from platformdirs import user_state_path
 
+from gate_cache import config as core_config
 from gate_cache.env import CI_ENV, flag_on
 
 if TYPE_CHECKING:
@@ -42,11 +43,6 @@ class StatsSetting:
     source: Literal["env", "ci", "config", "default"]
 
 
-def config_path() -> Path:
-    """Return the path of the user config file."""
-    return user_config_path(_APP, appauthor=False) / "config.toml"
-
-
 def state_dir(environ: Mapping[str, str] | None = None) -> Path:
     """Return the directory that holds stats data.
 
@@ -69,7 +65,7 @@ def state_dir(environ: Mapping[str, str] | None = None) -> Path:
         return _expand_user(value).absolute()
     configured = _stats_table().get("data_dir")
     if isinstance(configured, str) and configured.strip():
-        return config_path().parent / _expand_user(configured.strip())
+        return core_config.config_path().parent / _expand_user(configured.strip())
     return user_state_path(_APP, appauthor=False)
 
 
@@ -86,30 +82,9 @@ def _expand_user(value: str) -> Path:
         return path
 
 
-_table_cache: tuple[tuple[Path, int, int], dict[str, object]] | None = None
-
-
 def _stats_table() -> dict[str, object]:
     """Return the `[stats]` table of the config file, or an empty one when unusable."""
-    global _table_cache  # noqa: PLW0603
-    path = config_path()
-    try:
-        info = path.stat()
-    except OSError:
-        return {}
-    # A recorded gate run looks the table up several times; re-parse only when the file
-    # changes, so a long-running dashboard still sees edits.
-    key = (path, info.st_mtime_ns, info.st_size)
-    if _table_cache is not None and _table_cache[0] == key:
-        return _table_cache[1]
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-        return {}
-    table = data.get("stats")
-    result: dict[str, object] = table if isinstance(table, dict) else {}
-    _table_cache = (key, result)
-    return result
+    return core_config.config_table("stats")
 
 
 def _config_value() -> bool | None:
@@ -195,7 +170,7 @@ def write_enabled(*, enabled: bool) -> None:
         ConfigError: When the existing file cannot be edited safely.
         OSError: When the file cannot be read or written.
     """
-    path = config_path().resolve()
+    path = core_config.config_path().resolve()
     try:
         text = path.read_text(encoding="utf-8")
         mode = path.stat().st_mode & 0o777

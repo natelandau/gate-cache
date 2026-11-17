@@ -24,9 +24,9 @@ MISS_SUFFIX = ".miss"
 # Records hold a command line, which the OS caps at a few MiB. The cap keeps a stray large
 # file from being read in full.
 MAX_RECORD_BYTES = 16 * 1024 * 1024
-_DAY_SECONDS = 86400
+DAY_SECONDS = 86400
 # No gate runs this long, so a larger stored value is corrupt.
-MAX_DURATION_SECONDS = 30 * _DAY_SECONDS
+MAX_DURATION_SECONDS = 30 * DAY_SECONDS
 
 
 def marker_key(tree: str, name: str) -> str:
@@ -207,7 +207,7 @@ def miss_record(common_dir: Path, tree: str, name: str) -> dict[str, Any] | None
         match the tree and name.
     """
     path = miss_path(common_dir, tree, name)
-    data = _read_record(path)
+    data = read_record(path)
     if data is None or data.get("tree") != tree or data.get("name") != name:
         return None
     return data
@@ -221,8 +221,16 @@ def marker_exists(path: Path) -> bool:
         return False
 
 
-def _read_record(path: Path) -> dict[str, Any] | None:
-    """Parse a JSON object from a record file, or return None when it is not one."""
+def read_record(path: Path) -> dict[str, Any] | None:
+    """Parse a JSON object from a small record file, refusing FIFOs and oversized files.
+
+    Args:
+        path: The record file to read.
+
+    Returns:
+        The parsed object, or None when the file is missing, not a regular file, too
+        large, or not a JSON object.
+    """
     try:
         # O_NONBLOCK keeps a FIFO from blocking the open; fstat on the open file then rejects it.
         with open(os.open(path, os.O_RDONLY | os.O_NONBLOCK), "rb") as handle:  # noqa: PTH123
@@ -250,7 +258,7 @@ def marker_duration(path: Path) -> float | None:
     Returns:
         The duration in seconds, or None when the marker has no usable value.
     """
-    record = _read_record(path)
+    record = read_record(path)
     value = record.get("duration") if record is not None else None
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
@@ -293,7 +301,7 @@ class RecordIndex:
         for path in paths:
             if path.name.startswith(TEMP_PREFIX):
                 continue
-            data = _read_record(path)
+            data = read_record(path)
             if data is not None:
                 entries.append((path, data))
         return cls(common_dir=common_dir, entries=tuple(entries))
@@ -395,7 +403,7 @@ def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None 
         max_age_days: Age in days beyond which a file is deleted.
         now: Current epoch time; defaults to the system clock.
     """
-    cutoff = (time.time() if now is None else now) - max_age_days * _DAY_SECONDS
+    cutoff = (time.time() if now is None else now) - max_age_days * DAY_SECONDS
     try:
         for entry in directory.iterdir():
             with contextlib.suppress(OSError):

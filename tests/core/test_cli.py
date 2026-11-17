@@ -11,6 +11,7 @@ import pytest
 
 import gate_cache
 from gate_cache import cli
+from gate_cache.wait_settings import WaitSettings
 from tests.conftest import Counter, invoke
 
 
@@ -252,6 +253,12 @@ def test_skill_flag_prints_skill_file(
         ("already passed on paths", ["already passed on {snapshot.label}", 'f"paths {']),
         (cli.FILES_CHANGED_NOTICE, []),
         (", running without cache", [", running without cache"]),
+        (", waiting", [', waiting"']),
+        (
+            "after 15m 0s, running anyway",
+            ["after ", "format_duration(settings.timeout)", ", running anyway"],
+        ),
+        ("not running again", [", not running again"]),
         ("caching disabled in CI", ["caching disabled in CI"]),
         ("matches no files", ["matches no files"]),
         ("warning: could not record pass: ", ["warning: could not record pass: "]),
@@ -339,6 +346,89 @@ def test_name_equals_form_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--name=a", "--", "echo", "hi") == 0
     run_gate.assert_called_once_with("a", ["echo", "hi"], paths=[])
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--wait-timeout", "30", "--on-wait-failure", "report"],
+        ["--wait-timeout=30", "--on-wait-failure=report"],
+    ],
+)
+def test_wait_flags_reach_run_gate(monkeypatch: pytest.MonkeyPatch, flags: list[str]) -> None:
+    """Both wait flags, in either form, reach run_gate as resolved settings."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, *flags, "--", "true") == 0
+    run_gate.assert_called_once_with("true", ["true"], paths=[], wait=WaitSettings(30, "report"))
+
+
+@pytest.mark.parametrize("value", ["-1", "x", ""])
+def test_wait_timeout_invalid_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], value: str
+) -> None:
+    """A bad --wait-timeout exits 2 with one line naming the flag."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, "--wait-timeout", value, "--", "true") == 2
+    run_gate.assert_not_called()
+    err = capfd.readouterr().err
+    assert "--wait-timeout" in err
+    assert len(err.strip().splitlines()) == 1
+
+
+def test_on_wait_failure_invalid_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """--on-wait-failure accepts only rerun or report."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, "--on-wait-failure", "skip", "--", "true") == 2
+    run_gate.assert_not_called()
+    assert "--on-wait-failure" in capfd.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["--wait-timeout", "--on-wait-failure"])
+def test_wait_flag_repeated_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], flag: str
+) -> None:
+    """A wait flag given twice is a usage error."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    value = "5" if flag == "--wait-timeout" else "rerun"
+    assert invoke(monkeypatch, flag, value, flag, value, "--", "true") == 2
+    run_gate.assert_not_called()
+    assert f"{flag} given more than once" in capfd.readouterr().err
+
+
+def test_wait_flag_after_separator_is_part_of_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wait flag after -- belongs to the command and sets no wait settings."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, "--", "--wait-timeout", "5") == 0
+    run_gate.assert_called_once_with("--wait-timeout 5", ["--wait-timeout", "5"], paths=[])
+
+
+@pytest.mark.parametrize("args", [["--wait-timeout="], ["--wait-timeout", "--", "true"]])
+def test_wait_timeout_without_value_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    """An empty or missing --wait-timeout value is a usage error."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, *args) == 2
+    run_gate.assert_not_called()
+    assert "--wait-timeout needs a value" in capfd.readouterr().err
+
+
+def test_help_lists_wait_flags(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """--help documents both wait flags."""
+    assert invoke(monkeypatch, "--help") == 0
+    out = capfd.readouterr().out
+    assert "--wait-timeout" in out
+    assert "--on-wait-failure" in out
 
 
 def test_ctrl_c_exits_130_quietly(
@@ -633,3 +723,13 @@ def test_cli_dashboard_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "gate_cache.dashboard.app", SimpleNamespace(run_dashboard=run))
     assert invoke(monkeypatch, "dashboard", "--port", "9000", "--no-browser") == 0
     run.assert_called_once_with(port=9000, open_browser=False)
+
+
+def test_skill_timeout_line_matches_default_timeout_format() -> None:
+    """Verify the timeout line in the skill shows the default limit as the code formats it."""
+    from gate_cache.console import format_duration
+    from gate_cache.wait_settings import DEFAULT_WAIT_TIMEOUT
+
+    assert f"after {format_duration(DEFAULT_WAIT_TIMEOUT)}, running anyway" in cli.agent_text(
+        "skill.md"
+    )

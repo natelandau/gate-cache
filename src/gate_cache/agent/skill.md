@@ -17,6 +17,9 @@ gate-cache writes its own lines to stderr with the prefix `gate-cache:`. All oth
 | --- | --- | --- |
 | `NAME already passed on tree HASH, skipping (saved 1m 34s)` | A pass for this name on this exact content exists. The command did not run, and gate-cache exits 0. | Treat the gate as passed. The result is valid. Do not run the tool directly to get the same answer again. |
 | `NAME already passed on paths HASH, skipping` | The same, for a gate scoped with `--path`. Nothing under its paths changed. | Treat the gate as passed. |
+| `NAME is running in WORKTREE (started 1m 12s ago), waiting` | Another run of this gate on this content is in progress. gate-cache waits for it, then skips if it passed, or runs the command. | Wait. The run is not a hang. Do not kill it or start the tool another way. |
+| `NAME still running in WORKTREE after 15m 0s, running anyway` | The wait reached its limit, so the command runs without the lock. | Let it finish. Tell the user if it happens often. |
+| `NAME failed on tree HASH in WORKTREE (exit N), not running again` | `--on-wait-failure report` is on, and the awaited run failed. gate-cache exits with code N and does not run the command. | Treat the gate as failed. Fix the cause, then run the recipe again. |
 | `files changed during the run, not recording pass` | The command exited 0 but changed files, so gate-cache wrote no marker. | If the command is a formatter or a fixer, wrap its check-only form. Otherwise, find which file the command writes. |
 | `REASON, running without cache` | The command runs without the cache, and gate-cache writes no marker. REASON names the cause, such as `caching disabled in CI` or `--path docs/ matches no files`. | If a `--path` matches no files, correct the path. |
 | `warning: could not record pass: ...` | The command passed, but gate-cache cannot write the marker. The exit code is unchanged. | Report the warning to the user. |
@@ -24,6 +27,8 @@ gate-cache writes its own lines to stderr with the prefix `gate-cache:`. All oth
 The saved time in parentheses is how long the command ran when it passed.
 
 When the command runs, gate-cache exits with the exit code of the command. It exits 127 when the command is not found, 126 when it cannot run, and 128 plus N when signal N stops it. A usage error exits 2 and runs nothing.
+
+A waiting run happens when two runs of the same gate and content overlap, for example two agents in two worktrees. The wait lasts at most 15 minutes by default. `--wait-timeout SECONDS` and `--on-wait-failure rerun|report` change the behavior, and the `[wait]` table of the config file sets them for every run. The flags win over the config file. Waiting works on macOS and Linux only.
 
 ## Run checks in a repository that uses gate-cache
 
@@ -166,4 +171,7 @@ After you add or change a gate, do these steps to make sure that it works:
 - To try stats or the dashboard on test data, set `GATE_CACHE_DATA_DIR` to a temporary directory and `GATE_CACHE_STATS=1` for that command, so it never writes to the user's real stats.
 - Never set `GATE_CACHE_DISABLE=1` in a recipe, a hook, a shell profile, or a committed file. It removes every skip.
 - Never put a secret in a gate name or in the command line of a gate without `--name`.
+- A line that ends with `waiting` is normal. Never kill the run, and never run the tool directly to avoid the wait.
+- A wait can last as long as the wait timeout, 15 minutes by default. If your tool stops a command sooner, run the gate in the background or increase the time limit of the tool. You can also give a smaller `--wait-timeout`.
+- Never edit or delete files in `.git/gate-cache-locks/`. Never change `[wait]` settings or add `--wait-timeout 0` unless the user asks.
 - When a gate skips, do not run the tool another way to confirm the result.
