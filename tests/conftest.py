@@ -1,14 +1,19 @@
 """Shared fixtures that isolate git from the developer's configuration."""
 
+import dataclasses
 import json
 import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from gate_cache import snapshot
+from gate_cache.git import GitResult
 from gate_cache.markers import MISS_SUFFIX, marker_dir
 from gate_cache.stats import config as stats_config
 
@@ -140,6 +145,37 @@ def expected_tree(repo: Path) -> str:
         ).stdout.strip()
     finally:
         scratch.unlink(missing_ok=True)
+
+
+def intercept_run_git(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[tuple[str, ...], dict[str, Any]], GitResult | None],
+) -> list[tuple[str, ...]]:
+    """Route snapshot's git calls through HANDLER; a None answer runs the real git.
+
+    Returns:
+        The arguments of every git call, in order, filled in as they happen.
+    """
+    calls: list[tuple[str, ...]] = []
+    real_run_git = snapshot.run_git
+
+    def run_git(*args: str, **kwargs: Any) -> GitResult:
+        calls.append(args)
+        answer = handler(args, kwargs)
+        return real_run_git(*args, **kwargs) if answer is None else answer
+
+    monkeypatch.setattr(snapshot, "run_git", run_git)
+    return calls
+
+
+def hide_common_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every snapshot the gate takes report no git common directory."""
+    real_take_snapshot = snapshot.take_snapshot
+
+    def take_snapshot(*args: Any, **kwargs: Any) -> snapshot.Snapshot:
+        return dataclasses.replace(real_take_snapshot(*args, **kwargs), common_dir=None)
+
+    monkeypatch.setattr("gate_cache.gate.take_snapshot", take_snapshot)
 
 
 def markers(repo: Path) -> list[Path]:

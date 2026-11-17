@@ -10,11 +10,11 @@ from typing import Any
 
 import pytest
 
-from gate_cache import scratch, snapshot
+from gate_cache import scratch
 from gate_cache.git import GitFailedError, GitResult
 from gate_cache.scratch import SCRATCH_PREFIX, runtime_area
 from gate_cache.snapshot import git_common_dir, take_snapshot
-from tests.conftest import add_submodule, expected_tree, git
+from tests.conftest import add_submodule, expected_tree, git, intercept_run_git
 
 
 def test_clean_repo_tree_equals_head_tree(git_repo: Path) -> None:
@@ -249,6 +249,71 @@ def test_git_common_dir_resolves_relative_output_against_cwd(
     assert git_common_dir(sub) == tmp_path / ".git"
     monkeypatch.chdir(sub)
     assert git_common_dir() == tmp_path / ".git"
+
+
+def _is_merged_lookup(args: tuple[str, ...]) -> bool:
+    return args[:2] == ("rev-parse", "--show-toplevel") and len(args) > 2
+
+
+def _answer_merged_lookup(
+    monkeypatch: pytest.MonkeyPatch, answer: GitResult | None = None
+) -> list[tuple[str, ...]]:
+    """Record a snapshot's git calls, answering the merged location lookup with ANSWER."""
+    return intercept_run_git(
+        monkeypatch, lambda args, _kwargs: answer if _is_merged_lookup(args) else None
+    )
+
+
+def test_snapshot_looks_up_locations_in_one_call(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a snapshot runs rev-parse once and learns the common dir git_common_dir finds."""
+    calls = _answer_merged_lookup(monkeypatch)
+    snap = take_snapshot()
+    assert snap.known
+    assert sum(args[0] == "rev-parse" for args in calls) == 1
+    assert snap.common_dir == git_common_dir() == git_repo / ".git"
+
+
+def test_snapshot_falls_back_to_one_lookup_per_location(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a failed merged lookup falls back to separate lookups with the same result."""
+    expected = take_snapshot()
+    failed = GitResult(returncode=128, stdout="", stderr="fatal: simulated")
+    calls = _answer_merged_lookup(monkeypatch, failed)
+    snap = take_snapshot()
+    assert snap == expected
+    assert snap.root == expected.root
+    assert snap.common_dir == git_repo / ".git"
+    assert ("rev-parse", "--git-dir") in calls
+    assert ("rev-parse", "--git-path", "index") in calls
+
+
+@pytest.mark.parametrize(
+    "stdout", ["/r", "/r\n/r/.git/index\n/r/.git/objects\n/r/.git\nextra", "/r\n\n/o\n/c"]
+)
+def test_snapshot_falls_back_on_unexpected_location_output(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    """Verify merged-lookup output without one non-empty line per location is not trusted."""
+    _answer_merged_lookup(monkeypatch, GitResult(returncode=0, stdout=stdout, stderr=""))
+    snap = take_snapshot()
+    assert snap.tree == expected_tree(git_repo)
+    assert snap.root == git_repo
+    assert snap.common_dir == git_repo / ".git"
+
+
+def test_hook_git_dir_asks_git_common_dir_separately(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a hook's GIT_DIR makes the snapshot take its common dir from git_common_dir."""
+    monkeypatch.setenv("GIT_DIR", str(git_repo / ".git"))
+    calls = _answer_merged_lookup(monkeypatch)
+    snap = take_snapshot()
+    assert snap.known
+    assert ("rev-parse", "--git-common-dir") in calls
+    assert snap.common_dir == git_common_dir()
 
 
 @pytest.mark.parametrize("at_root", [True, False])
@@ -569,16 +634,14 @@ def test_scratch_dir_removed_after_git_failure(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A git failure while hashing dirty work is unknown and still cleans up."""
-    real_run_git = snapshot.run_git
 
-    def failing_run_git(*args: str, **kwargs: Any) -> GitResult:
+    def fail_private_write_tree(args: tuple[str, ...], kwargs: dict[str, Any]) -> None:
         env = kwargs.get("env") or {}
         if "write-tree" in args and SCRATCH_PREFIX in env.get("GIT_INDEX_FILE", ""):
             msg = "boom"
             raise GitFailedError(msg)
-        return real_run_git(*args, **kwargs)
 
-    monkeypatch.setattr(snapshot, "run_git", failing_run_git)
+    intercept_run_git(monkeypatch, fail_private_write_tree)
     (git_repo / "a.txt").write_text("unstaged\n")
     assert take_snapshot().reason == "could not hash working copy"
     assert list(runtime_area().glob(f"{SCRATCH_PREFIX}*")) == []

@@ -14,7 +14,7 @@ from gate_cache import scratch
 from gate_cache.git import GitError, GitNotFoundError, run_git
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,8 @@ class Snapshot:
         scope: The `paths:` value covering only the gate's paths, or None for an unscoped gate.
         paths: The sorted, distinct pathspecs that scope the gate, or empty for the whole tree.
         root: Absolute top of the work tree, when git found one, even if the key is unknown.
+        common_dir: The git common directory, as `git_common_dir()` returns it. A known
+            snapshot always looks it up; an unknown one carries it only when found on the way.
     """
 
     tree: str | None
@@ -34,6 +36,7 @@ class Snapshot:
     scope: str | None = None
     paths: tuple[str, ...] = ()
     root: Path | None = field(default=None, compare=False)
+    common_dir: Path | None = field(default=None, compare=False)
 
     @property
     def key(self) -> str | None:
@@ -99,16 +102,57 @@ def _work_tree_root(cwd: Path | None, env: dict[str, str] | None) -> Path | None
 _GITLINK_MODE = "160000"
 
 
-def _hidden_entry_reason(root: Path, env: dict[str, str] | None, label: str = "") -> str | None:
-    """Return a reason when an index entry tells git to ignore edits to its file."""
-    # `ls-files -v` tags assume-unchanged entries in lowercase and skip-worktree entries `S`.
-    # Sparse checkout marks every path outside the cone skip-worktree, so it lands here too.
-    output = run_git("ls-files", "-v", "-z", cwd=root, env=env).stdout
-    for record in output.split("\0"):
-        tag, _, path = record.partition(" ")
-        if path and (tag.islower() or tag == "S"):
-            return f"skip-worktree or assume-unchanged entry: {label}{path}"
-    return None
+@dataclass(frozen=True, slots=True)
+class _IndexListing:
+    """Every index entry as `git ls-files -v --stage -z` prints it, parsed on demand.
+
+    Each record reads `<tag> <mode> <object> <stage>`, a tab, then the path. Parsing per
+    question keeps a large index from costing an object per entry.
+    """
+
+    output: str
+
+    @classmethod
+    def read(cls, directory: Path, env: dict[str, str] | None) -> _IndexListing:
+        """List the index of the repository at DIRECTORY."""
+        return cls(run_git("ls-files", "-v", "--stage", "-z", cwd=directory, env=env).stdout)
+
+    def _records(self) -> Iterator[tuple[str, str]]:
+        for record in self.output.split("\0"):
+            info, _, path = record.partition("\t")
+            if path:
+                yield info, path
+
+    @staticmethod
+    def _hides_edits(info: str) -> bool:
+        # `-v` tags assume-unchanged entries in lowercase and skip-worktree entries `S`.
+        # Sparse checkout marks every path outside the cone skip-worktree, so it lands here too.
+        return info[0].islower() or info[0] == "S"
+
+    def blocking_reason(self) -> str | None:
+        """Return why the index cannot vouch for the work tree, a conflict before a hidden entry."""
+        hidden: str | None = None
+        for info, path in self._records():
+            if info[-1] != "0":
+                return "unmerged index"
+            if hidden is None and self._hides_edits(info):
+                hidden = f"skip-worktree or assume-unchanged entry: {path}"
+        return hidden
+
+    def hidden_reason(self, label: str = "") -> str | None:
+        """Return a reason when an entry tells git to ignore edits to its file."""
+        for info, path in self._records():
+            if self._hides_edits(info):
+                return f"skip-worktree or assume-unchanged entry: {label}{path}"
+        return None
+
+    def gitlinks(self) -> list[str]:
+        """Return the paths of every gitlink (submodule or embedded repo)."""
+        return [path for info, path in self._records() if info[2:8] == _GITLINK_MODE]
+
+    def paths(self) -> Iterator[str]:
+        """Yield every indexed path."""
+        return (path for _, path in self._records())
 
 
 @dataclass(frozen=True)
@@ -117,6 +161,7 @@ class _State:
 
     root: Path | None
     reason: str | None = None
+    locations: _Locations | None = None
 
 
 @dataclass(frozen=True)
@@ -166,17 +211,6 @@ def _status(directory: Path, env: dict[str, str] | None) -> list[_StatusRecord]:
     return found
 
 
-def _gitlinks(directory: Path, env: dict[str, str] | None) -> list[str]:
-    """Return the paths of every gitlink (submodule or embedded repo) in the index."""
-    output = run_git("ls-files", "--stage", "-z", cwd=directory, env=env).stdout
-    links: list[str] = []
-    for record in output.split("\0"):
-        info, _, path = record.partition("\t")
-        if path and info.split(" ", 1)[0] == _GITLINK_MODE:
-            links.append(path)
-    return links
-
-
 def _gitlink_reason(directory: Path, label: str, env: dict[str, str]) -> str | None:
     """Return why a submodule's checkout may hold content its recorded commit does not.
 
@@ -193,30 +227,82 @@ def _gitlink_reason(directory: Path, label: str, env: dict[str, str]) -> str | N
         checked_out = False
     if not checked_out:
         return f"submodule is not a checked-out repository: {label}"
-    hidden = _hidden_entry_reason(directory, env, label=f"{label}/")
+    listing = _IndexListing.read(directory=directory, env=env)
+    hidden = listing.hidden_reason(label=f"{label}/")
     if hidden:
         return hidden
     if _status(directory, env):
         return f"submodule not at its index state: {label}"
     nested = (
-        _gitlink_reason(directory / path, f"{label}/{path}", env)
-        for path in _gitlinks(directory, env)
+        _gitlink_reason(directory / path, f"{label}/{path}", env) for path in listing.gitlinks()
     )
     return next((reason for reason in nested if reason), None)
 
 
+@dataclass(frozen=True)
+class _Locations:
+    """The paths one `git rev-parse` call reports for a repository with a work tree.
+
+    Attributes:
+        root: Absolute top of the work tree.
+        index: The index path as git printed it, possibly relative to the cwd.
+        objects: The object store path as git printed it, possibly relative to the cwd.
+        common_dir: The absolute common dir, or None when this lookup cannot vouch for it.
+    """
+
+    root: Path
+    index: str
+    objects: str
+    common_dir: Path | None
+
+
+def _locate(cwd: Path | None, env: dict[str, str] | None) -> _Locations | None:
+    """Ask git for the work tree, index, object store, and common dir in one call.
+
+    Return None unless the answer is one clean line per location, so the caller falls back
+    to one call per lookup and keeps that path's error handling.
+    """
+    try:
+        result = run_git(
+            "rev-parse", "--show-toplevel", "--git-path", "index", "--git-path", "objects",
+            "--git-common-dir", cwd=cwd, env=env, check=False,
+        )  # fmt: skip
+    except UnicodeDecodeError:
+        return None
+    lines = [line.strip() for line in result.stdout.split("\n")]
+    if result.returncode != 0 or len(lines) != 4 or not all(lines):  # noqa: PLR2004
+        return None
+    root, index, objects, common = lines
+    # `git_common_dir()` runs git with the inherited environment. A GIT_WORK_TREE added for a
+    # hook changes how git prints the common dir, so only an inherited env may answer for it.
+    return _Locations(
+        root=Path(root),
+        index=index,
+        objects=objects,
+        common_dir=_absolute_common_dir(output=common, cwd=cwd) if env is None else None,
+    )
+
+
+def _from_cwd(path: str, cwd: Path | None) -> Path:
+    """Anchor a path git printed relative to the directory it ran in; keep an absolute one."""
+    return (Path(cwd) if cwd is not None else Path.cwd()) / path
+
+
 def _inspect(cwd: Path | None, env: dict[str, str] | None) -> _State:
     """Probe the repository for anything that keeps one tree from describing the working copy."""
-    if run_git("rev-parse", "--git-dir", cwd=cwd, env=env, check=False).returncode != 0:
+    locations = _locate(cwd, env)
+    if (
+        locations is None
+        and run_git("rev-parse", "--git-dir", cwd=cwd, env=env, check=False).returncode != 0
+    ):
         return _State(root=None, reason="not a git repository")
     # ls-files only lists paths under its cwd. Probing from the top avoids the `:/` pathspec,
     # which GIT_LITERAL_PATHSPECS turns into a literal path that matches nothing.
-    root = _work_tree_root(cwd, env)
+    root = locations.root if locations is not None else _work_tree_root(cwd, env)
     if root is None:
         return _State(root=None, reason="could not locate work tree")
-    if run_git("ls-files", "--unmerged", cwd=root, env=env).stdout:
-        return _State(root=root, reason="unmerged index")
-    return _State(root=root, reason=_hidden_entry_reason(root, env))
+    reason = _IndexListing.read(directory=root, env=env).blocking_reason()
+    return _State(root=root, reason=reason, locations=locations)
 
 
 def _git_path(name: str, cwd: Path | None, env: dict[str, str] | None) -> Path:
@@ -225,10 +311,7 @@ def _git_path(name: str, cwd: Path | None, env: dict[str, str] | None) -> Path:
     if not output or "\n" in output:
         msg = f"unexpected `git rev-parse --git-path {name}` output: {output!r}"
         raise OSError(msg)
-    path = Path(output)
-    if path.is_absolute():
-        return path
-    return (Path(cwd) if cwd is not None else Path.cwd()) / path
+    return _from_cwd(path=output, cwd=cwd)
 
 
 def _require_private(env: dict[str, str], private: Path) -> None:
@@ -251,7 +334,8 @@ def _submodule_env(env: dict[str, str]) -> dict[str, str]:
 
 def _staged_reason(root: Path, env: dict[str, str]) -> str | None:
     """Return why the staged private index may not describe what the command reads."""
-    links = _gitlinks(root, env)
+    listing = _IndexListing.read(directory=root, env=env)
+    links = listing.gitlinks()
     # Only gitlinks produce submodule records, so a repo without them skips a full status scan.
     if links:
         for record in _status(root, env):
@@ -264,20 +348,19 @@ def _staged_reason(root: Path, env: dict[str, str]) -> str | None:
                 return reason
     ignorecase = run_git("config", "--bool", "core.ignorecase", cwd=root, env=env, check=False)
     if ignorecase.stdout.strip() == "true":
-        return _case_mismatch_reason(root, env)
+        return _case_mismatch_reason(root=root, paths=listing.paths())
     return None
 
 
-def _case_mismatch_reason(root: Path, env: dict[str, str]) -> str | None:
+def _case_mismatch_reason(root: Path, paths: Iterable[str]) -> str | None:
     """Return a reason when an indexed path is spelled differently on disk than in the index.
 
     On a case-insensitive filesystem a case-only rename keeps the old index entry, so the tree
     would name a path the command does not see. Comparing each path component with the real
     directory entries is exact and does not depend on ignore rules.
     """
-    output = run_git("ls-files", "-z", cwd=root, env=env).stdout
     listings: dict[Path, set[str]] = {}
-    for path in (entry for entry in output.split("\0") if entry):
+    for path in paths:
         parent = root
         for part in path.split("/"):
             if parent not in listings:
@@ -343,16 +426,17 @@ def _scope(root: Path, env: dict[str, str], paths: tuple[str, ...], tree: str) -
 
 
 def _private_snapshots(
-    cwd: Path | None, root: Path, env: dict[str, str] | None, path_sets: list[tuple[str, ...]]
+    root: Path,
+    env: dict[str, str] | None,
+    path_sets: list[tuple[str, ...]],
+    index: Path,
+    objects: Path,
 ) -> list[Snapshot]:
     """Stage the working copy into a private index once and key it for each path set.
 
     A copy of the index and a throwaway object store take every write, so the real index,
     its lock, and `.git/objects` stay untouched even by write-tree's cache-tree update.
     """
-    # Resolved from cwd, as git itself resolves an inherited relative GIT_INDEX_FILE.
-    index = _git_path("index", cwd, env)
-    objects = _git_path("objects", cwd, env)
     base = dict(os.environ if env is None else env)
     with scratch.scratch_dir() as private:
         private_index = private / "index"
@@ -404,10 +488,16 @@ def normalize_paths(paths: Iterable[str]) -> tuple[str, ...]:
 
 
 def _unknown(
-    path_sets: list[tuple[str, ...]], reason: str, root: Path | None = None
+    path_sets: list[tuple[str, ...]],
+    reason: str,
+    root: Path | None = None,
+    common_dir: Path | None = None,
 ) -> list[Snapshot]:
     """Return one unknown snapshot per path set, all for the same reason."""
-    return [Snapshot(tree=None, reason=reason, paths=paths, root=root) for paths in path_sets]
+    return [
+        Snapshot(tree=None, reason=reason, paths=paths, root=root, common_dir=common_dir)
+        for paths in path_sets
+    ]
 
 
 def take_snapshot(cwd: Path | None = None, paths: Iterable[str] = ()) -> Snapshot:
@@ -448,18 +538,36 @@ def take_snapshots(path_sets: Iterable[Iterable[str]], cwd: Path | None = None) 
         return _unknown(path_sets=normalized, reason="git not found")
     except (GitError, UnicodeDecodeError):
         return _unknown(path_sets=normalized, reason="could not inspect git state")
+    locations = state.locations
+    common_dir = locations.common_dir if locations is not None else None
     if state.reason or state.root is None:
         return _unknown(
             path_sets=normalized,
             reason=state.reason or "could not locate work tree",
             root=state.root,
+            common_dir=common_dir,
         )
 
     try:
-        snapshots = _private_snapshots(cwd, state.root, env, normalized)
+        # Resolved from cwd, as git itself resolves an inherited relative GIT_INDEX_FILE.
+        if locations is not None:
+            index = _from_cwd(path=locations.index, cwd=cwd)
+            objects = _from_cwd(path=locations.objects, cwd=cwd)
+        else:
+            index, objects = _git_path("index", cwd, env), _git_path("objects", cwd, env)
+        snapshots = _private_snapshots(
+            root=state.root, env=env, path_sets=normalized, index=index, objects=objects
+        )
     except (GitError, OSError, UnicodeDecodeError):
-        return _unknown(path_sets=normalized, reason="could not hash working copy", root=state.root)
-    return [replace(snap, root=state.root) for snap in snapshots]
+        return _unknown(
+            path_sets=normalized,
+            reason="could not hash working copy",
+            root=state.root,
+            common_dir=common_dir,
+        )
+    if common_dir is None and any(snap.known for snap in snapshots):
+        common_dir = git_common_dir(cwd)
+    return [replace(snap, root=state.root, common_dir=common_dir) for snap in snapshots]
 
 
 def git_common_dir(cwd: Path | None = None) -> Path | None:
@@ -475,14 +583,17 @@ def git_common_dir(cwd: Path | None = None) -> Path | None:
         result = run_git("rev-parse", "--git-common-dir", cwd=cwd)
     except (GitError, UnicodeDecodeError):
         return None
-    output = result.stdout.strip()
+    return _absolute_common_dir(output=result.stdout, cwd=cwd)
+
+
+def _absolute_common_dir(output: str, cwd: Path | None) -> Path | None:
+    """Turn `git rev-parse --git-common-dir` output into an absolute path, or None."""
+    output = output.strip()
     if not output or "\n" in output:
         return None
-    path = Path(output)
-    if path.is_absolute():
-        return path
+    if Path(output).is_absolute():
+        return Path(output)
     try:
-        base = Path(cwd) if cwd is not None else Path.cwd()
-        return (base / path).resolve()
+        return _from_cwd(path=output, cwd=cwd).resolve()
     except (OSError, RuntimeError):
         return None

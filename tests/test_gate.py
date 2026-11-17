@@ -16,7 +16,7 @@ from gate_cache.gate import clear_cache, disabled_reason, gate_status, marker_ma
 from gate_cache.markers import marker_dir, miss_path
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot
-from tests.conftest import Counter, git, markers, misses, read_records
+from tests.conftest import Counter, git, hide_common_dir, markers, misses, read_records
 
 NAME = "pytest"
 
@@ -550,7 +550,7 @@ def test_no_common_dir_runs_uncached(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     """A known tree without a locatable git directory runs uncached and records nothing."""
-    monkeypatch.setattr("gate_cache.gate.git_common_dir", lambda: None)
+    hide_common_dir(monkeypatch)
     assert run_gate(NAME, counter.argv(exit_code=4)) == 4
     assert run_gate(NAME, counter.argv()) == 0
     assert counter.count == 2
@@ -565,7 +565,7 @@ def test_status_reports_missing_common_dir(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
     """Status explains a miss caused by an unlocatable git directory."""
-    monkeypatch.setattr("gate_cache.gate.git_common_dir", lambda: None)
+    hide_common_dir(monkeypatch)
     assert gate_status(NAME) == 1
     out = capfd.readouterr().out
     assert git("write-tree", cwd=git_repo) in out
