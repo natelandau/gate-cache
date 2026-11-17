@@ -56,6 +56,19 @@ describe("parseHash", () => {
     expect(parseHash("#/activity?")).toEqual({ page: "activity" });
   });
 
+  it("parses a Breakdown row filter and drops one with an unknown dimension or no key", () => {
+    expect(parseHash("#/activity?group=branch&key=%5B%22main%22%5D&label=Branch%3A%20main")).toEqual({
+      page: "activity",
+      group: { by: "branch", key: '["main"]', label: "Branch: main" },
+    });
+    expect(parseHash("#/activity?group=machine&key=x")).toEqual({
+      page: "activity",
+      group: { by: "machine", key: "x", label: "Machine" },
+    });
+    expect(parseHash("#/activity?group=tool&key=x")).toEqual({ page: "activity" });
+    expect(parseHash("#/activity?group=branch")).toEqual({ page: "activity" });
+  });
+
   it("ignores query parameters on other pages", () => {
     expect(parseHash("#/flaky?outcome=fail")).toEqual({ page: "flaky" });
   });

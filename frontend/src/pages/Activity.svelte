@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { activityHint, activitySubject, addPage, feedView, PAGE_SIZE, type PagedFeed } from "../lib/activity";
-  import { getActivity, type EventRow, type Outcome } from "../lib/api";
+  import { getActivity, type ActivityFilter, type EventRow, type Outcome } from "../lib/api";
   import Badge from "../lib/components/Badge.svelte";
   import Button from "../lib/components/Button.svelte";
   import DataTable, { type Column } from "../lib/components/DataTable.svelte";
@@ -18,18 +18,25 @@
 
   interface Props {
     repoLabel: string | null;
-    /** Show only runs with this outcome; page-local, from the hash route. */
-    outcome?: Outcome;
-    /** Show only runs with this exact reason; page-local, from the hash route. */
-    reason?: string;
+    /**
+     * Page-local filters from the hash route: an outcome, an exact reason, and the runs of one
+     * overview Breakdown row.
+     */
+    filter: ActivityFilter;
   }
 
-  let { repoLabel, outcome, reason }: Props = $props();
+  let { repoLabel, filter }: Props = $props();
+
+  const outcome = $derived(filter.outcome);
+  const reason = $derived(filter.reason);
+  const group = $derived(filter.group);
+  // What the server sees; the chip label is display only.
+  const sent = $derived({ outcome, reason, group: group && { by: group.by, key: group.key } });
 
   // The first page follows the archive live; see lib/activity.ts for why later pages do not.
   const first = createQuery(
-    (signal) => getActivity({ limit: PAGE_SIZE, outcome, reason }, { signal }),
-    () => [outcome, reason],
+    (signal) => getActivity({ limit: PAGE_SIZE, ...filter }, { signal }),
+    () => sent,
   );
 
   const outcomeOptions = [
@@ -40,14 +47,11 @@
   // Filter changes replace the history entry, so going back leaves the page instead of
   // stepping through every filter tried.
   function showOutcome(value: string): void {
-    navigate(
-      { page: "activity", ...(value ? { outcome: value as Outcome } : {}), ...(reason ? { reason } : {}) },
-      { replace: true },
-    );
+    navigate({ page: "activity", ...filter, outcome: (value || undefined) as Outcome | undefined }, { replace: true });
   }
 
-  function removeReason(): void {
-    navigate({ page: "activity", ...(outcome ? { outcome } : {}) }, { replace: true });
+  function remove(key: "reason" | "group"): void {
+    navigate({ page: "activity", ...filter, [key]: undefined }, { replace: true });
     heading.focus();
   }
 
@@ -65,12 +69,12 @@
   }
 
   $effect(() => {
-    void [filters.repos, filters.range, outcome, reason];
+    void [filters.repos, filters.range, sent];
     resetPaging();
   });
 
   // Pages loaded under other filters never mix with the first page of the current ones.
-  const inputs = $derived(JSON.stringify([filters.repos, filters.range, outcome, reason]));
+  const inputs = $derived(JSON.stringify([filters.repos, filters.range, sent]));
   const view = $derived(feedView(first.data, paged, inputs));
 
   type Row = EventRow & { key: string };
@@ -110,7 +114,7 @@
     moreError = undefined;
     try {
       const page = await getActivity(
-        { limit: PAGE_SIZE, before, outcome, reason },
+        { limit: PAGE_SIZE, before, ...filter },
         { signal: controller.signal },
       );
       if (controller.signal.aborted || inputs !== at) return;
@@ -155,7 +159,15 @@
     {#if reason}
       <span class="chip">
         <Badge title={reason}><span class="reason">Reason: {reason}</span></Badge>
-        <Button square label="Remove reason filter" title="Remove reason filter" onclick={removeReason}>
+        <Button square label="Remove reason filter" title="Remove reason filter" onclick={() => remove("reason")}>
+          ×
+        </Button>
+      </span>
+    {/if}
+    {#if group}
+      <span class="chip">
+        <Badge title={group.label}><span class="reason">{group.label}</span></Badge>
+        <Button square label="Remove {group.label} filter" title="Remove filter" onclick={() => remove("group")}>
           ×
         </Button>
       </span>
@@ -180,9 +192,9 @@
       >
         {#snippet empty()}
           <EmptyState
-            title={emptyTitle(activitySubject({ outcome, reason }), { range: filters.range, repoLabel })}
+            title={emptyTitle(activitySubject(filter), { range: filters.range, repoLabel })}
             detail={activityHint(
-              { outcome, reason },
+              filter,
               { range: filters.range, repoLabel, recording: freshness.recording },
             )}
           />

@@ -83,6 +83,9 @@ describe("activitySubject", () => {
     expect(activitySubject({ outcome: "uncached", reason: "x y" })).toBe(
       '"Uncached" runs with reason "x y"',
     );
+    expect(activitySubject({ outcome: "fail", group: { by: "branch", key: "[]", label: "Branch: main" } })).toBe(
+      '"Fail" runs in "Branch: main"',
+    );
   });
 });
 
@@ -110,6 +113,9 @@ describe("activityHint", () => {
     );
     expect(activityHint({ outcome: "uncached", reason: "x" }, scope)).toBe(
       "Pick All outcomes and remove the reason filter, or pick a longer range.",
+    );
+    expect(activityHint({ group: { by: "source", key: "[]", label: "Source: CI" } }, scope)).toBe(
+      'Remove the "Source: CI" filter, or pick a longer range.',
     );
   });
 

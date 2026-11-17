@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Query } from "../lib/query.svelte";
   import type { SummaryView } from "../lib/summary";
+  import BreakdownModule from "./overview/BreakdownModule.svelte";
   import CalendarModule from "./overview/CalendarModule.svelte";
   import CoalescingModule from "./overview/CoalescingModule.svelte";
   import DailyModule from "./overview/DailyModule.svelte";
@@ -9,7 +10,6 @@
   import HourlyModule from "./overview/HourlyModule.svelte";
   import OutcomeModule from "./overview/OutcomeModule.svelte";
   import ReasonsModule from "./overview/ReasonsModule.svelte";
-  import ReposModule from "./overview/ReposModule.svelte";
   import SlowdownsModule from "./overview/SlowdownsModule.svelte";
   import StatsModule from "./overview/StatsModule.svelte";
   import TopGatesModule from "./overview/TopGatesModule.svelte";
@@ -44,7 +44,7 @@
     <SlowdownsModule {repoLabel} />
   </div>
   <div class="row wide-narrow">
-    <ReposModule />
+    <BreakdownModule {repoLabel} />
     <CoalescingModule {repoLabel} />
   </div>
 </section>

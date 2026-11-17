@@ -5,6 +5,7 @@
  * caller passes an explicit `scope` or `repos`. Failures throw `ApiError`.
  */
 
+import type { Dimension } from "./dimensions";
 import type { DayBucket } from "./fill";
 import type { FreshnessReading } from "./state.svelte";
 import { resolveRange } from "./range";
@@ -190,6 +191,42 @@ export interface RepoRow {
   gates: number;
 }
 
+/** One group of the Breakdown panel. */
+export interface BreakdownRow {
+  /** Opaque; pass it back as an activity `group` key to list this row's runs. */
+  key: string;
+  label: string;
+  /** Hover text: the full value, such as a repo path, or why a row holds runs with no value. */
+  title: string | null;
+  /** True for the row of runs that recorded no value, such as runs with no branch. */
+  missing: boolean;
+  /** The row's repo, for groups within a repo: repo, gate, and branch. */
+  repo: string | null;
+  /** The gate name, for gate rows. */
+  name: string | null;
+  runs: number;
+  skip_rate: number | null;
+  time_saved: number;
+  failures: number;
+  /** Distinct gates, counting the same name in two repos twice. */
+  gates: number;
+}
+
+/** A page-local Activity filter to the runs of one Breakdown row. */
+export interface ActivityGroup {
+  by: Dimension;
+  key: string;
+  /** Names the row on the filter chip, such as "Branch: main"; never sent to the server. */
+  label: string;
+}
+
+/** The Activity page's page-local filters. */
+export interface ActivityFilter {
+  outcome?: Outcome;
+  reason?: string;
+  group?: ActivityGroup;
+}
+
 export interface ActivityPage {
   events: EventRow[];
   /** Opaque cursor for the next page, or null on the last page. */
@@ -338,13 +375,21 @@ export async function getRepos(options: RequestOptions = {}): Promise<RepoRow[]>
   return body.repos;
 }
 
+/** Fetch run rollups grouped by one dimension, ordered by time saved. */
+export function getBreakdown(
+  by: Dimension,
+  options: RequestOptions = {},
+): Promise<{ by: Dimension; rows: BreakdownRow[] }> {
+  return request("breakdown", { ...scoped(options), by }, options.signal);
+}
+
 /**
  * Fetch one page of events, newest first. Pass the previous page's `next_before` to continue,
- * an `outcome` to keep only events with that outcome, and a `reason` to keep only events
- * recorded with that reason.
+ * an `outcome` to keep only events with that outcome, a `reason` to keep only events recorded
+ * with that reason, and a `group` to keep only the events of one Breakdown row.
  */
 export function getActivity(
-  page: { limit?: number; before?: string | null; outcome?: Outcome; reason?: string } = {},
+  page: { limit?: number; before?: string | null } & ActivityFilter = {},
   options: RequestOptions = {},
 ): Promise<ActivityPage> {
   const params = {
@@ -353,6 +398,8 @@ export function getActivity(
     before: page.before,
     outcome: page.outcome,
     reason: page.reason,
+    group: page.group?.by,
+    key: page.group?.key,
   };
   return request("activity", params, options.signal);
 }

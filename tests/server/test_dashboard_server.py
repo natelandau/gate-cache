@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
+from urllib.parse import quote
 
 import pytest
 
@@ -110,6 +111,7 @@ def test_api_summary_shape(server: DashboardServer) -> None:
         "reasons",
         "coalescing",
         "repos",
+        "breakdown?by=source",
         "activity",
         "flaky",
         "slowdowns",
@@ -278,6 +280,12 @@ def test_no_cors(server: DashboardServer) -> None:
         "summary?to=1e400",
         "summary?from=2023-13-40",
         "gate",
+        "breakdown",
+        "breakdown?by=tool",
+        "activity?group=branch",
+        "activity?key=%5B%5D",
+        "activity?group=branch&key=main",
+        "activity?group=tool&key=%5Bnull%5D",
     ],
 )
 def test_bad_query_400(server: DashboardServer, query: str) -> None:
@@ -597,3 +605,25 @@ def test_static_read_failure_is_500_text(server: DashboardServer, tmp_path: Path
     assert body == b"internal error"
     assert headers["Content-Type"].startswith("text/plain")
     assert headers["Cache-Control"] == "no-store"
+
+
+def test_breakdown_row_drills_into_activity(server: DashboardServer, archive: Archive) -> None:
+    """A breakdown row's key, sent back as group and key, lists that row's runs."""
+    archive.connection.executemany(
+        "INSERT INTO events (line_hash, ts, repo, name, paths, outcome, raw)"
+        " VALUES (?, ?, '/r/a/.git', 'lint', '[]', 'pass', ?)",
+        [
+            ("h1", 1000.0, json.dumps({"trigger": "agent", "agent": "claude-code"})),
+            ("h2", 1001.0, json.dumps({"trigger": "ci"})),
+            ("h3", 1002.0, None),
+        ],
+    )
+    archive.connection.commit()
+    status, body = get(server, "/api/v1/breakdown?by=source&repo=/r/a/.git")
+    assert status == 200
+    assert body["by"] == "source"
+    by_label = {row["label"]: row for row in body["rows"]}
+    assert set(by_label) == {"Agent: claude-code", "CI", "No source recorded"}
+    key = quote(by_label["Agent: claude-code"]["key"])
+    _, page = get(server, f"/api/v1/activity?group=source&key={key}")
+    assert [e["ts"] for e in page["events"]] == [1000.0]

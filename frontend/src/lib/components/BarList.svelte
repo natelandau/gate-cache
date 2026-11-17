@@ -1,30 +1,45 @@
 <!--
   @component
-  A table of repos, each with a bar scaled to the largest value and compact numeric columns.
-  The name is a button that picks the repo. The numeric columns are the text equivalent, so
-  the bars are hidden from screen readers. Dimmed rows use muted text, a neutral bar, and a
-  hidden "(not selected)" note after the name.
+  A table of named rows, such as repos, each with a bar scaled to the largest value and compact
+  numeric columns. The name is a button that picks the row. The numeric columns are the text
+  equivalent, so the bars are hidden from screen readers. Dimmed rows use muted text, a neutral
+  bar, and a hidden "(not selected)" note after the name.
 
   Props:
   - `label`: accessible name of the table (rendered as a hidden caption)
-  - `rows`: the bars, in display order, from `repoBars` in `src/lib/repobars.ts`
+  - `heading`: header of the name column, such as "Repo"
+  - `rows`: the bars, in display order, such as from `breakdownBars` in `src/lib/breakdown.ts`
   - `color`: the bar color by role: time saved, runs, or failures
   - `columns`: the numeric columns after the bar, each with a header and its cell text
-  - `onpick`: called with a row's key when its name is clicked
+  - `onpick`: called with a row's bar when its name is clicked
 -->
-<script lang="ts">
-  import type { RepoRow } from "../api";
-  import type { RepoBar } from "../repobars";
+<script lang="ts" module>
+  /** One row of a `BarList`. */
+  export interface Bar<T> {
+    /** Unique among the rows. */
+    key: string;
+    label: string;
+    /** Hover text for the name. */
+    title: string | undefined;
+    value: number;
+    /** True when a filter is active and leaves this row out. */
+    dimmed: boolean;
+    row: T;
+  }
+</script>
+
+<script lang="ts" generics="T">
 
   interface Props {
     label: string;
-    rows: RepoBar[];
+    heading: string;
+    rows: Bar<T>[];
     color: "saved" | "runs" | "fails";
-    columns: { label: string; text: (row: RepoRow) => string }[];
-    onpick: (key: string) => void;
+    columns: { label: string; text: (row: T) => string }[];
+    onpick: (bar: Bar<T>) => void;
   }
 
-  let { label, rows, color, columns, onpick }: Props = $props();
+  let { label, heading, rows, color, columns, onpick }: Props = $props();
 
   const FILLS = {
     saved: "var(--chart-saved)",
@@ -44,7 +59,7 @@
     <caption class="visually-hidden">{label}</caption>
     <thead>
       <tr>
-        <th scope="col">Repo</th>
+        <th scope="col">{heading}</th>
         <th class="bar-cell" aria-hidden="true"></th>
         {#each columns as column (column.label)}
           <th scope="col" class="num">{column.label}</th>
@@ -55,7 +70,7 @@
       {#each rows as bar (bar.key)}
         <tr class:dimmed={bar.dimmed}>
           <th scope="row" class="name">
-            <button type="button" title={bar.row.repo ?? undefined} onclick={() => onpick(bar.key)}>
+            <button type="button" title={bar.title} onclick={() => onpick(bar)}>
               {bar.label}{#if bar.dimmed}<span class="visually-hidden">{" (not selected)"}</span>{/if}
             </button>
           </th>

@@ -129,8 +129,7 @@
       {:else if router.route.page === "activity"}
         <Activity
           repoLabel={selectedRepo}
-          outcome={router.route.outcome}
-          reason={router.route.reason}
+          filter={router.route}
         />
       {:else}
         <Flaky repoLabel={selectedRepo} />
