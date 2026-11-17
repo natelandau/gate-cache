@@ -4,23 +4,14 @@ import re
 import shlex
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 import gate_cache
 from gate_cache import cli
-from tests.conftest import Counter
-
-
-def invoke(monkeypatch: pytest.MonkeyPatch, *args: str) -> int:
-    """Run main() with the given arguments and return the exit code."""
-    monkeypatch.setattr(sys, "argv", ["gate-cache", *args])
-    with pytest.raises(SystemExit) as exc:
-        cli.main()
-    code = exc.value.code
-    assert isinstance(code, int)
-    return code
+from tests.conftest import Counter, invoke
 
 
 def test_run_requires_double_dash(
@@ -513,3 +504,18 @@ def test_stats_rejects_an_unknown_action(
 ) -> None:
     """An unknown action is a usage error."""
     assert invoke(monkeypatch, "stats", "bogus") == 2
+
+
+def test_cli_rejects_bad_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-numeric or out-of-range port is a usage error."""
+    for bad in ("0x", "0", "70000"):
+        assert invoke(monkeypatch, "dashboard", "--port", bad) == 2
+
+
+def test_cli_dashboard_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The dashboard command passes its options through."""
+    run = MagicMock(return_value=0)
+    # A stand-in module keeps this core test free of dashboard code, whose changes never run core
+    monkeypatch.setitem(sys.modules, "gate_cache.dashboard.app", SimpleNamespace(run_dashboard=run))
+    assert invoke(monkeypatch, "dashboard", "--port", "9000", "--no-browser") == 0
+    run.assert_called_once_with(port=9000, open_browser=False)

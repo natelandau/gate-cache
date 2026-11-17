@@ -27,8 +27,46 @@ PY_SRC_LIST = tuple(str(_) for _ in PY_SRC_PATHS)
 FORMAT_LIST = (*PY_SRC_LIST, *(_ for _ in ("docs/", "README.md") if Path(_).exists()))
 CI = os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"}
 PROJECT_ROOT = Path(__file__).parent
-# The Node version changes what the frontend gates run on, so it scopes them too
-FRONTEND = ("frontend", ".node-version")
+# A change to any of these can break every suite, since every CI job runs through them
+SHARED = ("duties.py", ".github/actions/", "pyproject.toml", "uv.lock", ".python-version")
+PY_SHARED = ("tests/conftest.py", "tests/__init__.py")
+# What each test suite depends on. The gates and the CI `paths:` filters both come from this,
+# and tests/tooling/test_workflows.py fails when the two disagree.
+SUITES: dict[str, tuple[str, ...]] = {
+    "core": (
+        "src/gate_cache/",
+        ":(exclude)src/gate_cache/dashboard/",
+        ".pre-commit-hooks.yaml",
+        "docs/how-it-works.md",
+        "tests/core/",
+        ".github/workflows/tests-core.yml",
+        *PY_SHARED,
+        *SHARED,
+    ),
+    "server": (
+        "src/gate_cache/dashboard/",
+        "src/gate_cache/stats/",
+        "src/gate_cache/console.py",
+        "src/gate_cache/env.py",
+        "src/gate_cache/__init__.py",
+        "tests/server/",
+        ".github/workflows/tests-server.yml",
+        *PY_SHARED,
+        *SHARED,
+    ),
+    # The Node version changes what the frontend gates run on, so it scopes them too
+    "frontend": ("frontend/", ".node-version", ".github/workflows/tests-frontend.yml", *SHARED),
+    # Tooling tests check the import boundary and the suite layout, so they read src/ and tests/
+    "tooling": (
+        "src/gate_cache/",
+        "tests/",
+        ".github/workflows/",
+        "scripts/",
+        ".pre-commit-config.yaml",
+        "codecov.yml",
+        *SHARED,
+    ),
+}
 VERSION = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
 
 
@@ -145,44 +183,77 @@ def update(ctx: Context) -> None:
     ctx.run(["uvx", "uv-upx", "upgrade", "run"], title="uv-upx upgrade")
 
 
-@duty()
-def test(ctx: Context, *cli_args: str) -> None:
-    """Test package and generate coverage reports."""
-    cmd = [
-        "pytest",
-        "tests/",
-        "-c",
-        "pyproject.toml",
-        "--color=yes",
-        "--cov",
-        "--cov-config=pyproject.toml",
-        "--cov-report=xml",
-        "--cov-report=term",
-        *cli_args,
-    ]
-    # A marker covers the name, not the arguments, so a filtered pass must not skip the full suite
+def _pytest_cmd(target: str, cov_config: str | None, *extra: str) -> list[str]:
+    """Build the pytest command for a test target, with coverage when given a coverage config."""
+    cmd = ["pytest", target, "-c", "pyproject.toml", "--color=yes"]
+    if cov_config is not None:
+        cmd += ["--cov", f"--cov-config={cov_config}", "--cov-report=xml", "--cov-report=term"]
+    return [*cmd, *extra]
+
+
+def _pytest_suite(ctx: Context, suite: str, *, coverage: bool) -> None:
+    """Run one Python test suite, skipping it when nothing in its paths changed since it passed."""
+    cov_config = f"tests/{suite}/coverage.toml" if coverage else None
     ctx.run(
-        cmd if cli_args else gated("test", cmd),
-        title=pyprefix("Running tests - this may take a while"),
+        gated(f"test-{suite}", _pytest_cmd(f"tests/{suite}", cov_config), paths=SUITES[suite]),
+        title=pyprefix(f"{suite} tests"),
         capture=CI,
     )
 
 
 @duty
-def frontend_check(ctx: Context) -> None:
-    """Type-check the dashboard frontend with svelte-check."""
-    ctx.run(
-        gated("frontend-check", ["npm", "--prefix", "frontend", "run", "check"], paths=FRONTEND),
-        title="frontend check",
-    )
+def test_core(ctx: Context) -> None:
+    """Test the gate and the CLI."""
+    _pytest_suite(ctx, "core", coverage=True)
+
+
+@duty
+def test_server(ctx: Context) -> None:
+    """Test the Python server behind the dashboard."""
+    _pytest_suite(ctx, "server", coverage=True)
+
+
+@duty
+def test_tooling(ctx: Context) -> None:
+    """Test the build scripts, and that CI runs each suite for the files it depends on."""
+    _pytest_suite(ctx, "tooling", coverage=False)
 
 
 @duty
 def frontend_test(ctx: Context) -> None:
     """Run the dashboard frontend unit tests."""
     ctx.run(
-        gated("frontend-test", ["npm", "--prefix", "frontend", "run", "test"], paths=FRONTEND),
+        gated(
+            "frontend-test",
+            ["npm", "--prefix", "frontend", "run", "test"],
+            paths=SUITES["frontend"],
+        ),
         title="frontend tests",
+    )
+
+
+@duty()
+def test(ctx: Context, *cli_args: str) -> None:
+    """Run every test suite, or with arguments, run pytest over all Python tests."""
+    if not cli_args:
+        for suite in (test_core, test_server, test_tooling, frontend_test):
+            suite(ctx)
+        return
+    cmd = _pytest_cmd("tests/", "pyproject.toml", *cli_args)
+    # A marker covers the name, not the arguments, so a filtered pass never writes one
+    ctx.run(cmd, title=pyprefix("Running tests - this may take a while"), capture=CI)
+
+
+@duty
+def frontend_check(ctx: Context) -> None:
+    """Type-check the dashboard frontend with svelte-check."""
+    ctx.run(
+        gated(
+            "frontend-check",
+            ["npm", "--prefix", "frontend", "run", "check"],
+            paths=SUITES["frontend"],
+        ),
+        title="frontend check",
     )
 
 

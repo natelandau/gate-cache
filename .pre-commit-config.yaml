@@ -119,13 +119,8 @@ repos:
         entry: uv run duty test
         language: system
         pass_filenames: false
-        files: |
-          (?x)^(
-          src/|
-          tests/|
-          uv\.lock|
-          pyproject\.toml
-          )
+        # Each suite's gate decides whether the staged change touches its files
+        always_run: true
 
       # Workaround until commitizen fixes its commitizen-branch hook (see commitizen #1923).
       # The upstream hook's args contain the literal "$PRE_COMMIT_FROM_REF..$PRE_COMMIT_TO_REF",

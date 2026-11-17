@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import importlib.util
 import io
 import tarfile
 import zipfile
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-_SPEC = importlib.util.spec_from_file_location(
-    "dist_check", Path(__file__).parent.parent / "scripts" / "dist_check.py"
-)
-assert _SPEC is not None
-assert _SPEC.loader is not None
-dist_check = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(dist_check)
+from tests.tooling import load_script
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+dist_check = load_script("scripts/dist_check.py")
 
 
 def make_wheel(path: Path, *, index: bool = True, padding: int = 0) -> Path:

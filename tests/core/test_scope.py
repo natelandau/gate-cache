@@ -13,6 +13,7 @@ import pytest
 from gate_cache.gate import gate_status, run_gate
 from gate_cache.snapshot import take_snapshot, take_snapshots
 from tests.conftest import (
+    ROOT,
     Counter,
     expected_tree,
     git,
@@ -306,7 +307,7 @@ def test_status_listing_includes_scoped_misses(
 
 def _doc_snippet(marker_text: str) -> str:
     """Return the bash block in how-it-works.md that contains marker_text."""
-    doc = (Path(__file__).parent.parent / "docs" / "how-it-works.md").read_text()
+    doc = (ROOT / "docs" / "how-it-works.md").read_text()
     blocks = re.findall(r"```bash\n(.*?)```", doc, flags=re.DOTALL)
     (block,) = [b for b in blocks if marker_text in b]
     return block

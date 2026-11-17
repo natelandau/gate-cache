@@ -12,10 +12,12 @@ from typing import Any
 
 import pytest
 
-from gate_cache import snapshot
+from gate_cache import cli, snapshot
 from gate_cache.git import GitResult
 from gate_cache.markers import MISS_SUFFIX, marker_dir
 from gate_cache.stats import config as stats_config
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def git(*args: str, cwd: Path) -> str:
@@ -28,6 +30,16 @@ def git(*args: str, cwd: Path) -> str:
         text=True,
     )
     return result.stdout.strip()
+
+
+def invoke(monkeypatch: pytest.MonkeyPatch, *args: str) -> int:
+    """Run main() with the given arguments and return the exit code."""
+    monkeypatch.setattr(sys, "argv", ["gate-cache", *args])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    code = exc.value.code
+    assert isinstance(code, int)
+    return code
 
 
 @pytest.fixture
