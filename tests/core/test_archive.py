@@ -5,6 +5,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import IO, Any
 
@@ -186,7 +187,7 @@ def test_schema_version(tmp_path: Path) -> None:
     """A new archive records its schema version and uses WAL."""
     arch = Archive.open(tmp_path / "a.sqlite3")
     try:
-        assert arch.meta("schema_version") == "2"
+        assert arch.meta("schema_version") == "3"
         assert arch.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     finally:
         arch.close()
@@ -202,7 +203,7 @@ def test_reopen_keeps_data(tmp_path: Path, inbox: Path) -> None:
         first.ingest(inbox, now=now + 3)
     with Archive.open(path) as second:
         assert count(second) == 1
-        assert second.meta("schema_version") == "2"
+        assert second.meta("schema_version") == str(archive_module.SCHEMA_VERSION)
 
 
 def poison_lines(now: float) -> list[bytes]:
@@ -276,7 +277,10 @@ def test_newer_schema_is_refused(tmp_path: Path) -> None:
     """An archive written by a newer schema cannot be opened."""
     path = tmp_path / "a.sqlite3"
     with Archive.open(path) as first:
-        first.connection.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
+        first.connection.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(archive_module.SCHEMA_VERSION + 1),),
+        )
         first.connection.commit()
     with pytest.raises(archive_module.ArchiveVersionError, match="newer"):
         Archive.open(path)
@@ -380,7 +384,9 @@ def test_newer_schema_is_left_untouched(tmp_path: Path) -> None:
     path = tmp_path / "a.sqlite3"
     connection = sqlite3.connect(path)
     connection.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
-    connection.execute("INSERT INTO meta VALUES ('schema_version', '3')")
+    connection.execute(
+        "INSERT INTO meta VALUES ('schema_version', ?)", (str(archive_module.SCHEMA_VERSION + 1),)
+    )
     connection.commit()
     connection.close()
     with pytest.raises(archive_module.ArchiveVersionError, match="newer"):
@@ -446,7 +452,7 @@ def test_v1_archive_is_migrated(tmp_path: Path, inbox: Path, schema: str) -> Non
     line = make_event(now).to_line()
     inbox.write_bytes(line)
     with Archive.open(path) as arch:
-        assert arch.meta("schema_version") == "2"
+        assert arch.meta("schema_version") == "3"
         assert arch.connection.execute("SELECT name, raw FROM events").fetchall() == [("old", None)]
         arch.ingest(inbox, now=now)
         arch.ingest(inbox, now=now + 3)
@@ -485,3 +491,67 @@ def test_unknown_outcome_is_kept(arch: Archive, inbox: Path) -> None:
     arch.ingest(inbox, now=now)
     assert arch.ingest(inbox, now=now + 3) == 1
     assert arch.connection.execute("SELECT outcome FROM events").fetchone()[0] == "novel"
+
+
+def _timings(arch: Archive) -> list[tuple[Any, ...]]:
+    """Return the overhead, waited, wait_known, reported, and wait_timed_out columns, oldest first."""
+    return arch.connection.execute(
+        "SELECT overhead, waited, wait_known, reported, wait_timed_out FROM events ORDER BY ts"
+    ).fetchall()
+
+
+def test_ingest_stores_timings(arch: Archive, inbox: Path) -> None:
+    """Ingest copies overhead and waited into columns and notes whether waits were recorded."""
+    now = time.time()
+    waited = replace(make_event(now), overhead=0.25, waited=3.5, reported=True, wait_timed_out=True)
+    no_wait = replace(make_event(now + 1), overhead=0.1)
+    # An event from before gate-cache recorded waits has no `waited` key at all.
+    old = make_event(now + 2).to_line().replace(b',"waited":null', b"")
+    inbox.write_bytes(waited.to_line() + no_wait.to_line() + old)
+    arch.ingest(inbox, now=now)
+    arch.ingest(inbox, now=now + 3)
+    assert _timings(arch) == [(0.25, 3.5, 1, 1, 1), (0.1, None, 1, 0, 0), (None, None, 0, 0, 0)]
+
+
+@pytest.mark.parametrize("value", ["-1", '"5"', "true", "1e999"])
+def test_bad_timing_is_dropped_not_the_run(arch: Archive, inbox: Path, value: str) -> None:
+    """A timing that is negative, not a number, or not finite is stored as NULL."""
+    now = time.time()
+    line = make_event(now).to_line().replace(b'"overhead":null', f'"overhead":{value}'.encode())
+    inbox.write_bytes(line)
+    arch.ingest(inbox, now=now)
+    assert arch.ingest(inbox, now=now + 3) == 1
+    assert _timings(arch) == [(None, None, 1, 0, 0)]
+
+
+def test_v2_archive_backfills_timings(tmp_path: Path) -> None:
+    """Opening a version 2 archive adds the timing columns and fills them from raw."""
+    path = tmp_path / "a.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        V1_SCHEMA.replace("reason TEXT\n", "reason TEXT,\n    raw TEXT\n").replace(
+            "'schema_version', '1'", "'schema_version', '2'"
+        )
+    )
+    rows = [
+        ("h2", 2.0, '{"v":1,"overhead":0.5,"waited":2}'),
+        ("h3", 3.0, '{"v":1,"overhead":0.5,"waited":null}'),
+        ("h4", 4.0, '{"v":1,"overhead":-1,"waited":1e999,"reported":true}'),
+        ("h5", 5.0, "not json"),
+    ]
+    connection.executemany(
+        "INSERT INTO events (line_hash, ts, name, paths, outcome, raw)"
+        " VALUES (?, ?, 'x', '[]', 'pass', ?)",
+        rows,
+    )
+    connection.commit()
+    connection.close()
+    with Archive.open(path) as arch:
+        assert arch.meta("schema_version") == "3"
+        assert _timings(arch) == [
+            (None, None, 0, 0, 0),
+            (0.5, 2.0, 1, 0, 0),
+            (0.5, None, 1, 0, 0),
+            (None, None, 1, 1, 0),
+            (None, None, 0, 0, 0),
+        ]

@@ -12,6 +12,7 @@ from gate_cache.stats.archive import Archive
 from gate_cache.stats.queries import (
     Filters,
     activity,
+    coalescing,
     flaky,
     gate_detail,
     gates,
@@ -41,11 +42,17 @@ def insert(
     duration: float | None = None,
     saved: float | None = None,
     reason: str | None = None,
+    overhead: float | None = None,
+    waited: float | None = None,
+    wait_known: bool = False,
+    reported: bool = False,
+    wait_timed_out: bool = False,
 ) -> None:
     """Insert one event row."""
     conn.execute(
-        "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome, duration, saved, reason)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome, duration, saved,"
+        " reason, overhead, waited, wait_known, reported, wait_timed_out)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             f"h{conn.total_changes}-{ts}",
             ts,
@@ -57,6 +64,11 @@ def insert(
             duration,
             saved,
             reason,
+            overhead,
+            waited,
+            wait_known,
+            reported,
+            wait_timed_out,
         ),
     )
     conn.commit()
@@ -702,23 +714,11 @@ def test_slowdowns_skips_gate_new_in_current_window(empty_conn: sqlite3.Connecti
     assert slowdowns(empty_conn, CURRENT, now=BASE + 2 * DAY)["gates"] == []
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        ('{"reported":true}', True),
-        ('{"reported":false}', False),
-        ("{}", False),
-        (None, False),
-        ("not json", False),
-    ],
-)
-def test_activity_reports_reported_flag(
-    empty_conn: sqlite3.Connection, raw: str | None, expected: bool
-) -> None:
-    """An event row says whether the run reported another run's failure, from its raw line."""
-    insert(empty_conn, BASE, "fail")
-    empty_conn.execute("UPDATE events SET raw = ?", (raw,))
-    assert activity(empty_conn, Filters())["events"][0]["reported"] is expected
+@pytest.mark.parametrize("reported", [True, False])
+def test_activity_reports_reported_flag(empty_conn: sqlite3.Connection, *, reported: bool) -> None:
+    """An event row says whether the run reported another run's failure."""
+    insert(empty_conn, BASE, "fail", reported=reported)
+    assert activity(empty_conn, Filters())["events"][0]["reported"] is reported
 
 
 def test_gate_detail_names_a_repo_the_archive_lacks(conn: sqlite3.Connection) -> None:
@@ -734,3 +734,84 @@ def test_repo_names_avoid_another_repos_folder_name() -> None:
         "/b/work/app/.git": "app (b/work)",
         "/c/app (code)/.git": "app (code)",
     }
+
+
+def test_summary_net_saved(empty_conn: sqlite3.Connection) -> None:
+    """Net time saved subtracts overhead and waits, and counts runs missing either."""
+    insert(empty_conn, BASE + 1, "skip", saved=100.0, overhead=1.0, waited=20.0, wait_known=True)
+    insert(empty_conn, BASE + 2, "pass", duration=5.0, overhead=2.0, wait_known=True)
+    insert(empty_conn, BASE + 3, "pass", duration=5.0, overhead=3.0)
+    insert(empty_conn, BASE + 4, "skip", saved=10.0)
+    insert(empty_conn, BASE + 5, "uncached", tree=None)
+    s = summary(empty_conn, Filters())
+    assert (s["overhead"], s["waited"]) == (6.0, 20.0)
+    assert s["net_saved"] == pytest.approx(110.0 - 6.0 - 20.0)
+    # The uncached run never checks the cache, so it is not missing a cost.
+    assert s["cost_unknown_runs"] == 2
+
+
+def test_summary_net_saved_can_be_negative(empty_conn: sqlite3.Connection) -> None:
+    """Overhead with no skips gives a negative net, and the previous window carries it."""
+    insert(empty_conn, BASE + DAY + 1, "pass", duration=5.0, overhead=2.0, wait_known=True)
+    insert(empty_conn, BASE, "skip", saved=4.0, overhead=1.0, wait_known=True)
+    s = summary(empty_conn, Filters(start=BASE + DAY, end=BASE + 2 * DAY), now=BASE + 2 * DAY)
+    assert s["net_saved"] == -2.0
+    assert s["previous"]["net_saved"] == 3.0
+    assert "cost_unknown_runs" not in s["previous"]
+
+
+def test_summary_previous_net_saved_needs_known_costs(empty_conn: sqlite3.Connection) -> None:
+    """The previous net saved is None when either window holds a run with no recorded cost."""
+    insert(empty_conn, BASE + DAY + 1, "pass", duration=5.0, overhead=2.0, wait_known=True)
+    insert(empty_conn, BASE, "skip", saved=4.0)
+    s = summary(empty_conn, Filters(start=BASE + DAY, end=BASE + 2 * DAY), now=BASE + 2 * DAY)
+    assert s["cost_unknown_runs"] == 0
+    assert s["previous"]["net_saved"] is None
+
+
+def test_coalescing(empty_conn: sqlite3.Connection) -> None:
+    """Runs that waited split into skipped, reported, and ran, with wait totals."""
+    insert(empty_conn, BASE + 1, "skip", saved=60.0, waited=10.0, wait_known=True)
+    insert(empty_conn, BASE + 2, "skip", saved=30.0, waited=2.0, wait_known=True)
+    insert(
+        empty_conn,
+        BASE + 3,
+        "fail",
+        waited=4.0,
+        wait_known=True,
+        reason="failed in another run, not rerun",
+        reported=True,
+    )
+    insert(
+        empty_conn,
+        BASE + 4,
+        "pass",
+        duration=9.0,
+        waited=900.0,
+        wait_known=True,
+        wait_timed_out=True,
+    )
+    insert(empty_conn, BASE + 5, "pass", duration=9.0, wait_known=True)
+    insert(empty_conn, BASE + 6, "pass", duration=9.0)
+    insert(empty_conn, BASE + 7, "uncached", tree=None)
+    insert(empty_conn, BASE + 8, "uncached", tree=None, waited=6.0, wait_known=True)
+    c = coalescing(empty_conn, Filters())
+    assert c == {
+        "runs": 7,
+        "unknown_runs": 1,
+        "waited": 5,
+        "skipped": 2,
+        "reported": 1,
+        "ran": 2,
+        "timed_out": 1,
+        "total_wait": 922.0,
+        "median_wait": 6.0,
+        "saved": 90.0,
+    }
+    json.dumps(c)
+
+
+def test_coalescing_empty(empty_conn: sqlite3.Connection) -> None:
+    """No waits gives zero counts and no median."""
+    c = coalescing(empty_conn, Filters())
+    assert (c["waited"], c["ran"], c["median_wait"], c["total_wait"]) == (0, 0, None, 0.0)

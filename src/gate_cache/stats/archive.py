@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 RETENTION_DAYS = 365
 SETTLE_SECONDS = 2.0
 ARCHIVE_NAME = "stats.sqlite3"
@@ -43,7 +43,12 @@ CREATE TABLE IF NOT EXISTS events (
     saved REAL,
     exit_code INTEGER,
     reason TEXT,
-    raw TEXT
+    raw TEXT,
+    overhead REAL,
+    waited REAL,
+    wait_known INTEGER NOT NULL DEFAULT 0,
+    reported INTEGER NOT NULL DEFAULT 0,
+    wait_timed_out INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS events_repo_ts ON events (repo, ts);
 CREATE INDEX IF NOT EXISTS events_repo_name_ts ON events (repo, name, ts);
@@ -52,9 +57,25 @@ CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
 
 _INSERT = (
     "INSERT OR IGNORE INTO events "
-    "(line_hash, ts, repo, name, tree, paths, outcome, duration, saved, exit_code, reason, raw) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "(line_hash, ts, repo, name, tree, paths, outcome, duration, saved, exit_code, reason, raw,"
+    " overhead, waited, wait_known, reported, wait_timed_out) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
+
+# Columns added in version 3, which an older archive fills from the raw line of each row.
+_WAIT_VERSION = 3
+_WAIT_COLUMNS = (
+    ("overhead", "REAL"),
+    ("waited", "REAL"),
+    ("wait_known", "INTEGER NOT NULL DEFAULT 0"),
+    ("reported", "INTEGER NOT NULL DEFAULT 0"),
+    ("wait_timed_out", "INTEGER NOT NULL DEFAULT 0"),
+)
+_BACKFILL = (
+    "UPDATE events SET overhead = ?, waited = ?, wait_known = ?, reported = ?,"
+    " wait_timed_out = ? WHERE id = ?"
+)
+_BACKFILL_BATCH = 1000
 
 
 def archive_path() -> Path:
@@ -89,6 +110,29 @@ def _is_text(value: object) -> bool:
     except UnicodeEncodeError:
         return False
     return True
+
+
+def _seconds(value: object) -> float | None:
+    """Return value as a timing in seconds, or None when it is missing or not a valid timing."""
+    if not _is_number(value) or not isinstance(value, int | float):
+        return None
+    return float(value) if value >= 0 else None
+
+
+def _wait_fields(data: dict[str, Any]) -> tuple[float | None, float | None, bool, bool, bool]:
+    """Return the overhead, waited, wait_known, reported, and wait_timed_out columns of an event.
+
+    `wait_known` tells a run that did not wait (the event has `waited`, as null) from one that
+    a gate-cache recorded before it recorded waits (the event has no `waited`). A bad timing
+    becomes None, so it drops only itself and the run still counts.
+    """
+    return (
+        _seconds(data.get("overhead")),
+        _seconds(data.get("waited")),
+        "waited" in data,
+        data.get("reported") is True,
+        data.get("wait_timed_out") is True,
+    )
 
 
 def _optional(value: object, *, check: Any) -> bool:  # noqa: ANN401
@@ -137,6 +181,7 @@ def _row(raw: bytes) -> tuple[Any, ...] | None:
         data.get("exit_code"),
         data.get("reason"),
         text,
+        *_wait_fields(data),
     )
 
 
@@ -167,12 +212,44 @@ def _check_version(connection: sqlite3.Connection, *, path: Path) -> int | None:
     return int(value)
 
 
-def _migrate(connection: sqlite3.Connection) -> None:
-    """Bring an older archive's tables up to the current schema, keeping every row."""
+def _migrate(connection: sqlite3.Connection, *, stored: int | None) -> None:
+    """Bring an older archive's tables up to the current schema, keeping every row.
+
+    Args:
+        connection: The open archive.
+        stored: The schema version the archive records, or None when it records none.
+    """
     columns = {row[1] for row in connection.execute("PRAGMA table_info(events)")}
-    if columns and "raw" not in columns:
+    if not columns:
+        return
+    if "raw" not in columns:
         # Rows from before version 2 keep a NULL raw line.
         connection.execute("ALTER TABLE events ADD COLUMN raw TEXT")
+    for column, kind in _WAIT_COLUMNS:
+        if column not in columns:
+            connection.execute(f"ALTER TABLE events ADD COLUMN {column} {kind}")
+    # Keyed on the version, not the columns, so a backfill cut short runs again.
+    if stored is None or stored < _WAIT_VERSION:
+        _backfill(connection)
+
+
+def _backfill(connection: sqlite3.Connection) -> None:
+    """Fill the version 3 columns from each row's raw line, with the same rules as ingest."""
+    last = 0
+    while rows := connection.execute(
+        "SELECT id, raw FROM events WHERE id > ? AND raw IS NOT NULL ORDER BY id LIMIT ?",
+        (last, _BACKFILL_BATCH),
+    ).fetchall():
+        updates: list[tuple[Any, ...]] = []
+        for event_id, raw in rows:
+            try:
+                data = json.loads(raw)
+            except (ValueError, RecursionError):
+                continue
+            if isinstance(data, dict):
+                updates.append((*_wait_fields(data), event_id))
+        connection.executemany(_BACKFILL, updates)
+        last = rows[-1][0]
 
 
 class Archive:
@@ -205,7 +282,7 @@ class Archive:
             # An archive without a version row can still hold an older events table, and
             # _migrate is a no-op on a current or missing one.
             if stored is None or stored < SCHEMA_VERSION:
-                _migrate(connection)
+                _migrate(connection, stored=stored)
             connection.executescript(_SCHEMA)
             connection.execute(
                 "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "

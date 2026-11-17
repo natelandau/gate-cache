@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -107,6 +108,7 @@ def test_api_summary_shape(server: DashboardServer) -> None:
         "gates",
         "hourly",
         "reasons",
+        "coalescing",
         "repos",
         "activity",
         "flaky",
@@ -344,6 +346,24 @@ def test_activity_reason_filter(server: DashboardServer, archive: Archive) -> No
     status, body = get(server, "/api/v1/activity?reason=a%20b%26c")
     assert status == 200
     assert [e["reason"] for e in body["events"]] == ["a b&c"]
+
+
+def test_api_coalescing_and_net_saved(server: DashboardServer, archive: Archive) -> None:
+    """Ingested wait and overhead timings reach the summary and the coalescing endpoint."""
+    now = time.time()
+    events = [
+        replace(_event(now - 30), outcome="skip", saved=60.0, overhead=0.5, waited=10.0),
+        replace(_event(now - 20), overhead=0.5),
+    ]
+    inbox_path().write_bytes(b"".join(e.to_line() for e in events))
+    archive.ingest(inbox_path(), now=now)
+    archive.ingest(inbox_path(), now=now + 3)
+    summary = get(server, "/api/v1/summary")[1]
+    assert summary["net_saved"] == pytest.approx(60.0 - 1.0 - 10.0)
+    assert summary["cost_unknown_runs"] == 0
+    status, body = get(server, "/api/v1/coalescing")
+    assert status == 200
+    assert (body["waited"], body["skipped"], body["total_wait"]) == (1, 1, 10.0)
 
 
 def test_gate_requires_repo(server: DashboardServer) -> None:
