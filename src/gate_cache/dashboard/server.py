@@ -48,10 +48,26 @@ _HASHED_ASSETS = "assets"
 _IMMUTABLE = "public, max-age=31536000, immutable"
 # Files without a hash in the name, such as index.html, revalidate so a new release loads.
 _REVALIDATE = "no-cache"
+# The built UI loads every script, style, image, and API call from its own origin.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+    "form-action 'none'; object-src 'none'"
+)
+_PAGE_HEADERS = (
+    ("Content-Security-Policy", CONTENT_SECURITY_POLICY),
+    # For browsers that ignore frame-ancestors.
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "no-referrer"),
+)
 
 
 class _BadRequestError(ValueError):
     """A query parameter is missing or malformed."""
+
+
+def _is_api(path: str) -> bool:
+    """Return whether a request path names an API endpoint."""
+    return urlsplit(path).path.startswith("/api/")
 
 
 def static_root() -> Path | None:
@@ -134,6 +150,15 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def end_headers(self) -> None:
+        """Add the security headers to every response, including the stdlib error pages."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # A request line too malformed to parse leaves no path, so it gets the page headers.
+        if not _is_api(getattr(self, "path", "")):
+            for name, value in _PAGE_HEADERS:
+                self.send_header(name, value)
+        super().end_headers()
+
     def _json(self, status: int, payload: dict[str, Any]) -> None:
         self._send(status, json.dumps(payload).encode(), "application/json")
 
@@ -144,7 +169,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(_FORBIDDEN, {"error": "forbidden host"})
             return
         parts = urlsplit(self.path)
-        is_api = parts.path.startswith("/api/")
+        is_api = _is_api(self.path)
         try:
             if is_api:
                 self._api(parts.path, parse_qs(parts.query, keep_blank_values=True))
