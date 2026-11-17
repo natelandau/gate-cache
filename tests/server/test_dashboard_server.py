@@ -127,7 +127,9 @@ def test_api_endpoints_respond(server: DashboardServer, path: str) -> None:
 def test_bad_host_rejected(server: DashboardServer) -> None:
     """A foreign Host header is refused before routing."""
     assert get(server, "/api/v1/summary", host="evil.example:80")[0] == 403
-    assert fetch(server, "/", host="evil.example:80")[0] == 403
+    status, headers, _ = fetch(server, "/", host="evil.example:80")
+    assert status == 403
+    assert headers["Cache-Control"] == "no-store"
 
 
 def test_localhost_host_ok(server: DashboardServer) -> None:
@@ -137,9 +139,10 @@ def test_localhost_host_ok(server: DashboardServer) -> None:
 
 def test_unknown_api_404_json(server: DashboardServer) -> None:
     """An unknown API path is a JSON 404."""
-    status, body = get(server, "/api/v1/nope")
+    status, headers, body = fetch(server, "/api/v1/nope")
     assert status == 404
-    assert "error" in body
+    assert headers["Cache-Control"] == "no-store"
+    assert "error" in json.loads(body)
     assert get(server, "/api/other")[0] == 404
 
 
@@ -154,6 +157,38 @@ def test_static_asset(server: DashboardServer) -> None:
     assert status == 200
     assert body.decode().startswith("//")
     assert "javascript" in headers["Content-Type"]
+
+
+def test_hashed_asset_is_immutable(server: DashboardServer) -> None:
+    """A file under assets/ is cached for a year without revalidation."""
+    status, headers, _ = fetch(server, "/assets/app.js")
+    assert status == 200
+    assert headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+
+@pytest.mark.parametrize(
+    ("path", "marker"),
+    [
+        ("/", b'<div id="app">'),
+        ("/gates", b'<div id="app">'),
+        ("/favicon.svg", b"<svg"),
+    ],
+    ids=["index", "spa-fallback", "unhashed-file"],
+)
+def test_unhashed_static_revalidates(server: DashboardServer, path: str, marker: bytes) -> None:
+    """index.html and files outside assets/ revalidate on every load."""
+    status, headers, body = fetch(server, path)
+    assert status == 200
+    assert marker in body
+    assert headers["Cache-Control"] == "no-cache"
+
+
+def test_missing_asset_404(server: DashboardServer) -> None:
+    """A missing file under assets/ is a 404, not index.html served as a script."""
+    status, headers, body = fetch(server, "/assets/missing.js")
+    assert status == 404
+    assert body == b"not found"
+    assert headers["Cache-Control"] == "no-store"
 
 
 @pytest.mark.parametrize("path", ["/../../etc/passwd", "/%2e%2e/%2e%2e/etc/passwd", "/a%00b"])
@@ -385,9 +420,10 @@ def test_port_taken_on_wildcard_is_refused(archive: Archive) -> None:
 
 def test_no_ui_503(bare_server: DashboardServer) -> None:
     """Without a frontend, non-API paths explain how to install one."""
-    status, _, body = fetch(bare_server, "/")
+    status, headers, body = fetch(bare_server, "/")
     assert status == 503
     assert b"no dashboard UI" in body
+    assert headers["Cache-Control"] == "no-store"
     assert get(bare_server, "/api/v1/summary")[0] == 200
 
 
@@ -470,8 +506,9 @@ def test_route_exception_is_internal_error(
         raise RuntimeError(msg)
 
     monkeypatch.setitem(server_module._ROUTES, "summary", boom)
-    status, _, body = fetch(server, "/api/v1/summary")
+    status, headers, body = fetch(server, "/api/v1/summary")
     assert status == 500
+    assert headers["Cache-Control"] == "no-store"
     assert json.loads(body) == {"error": "internal error"}
     assert b"secret" not in body
 
@@ -484,3 +521,4 @@ def test_static_read_failure_is_500_text(server: DashboardServer, tmp_path: Path
     assert status == 500
     assert body == b"internal error"
     assert headers["Content-Type"].startswith("text/plain")
+    assert headers["Cache-Control"] == "no-store"
