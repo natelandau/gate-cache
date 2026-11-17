@@ -295,7 +295,7 @@ def _stats_command(tokens: list[str]) -> int:
     if args.yes and args.action != "clear":
         parser.error("--yes only applies to clear")
     if args.action == "clear":
-        from gate_cache.dashboard.app import stats_clear
+        from gate_cache.stats.clear import stats_clear
 
         return stats_clear(confirmed=args.yes)
     return _stats(args.action)
