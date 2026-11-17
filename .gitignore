@@ -26,3 +26,7 @@ reference/
 
 # Global ignore rules match *_cache/
 !src/gate_cache/
+
+# Dashboard frontend dependencies and build output
+frontend/node_modules/
+src/gate_cache/dashboard/static/
