@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from gate_cache.stats import queries
 from gate_cache.stats.archive import Archive
 from gate_cache.stats.queries import (
     Filters,
@@ -17,7 +18,7 @@ from gate_cache.stats.queries import (
     hourly,
     previous_window,
     reasons,
-    repo_name,
+    repo_names,
     repos,
     slowdowns,
     summary,
@@ -371,11 +372,76 @@ def test_flaky(conn: sqlite3.Connection) -> None:
     assert [r["outcome"] for r in g[0]["trees"][0]["runs"]] == ["fail", "pass"]
 
 
-def test_repo_name() -> None:
+def test_repo_names_use_the_work_tree_folder() -> None:
     """Repo names come from the work tree directory when possible."""
-    assert repo_name("/x/proj/.git") == "proj"
-    assert repo_name("/x/bare.git") == "bare.git"
-    assert repo_name(None) == "unknown repo"
+    assert repo_names(["/x/proj/.git", "/x/bare.git", None]) == {
+        "/x/proj/.git": "proj",
+        "/x/bare.git": "bare.git",
+        None: "unknown repo",
+    }
+
+
+def test_repo_names_add_parents_until_unique() -> None:
+    """Repos that share a folder name get as many parent folders as it takes to tell them apart."""
+    names = repo_names(
+        [
+            "/home/a/code/app/.git",
+            "/home/b/work/app/.git",
+            "/x/one/repo/.git",
+            "/y/one/repo/.git",
+            "/x/proj/.git",
+            None,
+        ]
+    )
+    assert names == {
+        "/home/a/code/app/.git": "app (code)",
+        "/home/b/work/app/.git": "app (work)",
+        "/x/one/repo/.git": "repo (x/one)",
+        "/y/one/repo/.git": "repo (y/one)",
+        "/x/proj/.git": "proj",
+        None: "unknown repo",
+    }
+
+
+def test_repo_names_fall_back_to_the_full_path() -> None:
+    """Repos that differ only in their own folder form keep their full path."""
+    assert repo_names(["/x/app/.git", "/x/app"]) == {
+        "/x/app/.git": "/x/app/.git",
+        "/x/app": "/x/app",
+    }
+
+
+def test_repo_names_show_the_root_for_a_repo_at_the_root() -> None:
+    """A repo directly under the filesystem root gets the root as its parent label."""
+    assert repo_names(["/app/.git", "/x/app/.git"]) == {
+        "/app/.git": "app (/)",
+        "/x/app/.git": "app (x)",
+    }
+
+
+def test_activity_names_a_repo_added_after_the_name_lookup(
+    empty_conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An event from a repo that ingest adds mid-query still gets its folder name."""
+    insert(empty_conn, BASE, "pass", repo="/a/new/.git", duration=1.0)
+    monkeypatch.setattr(queries, "_DISTINCT_REPOS", "SELECT NULL WHERE 0")
+    assert [e["repo_name"] for e in activity(empty_conn, Filters())["events"]] == ["new"]
+
+
+def test_repeated_repo_names_are_distinct_in_every_view(empty_conn: sqlite3.Connection) -> None:
+    """Every view names a repo the same way, even when a filter leaves out the repo it clashes with."""
+    insert(empty_conn, BASE, "pass", repo="/a/app/.git", duration=1.0)
+    insert(empty_conn, BASE + 1, "pass", repo="/b/app/.git", duration=1.0)
+    assert sorted(r["repo_name"] for r in repos(empty_conn, Filters())["repos"]) == [
+        "app (a)",
+        "app (b)",
+    ]
+    only_a = Filters(repos=("/a/app/.git",))
+    assert [g["repo_name"] for g in gates(empty_conn, only_a)["gates"]] == ["app (a)"]
+    assert [e["repo_name"] for e in activity(empty_conn, only_a)["events"]] == ["app (a)"]
+    detail = gate_detail(empty_conn, Filters(), repo="/b/app/.git", name="lint")
+    assert detail["repo_name"] == "app (b)"
+    assert [e["repo_name"] for e in detail["recent"]] == ["app (b)"]
 
 
 def test_gate_detail_ignores_filter_repo(conn: sqlite3.Connection) -> None:
@@ -653,3 +719,18 @@ def test_activity_reports_reported_flag(
     insert(empty_conn, BASE, "fail")
     empty_conn.execute("UPDATE events SET raw = ?", (raw,))
     assert activity(empty_conn, Filters())["events"][0]["reported"] is expected
+
+
+def test_gate_detail_names_a_repo_the_archive_lacks(conn: sqlite3.Connection) -> None:
+    """A detail request for a repo with no events still gets the repo's folder name."""
+    assert gate_detail(conn, Filters(), repo="/z/gone/.git", name="lint")["repo_name"] == "gone"
+
+
+def test_repo_names_avoid_another_repos_folder_name() -> None:
+    """A label with parent folders never repeats a folder name that another repo already shows."""
+    names = repo_names(["/a/code/app/.git", "/b/work/app/.git", "/c/app (code)/.git"])
+    assert names == {
+        "/a/code/app/.git": "app (a/code)",
+        "/b/work/app/.git": "app (b/work)",
+        "/c/app (code)/.git": "app (code)",
+    }

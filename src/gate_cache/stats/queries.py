@@ -18,7 +18,7 @@ from gate_cache.stats.recorder import Outcome
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
 _RAN = "('skip', 'pass', 'pass_unrecorded', 'fail')"
 _GOOD = "('pass', 'pass_unrecorded')"
@@ -63,12 +63,84 @@ class Filters:
     tz: str = "UTC"
 
 
-def repo_name(repo: str | None) -> str:
-    """Return a display name for a git common directory."""
-    if repo is None:
-        return "unknown repo"
+_UNKNOWN_REPO = "unknown repo"
+# Skip scan: each step seeks the next distinct repo in the index instead of reading every event.
+_DISTINCT_REPOS = """
+WITH RECURSIVE r(repo) AS (
+    SELECT MIN(repo) FROM events
+    UNION ALL
+    SELECT (SELECT MIN(repo) FROM events WHERE repo > r.repo) FROM r WHERE r.repo IS NOT NULL
+)
+SELECT repo FROM r WHERE repo IS NOT NULL
+UNION ALL
+SELECT NULL WHERE EXISTS (SELECT 1 FROM events WHERE repo IS NULL)
+"""
+
+
+def _work_dir(repo: str) -> Path:
+    """Return the folder that holds a repo's working copy, or the repo itself when bare."""
     path = Path(repo)
-    return path.parent.name if path.name == ".git" else path.name
+    return path.parent if path.name == ".git" else path
+
+
+def _folder_name(repo: str | None) -> str:
+    """Return a repo's folder name, which other repos may share."""
+    return _UNKNOWN_REPO if repo is None else _work_dir(repo).name
+
+
+def _parent_labels(name: str, clashing: list[str], taken: set[str]) -> list[str]:
+    """Return the shortest run of parent folders that tells apart repos sharing a name.
+
+    A label must also differ from every name in `taken`, the folder names other repos show.
+    Fall back to each full path when the parents cannot tell them apart.
+    """
+    folders = [_work_dir(repo).parent for repo in clashing]
+    parents = [[p for p in folder.parts if p != folder.anchor] for folder in folders]
+    for depth in range(1, max(len(p) for p in parents) + 1):
+        # A repo at the filesystem root has no parent folder to show, so it shows the root.
+        labels = [f"{name} ({'/'.join(p[-depth:]) or '/'})" for p in parents]
+        if len(set(labels)) == len(labels) and taken.isdisjoint(labels):
+            return labels
+    return clashing
+
+
+def repo_names(repos: Iterable[str | None]) -> dict[str | None, str]:
+    """Return a display name for each repo that no other repo in the set shares.
+
+    Two clones in folders with the same name stay distinguishable in every view.
+
+    Args:
+        repos: Git common directories; None stands for events recorded without a repo.
+
+    Returns:
+        Each repo mapped to its folder name, with parent folders added when names clash.
+    """
+    unique = set(repos)
+    names: dict[str | None, str] = {None: _UNKNOWN_REPO} if None in unique else {}
+    by_name: dict[str, list[str]] = defaultdict(list)
+    for repo in unique:
+        if repo is not None:
+            by_name[_folder_name(repo)].append(repo)
+    taken = set(by_name) | set(names.values())
+    for name, group in by_name.items():
+        if len(group) == 1:
+            names[group[0]] = name
+        else:
+            names.update(zip(group, _parent_labels(name, group, taken), strict=True))
+    return names
+
+
+class _RepoNames(dict[str | None, str]):
+    """Repo display names that fall back to the folder name for a repo the lookup did not see."""
+
+    def __missing__(self, repo: str | None) -> str:
+        # Ingest can add a new repo between the name lookup and a later statement.
+        return _folder_name(repo)
+
+
+def _all_repo_names(conn: sqlite3.Connection) -> _RepoNames:
+    """Return repo_names over the whole archive, so a filter never changes a repo's name."""
+    return _RepoNames(repo_names(repo for (repo,) in conn.execute(_DISTINCT_REPOS)))
 
 
 def _zone(name: str) -> ZoneInfo:
@@ -137,13 +209,13 @@ def _flaky_trees(
     return [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in conn.execute(sql, params)]
 
 
-def _event_row(raw: tuple[Any, ...]) -> dict[str, Any]:
+def _event_row(raw: tuple[Any, ...], names: dict[str | None, str]) -> dict[str, Any]:
     """Convert a row selected with _ROW_COLUMNS into an API dict."""
     ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported = raw
     return {
         "ts": ts,
         "repo": repo,
-        "repo_name": repo_name(repo),
+        "repo_name": names[repo],
         "name": name,
         "outcome": outcome,
         "duration": duration,
@@ -319,6 +391,7 @@ def hourly(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
 def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     """Return per-gate metrics ordered by time saved."""
     where, params = _where(filters)
+    names = _all_repo_names(conn)
     flaky_keys = {(r[0], r[1]) for r in _flaky_trees(conn, where, params)}
     durations: dict[tuple[str | None, str], list[float]] = {}
     for repo, name, duration in conn.execute(
@@ -341,7 +414,7 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         out.append(
             {
                 "repo": repo,
-                "repo_name": repo_name(repo),
+                "repo_name": names[repo],
                 "name": name,
                 "runs": runs,
                 "skip_rate": _skip_rate(skips, ran),
@@ -396,6 +469,7 @@ def slowdowns(
     window = previous_window(conn, filters, now=current_time)
     if window is None:
         return {"gates": [], "comparable": False}
+    names = _all_repo_names(conn)
     current = replace(filters, end=filters.end if filters.end is not None else current_time)
     before = _median_passes(conn, window)
     after = _median_passes(conn, current)
@@ -411,7 +485,7 @@ def slowdowns(
         out.append(
             {
                 "repo": repo,
-                "repo_name": repo_name(repo),
+                "repo_name": names[repo],
                 "name": name,
                 "before": median_before,
                 "now": median_now,
@@ -437,6 +511,7 @@ def gate_detail(
         The detail body.
     """
     where, params = _where(filters, name=name, exact_repo=(repo,))
+    names = _all_repo_names(conn)
     trend = conn.execute(
         "SELECT ts, duration FROM events"  # noqa: S608
         + _and(where, "outcome = 'pass' AND duration IS NOT NULL")
@@ -449,10 +524,10 @@ def gate_detail(
     ).fetchall()
     return {
         "repo": repo,
-        "repo_name": repo_name(repo),
+        "repo_name": names[repo],
         "name": name,
         "trend": [{"ts": ts, "duration": d} for ts, d in trend],
-        "recent": [_event_row(r) for r in recent],
+        "recent": [_event_row(r, names) for r in recent],
         "flaky_trees": [
             {"tree": tree, "fails": fails, "passes": passes, "last": last}
             for _, _, tree, fails, passes, last in _flaky_trees(conn, where, params)
@@ -463,6 +538,7 @@ def gate_detail(
 def repos(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     """Return per-repo rollups ordered by time saved."""
     where, params = _where(filters)
+    names = _all_repo_names(conn)
     rows = conn.execute(
         "SELECT repo, COUNT(*), SUM(outcome = 'skip'), SUM(outcome IN " + _RAN + "),"  # noqa: S608
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
@@ -473,7 +549,7 @@ def repos(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     out: list[dict[str, Any]] = [
         {
             "repo": repo,
-            "repo_name": repo_name(repo),
+            "repo_name": names[repo],
             "runs": runs,
             "skip_rate": _skip_rate(skips, ran),
             "time_saved": float(saved),
@@ -539,6 +615,7 @@ def activity(
         ts, event_id = _parse_cursor(before)
         where = _and(where, "(ts < ? OR (ts = ? AND id < ?))")
         params = [*params, ts, ts, event_id]
+    names = _all_repo_names(conn)
     rows = conn.execute(
         f"SELECT {_ROW_COLUMNS}, id FROM events{where} ORDER BY ts DESC, id DESC LIMIT ?",  # noqa: S608
         [*params, limit + 1],
@@ -546,7 +623,7 @@ def activity(
     page = rows[:limit]
     more = len(rows) > limit
     return {
-        "events": [_event_row(r[:-1]) for r in page],
+        "events": [_event_row(r[:-1], names) for r in page],
         "next_before": f"{page[-1][0]!r}:{page[-1][-1]}" if more else None,
     }
 
@@ -566,6 +643,7 @@ def reasons(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
 def flaky(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     """Return gates with trees that both failed and passed, newest first."""
     where, params = _where(filters)
+    names = _all_repo_names(conn)
     runs: dict[tuple[str | None, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in conn.execute(
         "WITH f AS (SELECT repo AS frepo, name AS fname, tree AS ftree FROM events"  # noqa: S608
@@ -578,7 +656,7 @@ def flaky(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         + " ORDER BY ts, id",
         [*params, *params],
     ):
-        runs[row[1], row[2], row[8]].append(_event_row(row))
+        runs[row[1], row[2], row[8]].append(_event_row(row, names))
     last_seen = {key: max(run["ts"] for run in tree_runs) for key, tree_runs in runs.items()}
     by_gate: dict[tuple[str | None, str], list[tuple[str, float]]] = {}
     for repo, name, tree in sorted(last_seen, key=lambda k: (-last_seen[k], k[2])):
@@ -586,7 +664,7 @@ def flaky(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     out: list[dict[str, Any]] = [
         {
             "repo": repo,
-            "repo_name": repo_name(repo),
+            "repo_name": names[repo],
             "name": name,
             "tree_count": len(gate_trees),
             "last_seen": max(last for _, last in gate_trees),
