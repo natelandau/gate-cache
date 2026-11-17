@@ -102,6 +102,7 @@ def test_unmerged_index_is_unknown(git_repo: Path) -> None:
     snap = take_snapshot()
     assert snap.known is False
     assert snap.reason == "unmerged index"
+    assert snap.root == git_repo.resolve()
 
 
 def test_git_missing_is_unknown(
@@ -124,7 +125,10 @@ def test_subdirectory_gives_same_tree(git_repo: Path, monkeypatch: pytest.Monkey
     git("add", "sub/c.txt", cwd=git_repo)
     root_tree = take_snapshot().tree
     monkeypatch.chdir(sub)
+    snap = take_snapshot(paths=["a.txt"])
     assert take_snapshot().tree == root_tree
+    assert snap.root == git_repo.resolve()
+    assert take_snapshot().root == git_repo.resolve()
 
 
 def test_repo_without_commits_is_known(

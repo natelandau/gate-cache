@@ -5,10 +5,16 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shlex
+import sys
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gate_cache import __version__
 from gate_cache.console import format_duration, kv, say
+from gate_cache.env import CI_ENV, flag_on
 from gate_cache.markers import (
     RecordIndex,
     clear_markers,
@@ -23,27 +29,23 @@ from gate_cache.markers import (
     write_miss,
 )
 from gate_cache.runner import run_child
-from gate_cache.snapshot import git_common_dir, take_snapshot, take_snapshots
+from gate_cache.snapshot import git_common_dir, normalize_paths, take_snapshot, take_snapshots
+from gate_cache.stats import config as stats_config
+from gate_cache.stats import context as run_context
+from gate_cache.stats.recorder import Event, Outcome, record_event
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from pathlib import Path
 
     from gate_cache.snapshot import Snapshot
 
 DISABLE_ENV = "GATE_CACHE_DISABLE"
-CI_ENV = "CI"
 MAX_AGE_ENV = "GATE_CACHE_MAX_AGE_DAYS"
 DEFAULT_MAX_AGE_DAYS = 30
 _DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
 _CI_REASON = f"caching disabled in CI ({DISABLE_ENV}=0 keeps it on)"
 _NO_COMMON_DIR_REASON = "could not locate git directory"
 _FILES_CHANGED = "files changed during the run"
-
-
-def _flag_on(value: str) -> bool:
-    """Read an on/off variable the way CI systems set CI, so `false` means off."""
-    return value.strip().lower() not in {"", "0", "false"}
 
 
 def disabled_reason(environ: Mapping[str, str] | None = None) -> str | None:
@@ -62,8 +64,8 @@ def disabled_reason(environ: Mapping[str, str] | None = None) -> str | None:
     env = os.environ if environ is None else environ
     disable = env.get(DISABLE_ENV, "")
     if disable.strip():
-        return _DISABLED_REASON if _flag_on(disable) else None
-    if _flag_on(env.get(CI_ENV, "")):
+        return _DISABLED_REASON if flag_on(disable) else None
+    if flag_on(env.get(CI_ENV, "")):
         return _CI_REASON
     return None
 
@@ -97,10 +99,218 @@ def marker_max_age_days(environ: Mapping[str, str] | None = None) -> int:
     return days
 
 
-def _run_uncached(reason: str, command: Sequence[str]) -> int:
-    """Explain why caching is off, then run the command."""
+def _round(value: float | None, digits: int) -> float | None:
+    """Round a measurement, keeping None."""
+    return None if value is None else round(value, digits)
+
+
+def _marker_age(marker: Path | None) -> float | None:
+    """Return the seconds since a marker was written, or None when unknown."""
+    if marker is None:
+        return None
+    try:
+        return round(time.time() - marker.stat().st_mtime, 1)
+    except OSError:
+        return None
+
+
+def _cwd() -> Path | None:
+    """Return the resolved working directory, or None when it is gone."""
+    try:
+        return Path.cwd().resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+class _Stats:
+    """Collect and record the stats event of one gate run.
+
+    Every lookup and measurement happens only while stats are on, so a gate with stats
+    off does no extra work at all.
+    """
+
+    def __init__(self, setting: stats_config.StatsSetting | None) -> None:
+        """Wrap the stats setting read for this run, or None when it could not be read."""
+        self._setting = setting
+
+    @classmethod
+    def load(cls) -> _Stats:
+        """Read the stats setting once for the run; never raise."""
+        # Stats must not change a gate's result, even when the setting cannot be read.
+        try:
+            return cls(stats_config.stats_setting())
+        except Exception:  # noqa: BLE001
+            return cls(None)
+
+    @property
+    def enabled(self) -> bool:
+        """Return whether this run records an event."""
+        return self._setting is not None and self._setting.enabled
+
+    def now(self) -> float | None:
+        """Start an overhead measurement, or return None when stats are off."""
+        return time.monotonic() if self.enabled else None
+
+    @staticmethod
+    def elapsed(started: float | None) -> float | None:
+        """Return the seconds since a measurement from `now` started, or None without one."""
+        return None if started is None else time.monotonic() - started
+
+    def usage(self) -> run_context.ChildUsage | None:
+        """Read child resource use before a command runs, or None when stats are off."""
+        return run_context.child_usage() if self.enabled else None
+
+    def usage_since(self, before: run_context.ChildUsage | None) -> dict[str, Any]:
+        """Return the `cpu` and `max_rss` fields of the command that just exited.
+
+        Call it right after the command exits, before gate-cache starts git again, so the
+        numbers cover only the command.
+
+        Args:
+            before: The reading from `usage` taken just before the command ran.
+
+        Returns:
+            The two fields, or an empty dict when stats are off or rusage is unavailable.
+        """
+        if not self.enabled or before is None:
+            return {}
+        after = run_context.child_usage()
+        if after is None:
+            return {}
+        return {"cpu": round(after.cpu - before.cpu, 3), "max_rss": after.max_rss}
+
+    def common_dir(self) -> Path | None:
+        """Look up the git common directory for an event whose caller has none; never raise."""
+        if not self.enabled:
+            return None
+        try:
+            return git_common_dir()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def record(
+        self,
+        *,
+        name: str,
+        command: Sequence[str],
+        worktree: Path | None,
+        common_dir: Path | None,
+        overhead: float | None = None,
+        marker: Path | None = None,
+        **fields: Any,
+    ) -> None:
+        """Record the run as a stats event when stats are on; never raise.
+
+        Args:
+            name: Gate name.
+            command: Command and arguments of the gate.
+            worktree: Top of the working tree, when known.
+            common_dir: Git common directory, when known.
+            overhead: Seconds spent before deciding, for a run that checked its cache.
+            marker: The marker a skip used.
+            **fields: The remaining Event fields.
+        """
+        if not self.enabled:
+            return
+        # Stats must not change a gate's result, even when building the event fails.
+        try:
+            context = self._context(
+                name=name, command=command, worktree=worktree, common_dir=common_dir
+            )
+            event = Event(
+                ts=time.time(),
+                name=name,
+                repo=str(common_dir) if common_dir is not None else None,
+                overhead=_round(overhead, 3),
+                marker_age=_marker_age(marker),
+                **context,
+                **fields,
+            )
+            record_event(event, setting=self._setting)
+        except Exception:  # noqa: BLE001
+            return
+
+    @staticmethod
+    def _context(
+        *, name: str, command: Sequence[str], worktree: Path | None, common_dir: Path | None
+    ) -> dict[str, Any]:
+        """Gather where and how the gate ran, from files and the environment only."""
+        import uuid
+
+        cwd = _cwd()
+        if worktree is None and cwd is not None:
+            worktree = run_context.find_worktree(cwd)
+        source = run_context.detect_source(os.environ, isatty=run_context.stdin_isatty())
+        head = run_context.read_head(run_context.worktree_git_dir(worktree))
+        url = run_context.config_remote_url(common_dir)
+        joined = shlex.join(command)
+        return {
+            "id": uuid.uuid4().hex,
+            "version": __version__,
+            "trigger": source.trigger,
+            "agent": source.agent,
+            "hook_stage": source.hook_stage,
+            "worktree": str(worktree) if worktree is not None else None,
+            "subdir": run_context.relative_subdir(cwd, worktree=worktree)
+            if cwd is not None
+            else None,
+            "branch": run_context.branch_from_head(head),
+            "head": run_context.head_commit(head, common_dir=common_dir),
+            "remote": run_context.normalize_remote(url) if url else None,
+            "machine": run_context.machine_id(stats_config.state_dir()),
+            "host": run_context.host_name(),
+            "platform": sys.platform,
+            # Without --name the name is the command line, so storing it again adds nothing.
+            "command": joined if joined != name else None,
+        }
+
+
+def _run_uncached(
+    reason: str,
+    command: Sequence[str],
+    *,
+    name: str,
+    paths: Sequence[str],
+    stats: _Stats,
+    resolve_repo: bool = False,
+    snapshot: Snapshot | None = None,
+) -> int:
+    """Explain why caching is off, then run the command and record the run.
+
+    Args:
+        reason: Why caching is off, printed and stored.
+        command: Command and arguments to run.
+        name: Gate name.
+        paths: Normalized pathspecs of the gate.
+        stats: Stats recording for this run.
+        resolve_repo: Look up the git common directory for the event, because the caller
+            has not tried to.
+        snapshot: The snapshot taken before caching turned out to be off, if any.
+
+    Returns:
+        The command's exit code.
+    """
     say(f"{reason}, running without cache")
-    return run_child(command).exit_code
+    before = stats.usage()
+    result = run_child(command)
+    usage = stats.usage_since(before)
+    if result.interrupted:
+        return result.exit_code
+    stats.record(
+        name=name,
+        command=command,
+        worktree=snapshot.root if snapshot is not None else None,
+        common_dir=stats.common_dir() if resolve_repo else None,
+        **usage,
+        tree=snapshot.key if snapshot is not None else None,
+        paths=tuple(paths),
+        outcome="uncached",
+        duration=result.duration,
+        saved=None,
+        exit_code=result.exit_code,
+        reason=reason,
+    )
+    return result.exit_code
 
 
 @dataclass(frozen=True)
@@ -164,18 +374,26 @@ class _Attempt:
         except Exception as error:  # noqa: BLE001
             say(f"warning: could not record miss: {error}")
 
-    def record_if_unchanged(self, duration: float) -> None:
+    def record_if_unchanged(self, duration: float) -> bool:
         """Record the pass only when the run left the content it was keyed on untouched.
 
         Args:
             duration: Seconds the command ran.
+
+        Returns:
+            True when the pass was recorded, False when the keyed content changed.
         """
         # A command that rewrote keyed files or left new files behind did not pass on `key`.
         if take_snapshot(paths=self.snapshot.paths).key == self.key:
-            self.record_pass(duration)
-        else:
-            say(f"{_FILES_CHANGED}, not recording pass")
-            self.record_miss(exit_code=0, reason=_FILES_CHANGED)
+            # The command passed on unchanged content however the marker write goes.
+            try:
+                self.record_pass(duration)
+            except Exception as error:  # noqa: BLE001
+                say(f"warning: could not record pass: {error}")
+            return True
+        say(f"{_FILES_CHANGED}, not recording pass")
+        self.record_miss(exit_code=0, reason=_FILES_CHANGED)
+        return False
 
 
 def run_gate(name: str, command: Sequence[str], paths: Sequence[str] = ()) -> int:
@@ -190,40 +408,101 @@ def run_gate(name: str, command: Sequence[str], paths: Sequence[str] = ()) -> in
     Returns:
         The command's exit code, or 0 when a recorded pass lets it skip.
     """
+    stats = _Stats.load()
     reason = disabled_reason()
     if reason is not None:
-        return _run_uncached(reason, command)
+        return _run_uncached(
+            reason,
+            command,
+            name=name,
+            paths=normalize_paths(paths),
+            stats=stats,
+            resolve_repo=True,
+        )
 
+    started = stats.now()
     snapshot = take_snapshot(paths=paths)
     key = snapshot.key
     if key is None:
-        return _run_uncached(snapshot.reason or "tree unknown", command)
+        return _run_uncached(
+            snapshot.reason or "tree unknown",
+            command,
+            name=name,
+            paths=snapshot.paths,
+            stats=stats,
+            resolve_repo=True,
+            snapshot=snapshot,
+        )
 
     common_dir = git_common_dir()
     if common_dir is None:
-        return _run_uncached(_NO_COMMON_DIR_REASON, command)
+        return _run_uncached(
+            _NO_COMMON_DIR_REASON,
+            command,
+            name=name,
+            paths=snapshot.paths,
+            stats=stats,
+            snapshot=snapshot,
+        )
 
     path = marker_path(common_dir, key, name)
-    if marker_exists(path):
+    hit = marker_exists(path)
+    overhead = stats.elapsed(started)
+    if hit:
         duration = marker_duration(path)
         saved = f" (saved {format_duration(duration)})" if duration is not None else ""
         say(f"{name} already passed on {snapshot.label}, skipping{saved}")
+        stats.record(
+            name=name,
+            command=command,
+            worktree=snapshot.root,
+            common_dir=common_dir,
+            overhead=overhead,
+            marker=path,
+            tree=key,
+            paths=snapshot.paths,
+            outcome="skip",
+            duration=None,
+            saved=duration,
+            exit_code=None,
+            reason=None,
+        )
         return 0
 
     attempt = _Attempt(
         common_dir=common_dir, name=name, command=command, snapshot=snapshot, key=key
     )
+    before = stats.usage()
     result = run_child(command)
+    usage = stats.usage_since(before)
     if result.interrupted:
         return result.exit_code
+    outcome: Outcome = "fail"
     if result.exit_code != 0:
         attempt.record_miss(exit_code=result.exit_code, reason=f"exit code {result.exit_code}")
     else:
+        outcome = "pass_unrecorded"
         # Recording is best effort: nothing after a passing run may change its exit code.
         try:
-            attempt.record_if_unchanged(result.duration)
+            if attempt.record_if_unchanged(result.duration):
+                outcome = "pass"
         except Exception as error:  # noqa: BLE001
             say(f"warning: could not record pass: {error}")
+    stats.record(
+        name=name,
+        command=command,
+        worktree=snapshot.root,
+        common_dir=common_dir,
+        overhead=overhead,
+        **usage,
+        tree=key,
+        paths=snapshot.paths,
+        outcome=outcome,
+        duration=result.duration,
+        saved=None,
+        exit_code=result.exit_code,
+        reason=None,
+    )
     return result.exit_code
 
 

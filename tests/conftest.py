@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from gate_cache.markers import MISS_SUFFIX, marker_dir
+from gate_cache.stats import config as stats_config
 
 
 def git(*args: str, cwd: Path) -> str:
@@ -158,3 +159,23 @@ def misses(repo: Path) -> list[Path]:
 def read_records(paths: list[Path]) -> list[dict[str, object]]:
     """Parse the JSON content of marker or miss record files."""
     return [json.loads(path.read_text()) for path in paths]
+
+
+@pytest.fixture
+def stats_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """Point the stats config file and state directory under tmp_path; return both."""
+    config_file = tmp_path / "cfg" / "config.toml"
+    state = tmp_path / "state"
+    monkeypatch.setattr(stats_config, "config_path", lambda: config_file)
+    monkeypatch.setattr(stats_config, "state_dir", lambda: state)
+    monkeypatch.delenv(stats_config.STATS_ENV, raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    return config_file, state
+
+
+@pytest.fixture
+def stats_on(stats_dirs: tuple[Path, Path]) -> None:
+    """Turn stats recording on through the config file."""
+    config_file = stats_dirs[0]
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text("[stats]\nenabled = true\n", encoding="utf-8")
