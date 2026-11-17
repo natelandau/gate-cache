@@ -103,7 +103,7 @@ A marker covers the name and the tree, and nothing else. The tree holds the cont
 - Differences that a clean filter removes before git hashes a file, such as line endings with `core.autocrlf` or the content behind a Git LFS pointer when the pointer does not change.
 - For a gate scoped with `--path`, every file outside its paths.
 
-A change to one of these leaves the tree the same, so an existing marker still matches and gate-cache skips the command. A fresh run after such a change can give a different result. A CI runner that starts from a fresh clone has no markers and runs every command. A runner that keeps the `.git` directory between jobs also keeps the markers. If `CI` is on and `GATE_CACHE_DISABLE` is not set, gate-cache does not use them. `gate-cache clear` deletes the markers, and `GATE_CACHE_DISABLE=1` runs every command without the cache. To make a gate depend on an ignored file, an environment variable, or a tool version, put its value in the gate name, as the README section [Inputs that git does not track](../README.md#inputs-that-git-does-not-track) shows.
+A change to one of these leaves the tree the same, so an existing marker still matches and gate-cache skips the command. A fresh run after such a change can give a different result. A CI runner that starts from a fresh clone has no markers and runs every command. A runner that keeps the `.git` directory between jobs also keeps the markers. If `CI` is on and `GATE_CACHE_DISABLE` is not set, gate-cache does not use them. `gate-cache clear` deletes the markers after you confirm, and `GATE_CACHE_DISABLE=1` runs every command without the cache. To make a gate depend on an ignored file, an environment variable, or a tool version, put its value in the gate name, as the README section [Inputs that git does not track](../README.md#inputs-that-git-does-not-track) shows.
 
 A marker also does not cover the commit message, the branch name, or anything on a remote. gate-cache decides only about the command that it wraps, and it never skips other hooks.
 
@@ -239,7 +239,7 @@ Each event has one outcome:
 
 The dashboard moves events from the inbox into an archive, a SQLite file named `stats.sqlite3` in the data directory. It ingests once at start and then once a second while it runs. For each ingest, it renames the live inbox to `events.<number>.processing`. It reads a renamed file after 2 seconds, so a gate that still writes to the old file finishes first. It skips a line that is not valid, and it ignores a line that it already stored. The archive keeps the full text of each line, so a later version of gate-cache can use fields that an earlier version recorded. An event with an outcome that this version does not know, written by a newer version, stays in the archive, but the dashboard does not count it. When no dashboard runs, events wait in the inbox until the next dashboard start. The archive keeps events for 365 days, and each ingest that adds events deletes older ones.
 
-`gate-cache stats clear` deletes the inbox, the renamed files, the archive, and any `.machine-id.*` temporary files that an interrupted run left. It keeps `machine-id`, so the machine keeps its ID.
+`gate-cache stats clear` deletes the inbox, the renamed files, the archive, and any `.machine-id.*` temporary files that an interrupted run left. It keeps `machine-id`, so the machine keeps its ID. It takes the dashboard lock before it asks for confirmation, so it refuses at once when a dashboard runs, and no dashboard can start while the prompt waits for an answer.
 
 ### Metrics
 

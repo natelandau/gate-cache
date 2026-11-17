@@ -215,3 +215,21 @@ def stats_on(stats_dirs: tuple[Path, Path]) -> None:
     config_file = stats_dirs[0]
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text("[stats]\nenabled = true\n", encoding="utf-8")
+
+
+@pytest.fixture
+def answer(monkeypatch: pytest.MonkeyPatch) -> Callable[[str | None], None]:
+    """Make stdin a terminal and set what the user types; None ends input, ^C presses Ctrl-C."""
+
+    def set_answer(text: str | None) -> None:
+        def read() -> str:
+            if text is None:
+                raise EOFError
+            if text == "^C":
+                raise KeyboardInterrupt
+            return text
+
+        monkeypatch.setattr("gate_cache.console.stdin_isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", read)
+
+    return set_answer

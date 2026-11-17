@@ -7,7 +7,7 @@ import threading
 import webbrowser
 from typing import TYPE_CHECKING
 
-from gate_cache.console import say
+from gate_cache.console import confirm_deletion, say
 from gate_cache.dashboard import server as server_module
 from gate_cache.dashboard.lock import InstanceLock, running_url
 from gate_cache.dashboard.server import static_root
@@ -62,7 +62,12 @@ def run_dashboard(*, port: int | None, open_browser: bool) -> int:
         return 1
     if lock is None:
         url = running_url(state)
-        say(f"dashboard already running at {url}" if url else "dashboard already running")
+        # The lock without a URL is a dashboard still starting or `stats clear` at its prompt.
+        say(
+            f"dashboard already running at {url}"
+            if url
+            else "dashboard already running, or stats clear is in progress"
+        )
         if url and open_browser:
             webbrowser.open(url)
         return 0
@@ -131,11 +136,15 @@ def _run_server(server: server_module.DashboardServer, *, open_browser: bool) ->
     return 0
 
 
-def stats_clear() -> int:
+def stats_clear(*, confirmed: bool = False) -> int:
     """Delete every recorded event and the archive, unless the dashboard is running.
 
     Keep `machine-id` so the machine keeps its ID, but remove temp files a killed run left
-    while it created that file.
+    while it created that file. Ask the user to confirm first, since the deletion cannot be
+    undone.
+
+    Args:
+        confirmed: Skip the confirmation prompt, as `--yes` does for scripts.
 
     Returns:
         The process exit code.
@@ -150,6 +159,14 @@ def stats_clear() -> int:
         say("stop the dashboard before clearing stats")
         return 1
     try:
+        warning = [
+            "this permanently deletes every recorded run stat on this machine.",
+            f"data: {state}",
+            "The history, time saved, and skip rates of every repository are lost.",
+            "Recorded passes (markers) are not affected.",
+        ]
+        if not confirmed and not confirm_deletion("clear stats", warning):
+            return 1
         targets = [
             inbox_path(),
             *state.glob("events.*.processing"),

@@ -132,7 +132,13 @@ def test_status_and_clear_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     assert invoke(monkeypatch, "status", "--name", "x") == 1
     status.assert_called_once_with("x", as_json=False, paths=[])
     assert invoke(monkeypatch, "clear") == 0
-    clear.assert_called_once_with()
+    assert invoke(monkeypatch, "clear", "--yes") == 0
+    assert invoke(monkeypatch, "clear", "-y") == 0
+    assert clear.call_args_list == [
+        ((), {"confirmed": False}),
+        ((), {"confirmed": True}),
+        ((), {"confirmed": True}),
+    ]
 
 
 def test_status_without_name_lists_gates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -285,7 +291,7 @@ def test_repeated_name_is_usage_error(
     [
         (["status", "--help"], ["gate-cache status", "--name", "--json", "list the gates"]),
         (["status", "-h"], ["gate-cache status", "--json"]),
-        (["clear", "--help"], ["gate-cache clear", "Delete every recorded pass"]),
+        (["clear", "--help"], ["gate-cache clear", "Permanently delete every recorded pass"]),
         (["-h"], ["status", "clear", "GATE_CACHE_DISABLE"]),
     ],
 )
