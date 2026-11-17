@@ -17,7 +17,8 @@ from gate_cache.gate import run_gate
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot, git_common_dir
 from gate_cache.stats import context
-from gate_cache.stats.recorder import MAX_LINE_BYTES, Event, inbox_path
+from gate_cache.stats.config import DATA_DIR_ENV, STATS_ENV
+from gate_cache.stats.recorder import MAX_LINE_BYTES, Event, inbox_path, record_event
 from tests.conftest import Counter, git, hide_common_dir
 
 SECRET = "tok3nS3cretValue"  # noqa: S105
@@ -155,6 +156,18 @@ def test_short_line_is_not_truncated() -> None:
     data = json.loads(event.to_line())
     assert "paths_truncated" not in data
     assert data["paths"] == ["a"]
+
+
+def test_passed_environ_moves_the_inbox(tmp_path: Path, isolate_user_dirs: Path) -> None:
+    """record_event writes to the data directory of the environment it is given."""
+    event = Event(
+        ts=1.0, repo=None, name="n", tree=None, paths=(), outcome="skip",
+        duration=None, saved=0.5, exit_code=None, reason=None,
+    )  # fmt: skip
+    environ = {STATS_ENV: "1", DATA_DIR_ENV: str(tmp_path / "passed")}
+    record_event(event, environ)
+    assert (tmp_path / "passed" / "events.jsonl").read_text(encoding="utf-8").strip()
+    assert not (isolate_user_dirs / "events.jsonl").exists()
 
 
 def test_inbox_mode_0600(git_repo: Path, stats_dirs: tuple[Path, Path], stats_on: None) -> None:
@@ -330,14 +343,13 @@ def test_gate_path_does_not_load_dashboard(
         "from pathlib import Path\n"
         "from gate_cache.stats import config\n"
         "config.config_path = lambda: Path(sys.argv[1])\n"
-        "config.state_dir = lambda: Path(sys.argv[2])\n"
         "from gate_cache.gate import run_gate\n"
         "assert run_gate('t', ['true']) == 0\n"
         "assert run_gate('t', ['true']) == 0\n"
         "print('\\n'.join(sorted(sys.modules)))\n"
     )
     result = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", script, str(config_file), str(state)],
+        [sys.executable, "-c", script, str(config_file)],
         cwd=git_repo,
         env=os.environ.copy(),
         capture_output=True,

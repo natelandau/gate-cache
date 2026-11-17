@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from gate_cache.console import confirm_deletion, say
 from gate_cache.stats import config
+from gate_cache.stats.archive import ARCHIVE_NAME
 from gate_cache.stats.context import MACHINE_ID_TEMP_GLOB
 from gate_cache.stats.lock import InstanceLock
-from gate_cache.stats.recorder import inbox_path
+from gate_cache.stats.recorder import INBOX_NAME
 
 
 def stats_clear(*, confirmed: bool = False) -> int:
@@ -41,10 +42,10 @@ def stats_clear(*, confirmed: bool = False) -> int:
         if not confirmed and not confirm_deletion("clear stats", warning):
             return 1
         targets = [
-            inbox_path(),
+            state / INBOX_NAME,
             *state.glob("events.*.processing"),
             *state.glob(MACHINE_ID_TEMP_GLOB),
-            *(state / f"stats.sqlite3{suffix}" for suffix in ("", "-wal", "-shm")),
+            *(state / f"{ARCHIVE_NAME}{suffix}" for suffix in ("", "-wal", "-shm")),
         ]
         for target in targets:
             target.unlink(missing_ok=True)

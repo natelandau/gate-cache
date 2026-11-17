@@ -42,6 +42,23 @@ def invoke(monkeypatch: pytest.MonkeyPatch, *args: str) -> int:
     return code
 
 
+@pytest.fixture(autouse=True)
+def isolate_user_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the stats data and the XDG config and state homes under tmp_path.
+
+    platformdirs prefers the XDG variables over HOME, so a developer who exports them
+    would otherwise let a test, or a subprocess it starts, reach real stats and config.
+
+    Returns:
+        The stats data directory.
+    """
+    data = tmp_path / "gate-cache-data"
+    monkeypatch.setenv(stats_config.DATA_DIR_ENV, str(data))
+    for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME"):
+        monkeypatch.setenv(var, str(tmp_path / "xdg" / var.lower()))
+    return data
+
+
 @pytest.fixture
 def git_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolate git from user and system config; return the temp HOME."""
@@ -215,7 +232,7 @@ def stats_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
     config_file = tmp_path / "cfg" / "config.toml"
     state = tmp_path / "state"
     monkeypatch.setattr(stats_config, "config_path", lambda: config_file)
-    monkeypatch.setattr(stats_config, "state_dir", lambda: state)
+    monkeypatch.setenv(stats_config.DATA_DIR_ENV, str(state))
     monkeypatch.delenv(stats_config.STATS_ENV, raising=False)
     monkeypatch.delenv("CI", raising=False)
     return config_file, state

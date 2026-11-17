@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 SCHEMA_VERSION = 2
 RETENTION_DAYS = 365
 SETTLE_SECONDS = 2.0
+ARCHIVE_NAME = "stats.sqlite3"
 
 _PROCESSING_RE = re.compile(r"^events\.(\d+)\.processing$")
 _SECONDS_PER_DAY = 86400
@@ -58,7 +59,7 @@ _INSERT = (
 
 def archive_path() -> Path:
     """Return the path of the SQLite archive."""
-    return config.state_dir() / "stats.sqlite3"
+    return config.state_dir() / ARCHIVE_NAME
 
 
 class ArchiveVersionError(RuntimeError):

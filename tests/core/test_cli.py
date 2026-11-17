@@ -205,6 +205,7 @@ def test_help_is_self_describing(
         "--path",
         "gate-cache --name api-test --path api/ --path uv.lock -- ",
         "GATE_CACHE_STATS",
+        "GATE_CACHE_DATA_DIR",
         "id gate-cache",
         f"rev v{gate_cache.__version__}",
         "already",
