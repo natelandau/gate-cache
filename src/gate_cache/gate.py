@@ -532,12 +532,13 @@ class _GateRun:
             return _Acquired(lock=None)
 
         holder, since = _describe_holder(lock_file)
-        say(f"{self.name} is running in {holder}{since}, waiting")
         wait = _Wait(started=began, holder=holder)
         remaining = max(settings.timeout - (self.waited or 0.0), 0.0)
         wait_began = time.monotonic()
         try:
             with raise_on_termination():
+                # Announced only once the handlers are in, so a signal sent on seeing it is caught.
+                say(f"{self.name} is running in {holder}{since}, waiting")
                 lock = GateLock.wait(lock_file, timeout=remaining)
         except OSError as error:
             say(f"warning: could not lock {self.name}: {error}")
