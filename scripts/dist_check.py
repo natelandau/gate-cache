@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import glob
+import re
 import tarfile
 import zipfile
 from pathlib import Path
@@ -14,6 +15,9 @@ REQUIRED_FILES = (
     "gate_cache/agent/prompt.md",
 )
 WHEEL_MAX_BYTES = 300 * 1024
+# The dashboard serves files under this prefix as immutable, so each name needs a content hash.
+HASHED_ASSETS = "gate_cache/dashboard/static/assets/"
+HASHED_NAME_RE = re.compile(r"-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$")
 
 
 def expand(patterns: tuple[str, ...]) -> list[str]:
@@ -52,6 +56,13 @@ def check_dist(path: str) -> list[str]:
         return [f"{path} is neither a wheel nor an sdist"]
     problems.extend(
         f"{path} is missing {required}" for required in REQUIRED_FILES if required not in names
+    )
+    problems.extend(
+        f"{path} ships {name} with no content hash in its name"
+        for name in sorted(names)
+        if name.startswith(HASHED_ASSETS)
+        and not name.endswith("/")
+        and not HASHED_NAME_RE.search(name)
     )
     return problems
 

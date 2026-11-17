@@ -17,10 +17,14 @@ if TYPE_CHECKING:
 dist_check = load_script("scripts/dist_check.py")
 
 
-def make_wheel(path: Path, *, missing: tuple[str, ...] = (), padding: int = 0) -> Path:
+def make_wheel(
+    path: Path, *, missing: tuple[str, ...] = (), padding: int = 0, extra: tuple[str, ...] = ()
+) -> Path:
     """Write a synthetic wheel that ships every required file except those in missing."""
     with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
         archive.writestr("gate_cache/__init__.py", "")
+        for name in extra:
+            archive.writestr(name, "x")
         for required in dist_check.REQUIRED_FILES:
             if required not in missing:
                 archive.writestr(required, "x")
@@ -60,6 +64,25 @@ def test_wheel_missing_required_file_fails(tmp_path: Path, missing: str) -> None
     make_wheel(tmp_path / "a.whl", missing=(missing,))
     _, problems = dist_check.check_dists((str(tmp_path / "a.whl"),))
     assert problems == [f"{tmp_path / 'a.whl'} is missing {missing}"]
+
+
+def test_wheel_hashed_assets_pass(tmp_path: Path) -> None:
+    """Verify built assets whose names carry a content hash pass, as does their folder entry."""
+    names = (
+        f"{dist_check.HASHED_ASSETS}index-DKMf4glm.js",
+        f"{dist_check.HASHED_ASSETS}Bar-C5_x-9Qz.css",
+        dist_check.HASHED_ASSETS,
+    )
+    make_wheel(tmp_path / "a.whl", extra=names)
+    assert dist_check.check_dists((str(tmp_path / "a.whl"),))[1] == []
+
+
+def test_wheel_unhashed_asset_fails(tmp_path: Path) -> None:
+    """Verify an asset with no content hash fails, since the dashboard caches assets forever."""
+    name = f"{dist_check.HASHED_ASSETS}logo.svg"
+    make_wheel(tmp_path / "a.whl", extra=(name,))
+    _, problems = dist_check.check_dists((str(tmp_path / "a.whl"),))
+    assert problems == [f"{tmp_path / 'a.whl'} ships {name} with no content hash in its name"]
 
 
 def test_wheel_over_budget_fails(tmp_path: Path) -> None:
