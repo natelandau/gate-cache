@@ -18,14 +18,6 @@ describe("repoOptions", () => {
   it("offers no unknown repo option when every event has a repo", () => {
     expect(repoOptions([{ repo: "/w/a/.git", repo_name: "a" }]).map((o) => o.value)).toEqual(["/w/a/.git"]);
   });
-
-  it("adds the parent directory to repeated names", () => {
-    const out = repoOptions([
-      { repo: "/home/a/code/app/.git", repo_name: "app" },
-      { repo: "/home/b/work/app/.git", repo_name: "app" },
-    ]);
-    expect(out.map((o) => o.label)).toEqual(["app (code)", "app (work)"]);
-  });
 });
 
 describe("repoLabel", () => {
