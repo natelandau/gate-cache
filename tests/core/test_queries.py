@@ -278,6 +278,7 @@ def test_activity_paging(conn: sqlite3.Connection) -> None:
         "exit_code",
         "reason",
         "tree",
+        "reported",
     }
 
 
@@ -633,3 +634,22 @@ def test_slowdowns_skips_gate_new_in_current_window(empty_conn: sqlite3.Connecti
     _passes(empty_conn, BASE, "old", 10.0)
     _passes(empty_conn, BASE + DAY + 10, "new", 10.0)
     assert slowdowns(empty_conn, CURRENT, now=BASE + 2 * DAY)["gates"] == []
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('{"reported":true}', True),
+        ('{"reported":false}', False),
+        ("{}", False),
+        (None, False),
+        ("not json", False),
+    ],
+)
+def test_activity_reports_reported_flag(
+    empty_conn: sqlite3.Connection, raw: str | None, expected: bool
+) -> None:
+    """An event row says whether the run reported another run's failure, from its raw line."""
+    insert(empty_conn, BASE, "fail")
+    empty_conn.execute("UPDATE events SET raw = ?", (raw,))
+    assert activity(empty_conn, Filters())["events"][0]["reported"] is expected

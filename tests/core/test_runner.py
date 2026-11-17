@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gate_cache.runner import ChildResult, run_child
+from gate_cache.runner import ChildResult, Terminated, raise_on_termination, run_child
 
 
 def test_exit_zero() -> None:
@@ -174,3 +174,30 @@ def test_run_child_reports_duration() -> None:
     result = run_child([sys.executable, "-c", "import time; time.sleep(0.2)"])
 
     assert result.duration >= 0.2
+
+
+@pytest.mark.parametrize(("signum", "code"), [(signal.SIGTERM, 143), (signal.SIGHUP, 129)])
+def test_termination_raises_with_signal_exit_code(signum: int, code: int) -> None:
+    """Verify SIGTERM or SIGHUP outside a child run raises with 128 + signal, then restores."""
+    before = signal.getsignal(signum)
+
+    def signal_self() -> None:
+        with raise_on_termination():
+            os.kill(os.getpid(), signum)
+            time.sleep(5)
+
+    with pytest.raises(Terminated) as caught:
+        signal_self()
+    assert caught.value.exit_code == code
+    assert signal.getsignal(signum) is before
+
+
+def test_termination_keeps_ignored_signals_ignored() -> None:
+    """Verify an ignored SIGTERM, as under nohup, stays ignored while waiting."""
+    previous = signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    try:
+        with raise_on_termination():
+            assert signal.getsignal(signal.SIGTERM) is signal.SIG_IGN
+            os.kill(os.getpid(), signal.SIGTERM)
+    finally:
+        signal.signal(signal.SIGTERM, previous)

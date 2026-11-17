@@ -14,6 +14,7 @@ function event(overrides: Partial<EventRow>): EventRow {
     exit_code: 0,
     reason: null,
     tree: "0123456789abcdef0123",
+    reported: false,
     ...overrides,
   };
 }
@@ -32,6 +33,17 @@ describe("timeText", () => {
   it("says saved for a skip and ran otherwise", () => {
     expect(timeText(event({ outcome: "skip", duration: null, saved: 91 }))).toBe("saved 1m 31s");
     expect(timeText(event({ outcome: "fail", duration: 54 }))).toBe("ran 54s");
+  });
+
+  it("handles a reported failure with no duration", () => {
+    const reported = event({
+      outcome: "fail",
+      duration: null,
+      reason: "failed in another run, not rerun",
+      reported: true,
+    });
+    expect(timeText(reported)).toBe("not rerun");
+    expect(timeText(event({ outcome: "fail", duration: null }))).toBe("ran, time unknown");
   });
 
   it("marks an unknown time", () => {

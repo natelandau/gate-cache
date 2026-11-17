@@ -46,6 +46,7 @@ SUITES: dict[str, tuple[str, ...]] = {
     "server": (
         "src/gate_cache/dashboard/",
         "src/gate_cache/stats/",
+        "src/gate_cache/config.py",
         "src/gate_cache/console.py",
         "src/gate_cache/env.py",
         "src/gate_cache/__init__.py",

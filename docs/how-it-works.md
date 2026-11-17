@@ -20,8 +20,9 @@ Each time it runs, gate-cache does these steps in this sequence:
     - On a case-insensitive filesystem, a file that differs from its index entry only by the case of its name.
 4. If git cannot find the git directory that holds the markers, run the command without the cache and write no marker.
 5. If a marker for the tree and the name exists, print a skip line and exit 0. If the marker records the run time of the command, the skip line shows it.
-6. Run the command.
-7. If the command exits 0 and the tree did not change during the run, write the marker. Otherwise, write a miss record that `gate-cache status` reports.
+6. If another run with the same name and tree is in progress, wait for it, as [Concurrent runs](#concurrent-runs) describes. Then check for a marker again.
+7. Run the command.
+8. If the command exits 0 and the tree did not change during the run, write the marker. Otherwise, write a miss record that `gate-cache status` reports.
 
 Every uncertain case runs the command. gate-cache can run a command that it did not need to run, but it skips a command only when a marker proves that the same gate passed on the same content.
 
@@ -32,6 +33,27 @@ The private index copy and its objects live in a temporary directory under `$XDG
 Git gives hooks `GIT_DIR` without `GIT_WORK_TREE`, and then treats the current directory as the top of the work tree. When the hook runs from a subdirectory, such as a module recipe, gate-cache finds the real work tree from `GIT_DIR` for its own git commands. The wrapped command gets the environment unchanged.
 
 A command that exits 0 but changes the tree does not get a marker. Examples are a formatter that rewrites files and a command that leaves new untracked files. In this case, gate-cache prints `files changed during the run, not recording pass`.
+
+## Concurrent runs
+
+Before it runs the command, gate-cache takes an exclusive lock on a file in `<git common directory>/gate-cache-locks/`. The file name comes from the same key as the marker, so the lock covers one gate name on one tree. All worktrees of the repository share the directory. The running process records its worktree and start time in the file.
+
+If another run holds the lock, gate-cache prints `NAME is running in WORKTREE (started 1m 12s ago), waiting` and polls until the lock is free. It then takes a new snapshot of the content, because files can change during a long wait. These rules apply:
+
+- If a marker exists for the new content, gate-cache skips. If the content has a different key, the run starts again from the marker check with that key.
+- Otherwise, the run takes the lock and runs the command. This is the `rerun` behavior, and it is the default.
+- With `failed = "report"` or `--on-wait-failure report`, the run does not run the command when the other run failed after this run began to wait. It prints `NAME failed on tree HASH in WORKTREE (exit N), not running again` and exits with that code. A pass that changed files, which leaves a miss record with exit code 0, is not a failure. A run that a signal interrupted leaves no record, so it is not a failure either.
+- All waits of one run share one budget of `timeout` seconds, 900 by default. When it ends, gate-cache prints `NAME still running in WORKTREE after 15m 0s, running anyway` and runs the command without the lock. The time is the `timeout` value.
+- `timeout = 0` turns waiting off, so a run that finds the lock held runs the command at once.
+- If gate-cache gets `SIGTERM` or `SIGHUP` while it waits, it stops and exits with 128 plus the signal number, for example 143 for `SIGTERM`. It records no stats event, the same as a run that a signal interrupted.
+
+If gate-cache cannot create or lock the file, it prints a warning and runs the command without the lock. Locking never fails a gate.
+
+A gate-cache call inside the command of a gate, with the same name and content as the gate, runs without waiting. The outer run lists its lock in `GATE_CACHE_HELD_LOCKS`, so a nested call never waits for its parent. A run that waited until the timeout, or that found the lock held with `timeout = 0`, lists the lock too, so a nested call does not wait for the same holder.
+
+The `[wait]` table of the config file and the `--wait-timeout` and `--on-wait-failure` flags set the limit and the failure behavior. The README section [Settings](../README.md#settings) lists them. The flags win over the config file. The `waited`, `wait_timed_out`, and `reported` [event fields](#event-fields) record a wait.
+
+Locks use `fcntl`, so waiting works on macOS and Linux only. gate-cache deletes old lock files that no process holds when it prunes old markers, at most once a day. `gate-cache clear` leaves them in place.
 
 ## Gates scoped to paths
 
@@ -50,7 +72,7 @@ A scoped marker and an unscoped marker never match each other, even with the sam
 
 ## Arguments and exit codes
 
-`--` is required, and only `--name` and `--path` can come before it, in any order. `--path` can occur more than once. gate-cache passes everything after `--` to the command without changes.
+`--` is required, and only `--name`, `--path`, `--wait-timeout`, and `--on-wait-failure` can come before it, in any order. `--path` can occur more than once. Each of the other three can occur once. gate-cache passes everything after `--` to the command without changes.
 
 Without `--name`, the name of the gate is the command and its arguments, joined with spaces and quoted as Python `shlex.join` quotes them. An argument that holds a space or a shell special character gets single quotes, so `pytest 'a b'` and `pytest a b` are different names. Each set of arguments therefore has its own markers.
 
@@ -60,7 +82,8 @@ With `--name`, the name alone identifies the gate, and the arguments are not par
 | ------------------------------------------------------------------------------------- | ---------------------------- |
 | The command ran                                                                       | The exit code of the command |
 | A marker exists, so the command was skipped                                           | 0                            |
-| A missing `--`, a `--name` or `--path` with no value, or another argument before `--` | 2, and nothing runs          |
+| A missing `--`, an option with no value or an invalid value, or another argument before `--` | 2, and nothing runs          |
+| `--on-wait-failure report` and the run that was awaited failed                        | The exit code of that run    |
 | The command is not found                                                              | 127                          |
 | The command cannot be run                                                             | 126                          |
 | A signal stopped the command                                                          | 128 plus the signal number   |
@@ -187,37 +210,40 @@ Recording never affects gating. It happens after the decision to skip or run, an
 
 Each event has these fields. A field is null when gate-cache does not know its value. All of them are in version 1 of the line format (`"v": 1`). Fields added later are optional, so a reader of version 1 must accept a line that has more fields or fewer.
 
-| Field        | Value                                                                                                                         |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `v`          | The line format version, `1`.                                                                                                 |
-| `ts`         | The Unix time at which the run finished.                                                                                      |
-| `id`         | A random ID for the event.                                                                                                    |
-| `repo`       | The path of the git common directory of the repository.                                                                       |
-| `name`       | The gate name.                                                                                                                |
-| `tree`       | The tree key that the run used. Null when caching was off or the tree was unknown.                                            |
-| `paths`      | The `--path` values.                                                                                                          |
-| `outcome`    | What the run did. See [Outcomes](#outcomes).                                                                                  |
-| `duration`   | The seconds that the command ran. Null for a skip.                                                                            |
-| `saved`      | For a skip, the run time stored in the marker.                                                                                |
-| `exit_code`  | The exit code of the command. Null for a skip.                                                                                |
-| `reason`     | For an `uncached` run, why caching was off.                                                                                   |
-| `version`    | The version of gate-cache that recorded the run.                                                                              |
-| `trigger`    | What started the run: `ci` when `CI` is on, `hook` when `PRE_COMMIT` is on (pre-commit and prek set it for hooks), `agent` when a coding agent started the run, `terminal` when standard input is a terminal, else `other`. The first match applies. |
-| `agent`      | For `agent`, the name of the agent: `claude-code` (`CLAUDECODE`), `gemini-cli` (`GEMINI_CLI`), or `codex` (`CODEX_THREAD_ID`). |
-| `hook_stage` | For `hook`, the git hook stage from `PREK_HOOK_STAGE`, such as `pre-commit` or `pre-push`. pre-commit does not give the stage, so it is null for pre-commit. |
-| `worktree`   | The path of the top of the working tree.                                                                                      |
-| `subdir`     | The working directory relative to the top of the working tree, with `/` separators. `.` at the top.                          |
-| `branch`     | The checked-out branch. Null when HEAD is detached.                                                                           |
-| `head`       | The commit that HEAD points to.                                                                                               |
-| `remote`     | The URL of the `origin` remote, or of the first remote in the git config when there is no `origin`, in the form `host/owner/repo`. gate-cache removes user names and credentials. A local path, or a URL that gate-cache cannot parse without a risk of keeping a credential, gives null. A short alias from a git `insteadOf` rule, such as `gh:owner/repo`, also gives null, because the alias does not name the real host. Later versions can use it to join separate clones of one project. |
-| `machine`    | A random ID that gate-cache creates on the first recorded run and stores in `machine-id` in the data directory. It is the stable key for the machine. |
-| `host`       | The host name of the machine. It is a label, and it can change.                                                               |
-| `platform`   | The platform, as Python's `sys.platform` gives it, such as `darwin` or `linux`.                                               |
-| `overhead`   | The seconds that gate-cache used to find the tree key and look up the marker. Null when caching was off.                      |
-| `marker_age` | For a skip, the seconds since gate-cache wrote the marker.                                                                    |
-| `cpu`        | The user and system CPU seconds of the command. Null for a skip.                                                              |
-| `max_rss`    | The peak memory of the command in bytes. It is the peak of all commands that the gate-cache process ran. Null for a skip.     |
-| `command`    | The command line, when `--name` gives a name that is not the command line. Null otherwise, because the name is then the command line. |
+| Field            | Value                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `v`              | The line format version, `1`.                                                                                                  |
+| `ts`             | The Unix time at which the run finished.                                                                                       |
+| `id`             | A random ID for the event.                                                                                                     |
+| `repo`           | The path of the git common directory of the repository.                                                                        |
+| `name`           | The gate name.                                                                                                                 |
+| `tree`           | The tree key that the run used. Null when caching was off or the tree was unknown.                                             |
+| `paths`          | The `--path` values.                                                                                                           |
+| `outcome`        | What the run did. See [Outcomes](#outcomes).                                                                                   |
+| `duration`       | The seconds that the command ran. Null for a skip.                                                                             |
+| `saved`          | For a skip, the run time stored in the marker.                                                                                 |
+| `exit_code`      | The exit code of the command. Null for a skip.                                                                                 |
+| `reason`         | For an `uncached` run, why caching was off.                                                                                    |
+| `version`        | The version of gate-cache that recorded the run.                                                                               |
+| `trigger`        | What started the run: `ci` when `CI` is on, `hook` when `PRE_COMMIT` is on (pre-commit and prek set it for hooks), `agent` when a coding agent started the run, `terminal` when standard input is a terminal, else `other`. The first match applies. |
+| `agent`          | For `agent`, the name of the agent: `claude-code` (`CLAUDECODE`), `gemini-cli` (`GEMINI_CLI`), or `codex` (`CODEX_THREAD_ID`). |
+| `hook_stage`     | For `hook`, the git hook stage from `PREK_HOOK_STAGE`, such as `pre-commit` or `pre-push`. pre-commit does not give the stage, so it is null for pre-commit. |
+| `worktree`       | The path of the top of the working tree.                                                                                       |
+| `subdir`         | The working directory relative to the top of the working tree, with `/` separators. `.` at the top.                            |
+| `branch`         | The checked-out branch. Null when HEAD is detached.                                                                            |
+| `head`           | The commit that HEAD points to.                                                                                                |
+| `remote`         | The URL of the `origin` remote, or of the first remote in the git config when there is no `origin`, in the form `host/owner/repo`. gate-cache removes user names and credentials. A local path, or a URL that gate-cache cannot parse without a risk of keeping a credential, gives null. A short alias from a git `insteadOf` rule, such as `gh:owner/repo`, also gives null, because the alias does not name the real host. Later versions can use it to join separate clones of one project. |
+| `machine`        | A random ID that gate-cache creates on the first recorded run and stores in `machine-id` in the data directory. It is the stable key for the machine. |
+| `host`           | The host name of the machine. It is a label, and it can change.                                                                |
+| `platform`       | The platform, as Python's `sys.platform` gives it, such as `darwin` or `linux`.                                                |
+| `overhead`       | The seconds that gate-cache used to find the tree key and look up the marker. Null when caching was off.                       |
+| `marker_age`     | For a skip, the seconds since gate-cache wrote the marker.                                                                     |
+| `cpu`            | The user and system CPU seconds of the command. Null for a skip.                                                               |
+| `max_rss`        | The peak memory of the command in bytes. It is the peak of all commands that the gate-cache process ran. Null for a skip.      |
+| `command`        | The command line, when `--name` gives a name that is not the command line. Null otherwise, because the name is then the command line. |
+| `waited`         | The seconds that the run waited for another run of the same gate to finish. Null when the run did not wait.                    |
+| `wait_timed_out` | Present and `true` only when the wait ended at the timeout. The run then continued without the other run.                      |
+| `reported`       | Present and `true` only when the run reported the failure of the run it waited for and did not run the command. `reason` is then `failed in another run, not rerun`. |
 
 gate-cache reads these values from files and the environment, and it runs no extra git command to get them. The one exception is `repo` for a run without the cache, which needs one git command. When recording is off, gate-cache does none of this work.
 
@@ -230,10 +256,12 @@ Each event has one outcome:
 | `skip`            | A marker matched, so the command did not run. `saved` holds the duration in the marker.  |
 | `pass`            | The command exited 0 and gate-cache wrote a marker.                                      |
 | `pass_unrecorded` | The command exited 0, but gate-cache recorded no pass. The run changed the tree, or gate-cache could not check the tree. |
-| `fail`            | The command exited with a code other than 0.                                             |
+| `fail`            | The command exited with a code other than 0, or the run reported the failure of another run. See below. |
 | `uncached`        | The command ran without the cache. `reason` holds the printed cause, such as caching turned off by `CI` or `GATE_CACHE_DISABLE`, or an unknown tree. |
 
 `saved` is empty for a skip whose marker has no valid `duration`.
+
+A run that waited for another run, and then reports that run's failure instead of running the command, has outcome `fail`, `duration` null, `reason` `failed in another run, not rerun`, and `reported` true.
 
 ### Inbox and archive
 

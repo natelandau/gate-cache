@@ -1,21 +1,27 @@
 """Tests for the cached gate flow, status, and clear."""
 
+import contextlib
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
+from gate_cache import gate as gate_module
 from gate_cache import scratch
 from gate_cache.gate import clear_cache, disabled_reason, gate_status, marker_max_age_days, run_gate
-from gate_cache.markers import marker_dir, miss_path
+from gate_cache.gate_lock import HELD_ENV, LOCK_DIRNAME, GateLock, Holder, lock_path, read_holder
+from gate_cache.markers import marker_dir, marker_path, miss_path, write_marker, write_miss
 from gate_cache.runner import ChildResult
-from gate_cache.snapshot import Snapshot
+from gate_cache.snapshot import Snapshot, take_snapshot
+from gate_cache.wait_settings import FailedBehavior, WaitSettings
 from tests.conftest import Counter, git, hide_common_dir, markers, misses, read_records
 
 NAME = "pytest"
@@ -1136,3 +1142,604 @@ def test_named_status_text_shows_duration(
 
     out = capfd.readouterr().out
     assert re.search(r"result:\s+hit\n\s*duration:\s+1m 34s\n", out)
+
+
+def _current_lock(name: str = NAME) -> tuple[Snapshot, Path]:
+    """Return the snapshot of the working copy and its lock file for a gate name."""
+    snap = take_snapshot()
+    assert snap.key is not None
+    assert snap.common_dir is not None
+    return snap, lock_path(snap.common_dir, snap.key, name)
+
+
+def _write_marker(snap: Snapshot, name: str = NAME) -> None:
+    assert snap.key is not None
+    assert snap.common_dir is not None
+    write_marker(
+        marker_path(snap.common_dir, snap.key, name), tree=snap.key, name=name, command=["x"]
+    )
+
+
+def _write_miss(snap: Snapshot, exit_code: int, name: str = NAME) -> None:
+    assert snap.key is not None
+    assert snap.common_dir is not None
+    write_miss(
+        miss_path(snap.common_dir, snap.key, name),
+        tree=snap.key,
+        name=name,
+        command=["x"],
+        exit_code=exit_code,
+        reason=f"exit code {exit_code}",
+    )
+
+
+@dataclass
+class WaitSpy:
+    """What a test sees of the waiter's calls to GateLock.wait."""
+
+    entered: threading.Event = field(default_factory=threading.Event)
+    timeouts: list[float] = field(default_factory=list)
+
+
+@pytest.fixture
+def wait_spy(monkeypatch: pytest.MonkeyPatch) -> WaitSpy:
+    """Record each wait for the lock and signal when the first one starts."""
+    spy = WaitSpy()
+    real = GateLock.wait
+
+    def wait(path: Path, *, timeout: float) -> GateLock | None:
+        spy.timeouts.append(timeout)
+        spy.entered.set()
+        return real(path, timeout=timeout)
+
+    monkeypatch.setattr(GateLock, "wait", wait)
+    return spy
+
+
+@dataclass
+class FakeClock:
+    """A clock for the gate module whose monotonic time a test can move forward."""
+
+    offset: float = 0.0
+    real: bool = True
+
+    def monotonic(self) -> float:
+        """Return the offset, plus the real monotonic time unless `real` is off."""
+        return (time.monotonic() if self.real else 0.0) + self.offset
+
+    @staticmethod
+    def time() -> float:
+        """Return the real wall-clock time."""
+        return time.time()
+
+
+@pytest.fixture
+def fake_clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
+    """Replace the clock the gate module reads, so tests can simulate long waits."""
+    clock = FakeClock()
+    monkeypatch.setattr("gate_cache.gate.time", clock)
+    return clock
+
+
+OtherRun = Callable[..., contextlib.AbstractContextManager[GateLock]]
+
+
+@pytest.fixture
+def other_run(wait_spy: WaitSpy) -> OtherRun:
+    """Hold a lock as another run would, and finish that run once the waiter waits."""
+
+    @contextlib.contextmanager
+    def hold(
+        path: Path, *, release: bool = True, then: Callable[[], None] | None = None
+    ) -> Generator[GateLock]:
+        lock = GateLock.try_acquire(path)
+        assert lock is not None
+
+        def finish() -> None:
+            wait_spy.entered.wait(timeout=30)
+            # Coarse filesystem clocks can stamp a file a few ms behind time.time().
+            time.sleep(0.05)
+            if then is not None:
+                then()
+            if release:
+                lock.release()
+
+        thread = threading.Thread(target=finish) if release or then is not None else None
+        if thread is not None:
+            thread.start()
+        try:
+            yield lock
+        finally:
+            wait_spy.entered.set()
+            if thread is not None:
+                thread.join()
+            lock.release()
+
+    return hold
+
+
+def test_waits_then_skips_on_other_runs_pass(
+    git_repo: Path, counter: Counter, other_run: OtherRun, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a run waits for a run with the same key, then skips on its pass."""
+    snap, path = _current_lock()
+    with other_run(path, then=lambda: _write_marker(snap)):
+        assert run_gate(NAME, counter.argv()) == 0
+
+    err = capfd.readouterr().err
+    assert counter.count == 0
+    assert f"{NAME} is running in " in err
+    assert f"{NAME} already passed on {snap.label}, skipping" in err
+
+
+def test_wait_message_names_holder_worktree(
+    git_repo: Path, counter: Counter, other_run: OtherRun, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify the waiting line names the holder's worktree and its age."""
+    snap, path = _current_lock()
+    with other_run(path, then=lambda: _write_marker(snap)) as lock:
+        lock.write_holder(Path("/elsewhere/wt"))
+        run_gate(NAME, counter.argv())
+
+    assert (
+        f"gate-cache: {NAME} is running in /elsewhere/wt (started <1s ago), waiting\n"
+        in capfd.readouterr().err
+    )
+
+
+def test_waits_then_runs_when_other_run_failed(
+    git_repo: Path, counter: Counter, other_run: OtherRun
+) -> None:
+    """Verify the default behavior runs the command when the awaited run failed."""
+    snap, path = _current_lock()
+    with other_run(path, then=lambda: _write_miss(snap, 1)):
+        assert run_gate(NAME, counter.argv()) == 0
+
+    assert counter.count == 1
+    assert len(markers(git_repo)) == 1
+
+
+def test_report_returns_other_runs_exit_code(
+    git_repo: Path, counter: Counter, other_run: OtherRun, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify report exits with the awaited run's exit code and does not run."""
+    snap, path = _current_lock()
+    with other_run(path, then=lambda: _write_miss(snap, 3)):
+        code = run_gate(NAME, counter.argv(), wait=WaitSettings(failed="report"))
+
+    assert code == 3
+    assert counter.count == 0
+    assert (
+        f"{NAME} failed on {snap.label} in another process (exit 3), not running again"
+        in capfd.readouterr().err
+    )
+
+
+def test_report_runs_after_files_changed_miss(
+    git_repo: Path, counter: Counter, other_run: OtherRun
+) -> None:
+    """Verify a miss with exit code 0 makes even a reporting waiter run."""
+    snap, path = _current_lock()
+    with other_run(path, then=lambda: _write_miss(snap, 0)):
+        assert run_gate(NAME, counter.argv(), wait=WaitSettings(failed="report")) == 0
+
+    assert counter.count == 1
+
+
+def test_report_ignores_miss_from_before_wait(
+    git_repo: Path, counter: Counter, other_run: OtherRun
+) -> None:
+    """Verify a failure recorded before the wait started is not reported."""
+    snap, path = _current_lock()
+    _write_miss(snap, 1)
+    miss = miss_path(git_repo / ".git", snap.key or "", NAME)
+    stamp = time.time() - 10
+    os.utime(miss, (stamp, stamp))
+    with other_run(path):
+        assert run_gate(NAME, counter.argv(), wait=WaitSettings(failed="report")) == 0
+
+    assert counter.count == 1
+
+
+@pytest.mark.parametrize("failed", ["rerun", "report"])
+def test_runs_when_other_run_left_no_record(
+    git_repo: Path, counter: Counter, other_run: OtherRun, failed: FailedBehavior
+) -> None:
+    """Verify an awaited run that recorded nothing makes the waiter run."""
+    _, path = _current_lock()
+    with other_run(path):
+        assert run_gate(NAME, counter.argv(), wait=WaitSettings(failed=failed)) == 0
+
+    assert counter.count == 1
+
+
+def test_fresh_snapshot_after_wait(git_repo: Path, counter: Counter, other_run: OtherRun) -> None:
+    """Verify the waiter decides on content after the wait, not on the key it waited on."""
+    snap, path = _current_lock()
+
+    def finish() -> None:
+        _write_marker(snap)
+        (git_repo / "a.txt").write_text("edited while waiting\n")
+
+    with other_run(path, then=finish):
+        assert run_gate(NAME, counter.argv()) == 0
+
+    assert counter.count == 1
+    assert len(markers(git_repo)) == 2
+
+
+def test_fresh_snapshot_after_wait_checks_new_marker(
+    git_repo: Path, counter: Counter, other_run: OtherRun, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a waiter whose content changed checks the new key's marker before running."""
+    _, path = _current_lock()
+    (git_repo / "a.txt").write_text("next\n")
+    new_snap = take_snapshot()
+    (git_repo / "a.txt").write_text("a\n")
+
+    def finish() -> None:
+        (git_repo / "a.txt").write_text("next\n")
+        _write_marker(new_snap)
+
+    with other_run(path, then=finish):
+        assert run_gate(NAME, counter.argv()) == 0
+
+    assert counter.count == 0
+    assert f"already passed on {new_snap.label}" in capfd.readouterr().err
+
+
+def test_fresh_snapshot_unknown_after_wait_runs_uncached(
+    git_repo: Path, counter: Counter, other_run: OtherRun, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a tree that becomes unknown during the wait runs the command without cache."""
+    _, path = _current_lock()
+
+    def finish() -> None:
+        git("update-index", "--skip-worktree", "a.txt", cwd=git_repo)
+
+    with other_run(path, then=finish):
+        assert run_gate(NAME, counter.argv()) == 0
+
+    assert counter.count == 1
+    assert "running without cache" in capfd.readouterr().err
+
+
+def test_wait_timeout_runs_anyway(
+    git_repo: Path, counter: Counter, other_run: OtherRun, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a wait that reaches the timeout runs the command without the lock."""
+    _, path = _current_lock()
+    with other_run(path, release=False):
+        assert run_gate(NAME, counter.argv(), wait=WaitSettings(timeout=1)) == 0
+
+    assert counter.count == 1
+    assert (
+        f"{NAME} still running in another process after 1s, running anyway"
+        in capfd.readouterr().err
+    )
+
+
+def test_wait_timeout_runs_on_fresh_snapshot(
+    git_repo: Path, counter: Counter, other_run: OtherRun
+) -> None:
+    """Verify a run that timed out records its pass on the content as it is after the wait."""
+    _, path = _current_lock()
+
+    def edit() -> None:
+        (git_repo / "a.txt").write_text("edited while waiting\n")
+
+    with other_run(path, release=False, then=edit):
+        assert run_gate(NAME, counter.argv(), wait=WaitSettings(timeout=1)) == 0
+        fresh, _ = _current_lock()
+
+    assert counter.count == 1
+    assert [p.name for p in markers(git_repo)] == [marker_path(Path(), fresh.key or "", NAME).name]
+
+
+def test_waits_share_one_timeout(
+    git_repo: Path, counter: Counter, fake_clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a key change during a wait cannot restart the wait timeout."""
+    fake_clock.real = False
+    _, first = _current_lock()
+    (git_repo / "a.txt").write_text("next\n")
+    _, second = _current_lock()
+    (git_repo / "a.txt").write_text("a\n")
+    held_first = GateLock.try_acquire(first)
+    held_second = GateLock.try_acquire(second)
+    assert held_first is not None
+    assert held_second is not None
+    timeouts: list[float] = []
+
+    def wait(path: Path, *, timeout: float) -> GateLock | None:
+        timeouts.append(timeout)
+        if path == first:
+            fake_clock.offset += 4
+            (git_repo / "a.txt").write_text("next\n")
+            held_first.release()
+            return GateLock.try_acquire(path)
+        fake_clock.offset += timeout
+        return None
+
+    monkeypatch.setattr(GateLock, "wait", wait)
+    try:
+        assert run_gate(NAME, counter.argv(), wait=WaitSettings(timeout=10)) == 0
+    finally:
+        held_first.release()
+        held_second.release()
+
+    assert counter.count == 1
+    assert timeouts == [10, 6]
+
+
+def test_timeout_zero_runs_without_waiting(
+    git_repo: Path,
+    counter: Counter,
+    other_run: OtherRun,
+    wait_spy: WaitSpy,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify a zero timeout runs at once when the lock is taken."""
+    _, path = _current_lock()
+    with other_run(path, release=False):
+        assert run_gate(NAME, counter.argv(), wait=WaitSettings(timeout=0)) == 0
+
+    assert wait_spy.timeouts == []
+    assert counter.count == 1
+    assert "is running in" not in capfd.readouterr().err
+
+
+def test_nested_call_skips_lock(
+    git_repo: Path,
+    counter: Counter,
+    other_run: OtherRun,
+    wait_spy: WaitSpy,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify a call nested in the lock holder's command runs without waiting on it."""
+    _, path = _current_lock()
+    with other_run(path, release=False):
+        monkeypatch.setenv(HELD_ENV, path.name)
+        assert run_gate(NAME, counter.argv(), wait=WaitSettings(timeout=2)) == 0
+
+    assert wait_spy.timeouts == []
+    assert counter.count == 1
+    assert "is running in" not in capfd.readouterr().err
+
+
+def test_lock_error_warns_and_runs(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a lock that cannot be created warns and the gate still runs and records."""
+    snap, _ = _current_lock()
+    assert snap.common_dir is not None
+    (snap.common_dir / LOCK_DIRNAME).write_text("")
+
+    assert run_gate(NAME, counter.argv()) == 0
+
+    assert counter.count == 1
+    assert f"warning: could not lock {NAME}: " in capfd.readouterr().err
+    assert len(markers(git_repo)) == 1
+
+
+def test_lock_error_while_waiting_warns_and_runs(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify a lock error during the wait warns, keeps the wait time, and runs unlocked."""
+    _, path = _current_lock()
+
+    def fail(*_args: object, **_kwargs: object) -> GateLock | None:
+        time.sleep(0.05)
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(GateLock, "wait", fail)
+    held = GateLock.try_acquire(path)
+    assert held is not None
+    try:
+        assert run_gate(NAME, counter.argv()) == 0
+    finally:
+        held.release()
+
+    assert counter.count == 1
+    assert f"warning: could not lock {NAME}: [Errno 13] Permission denied" in capfd.readouterr().err
+    event = json.loads((stats_dirs[1] / "events.jsonl").read_text())
+    assert event["outcome"] == "pass"
+    assert event["waited"] > 0
+    assert "wait_timed_out" not in event
+
+
+def test_lock_free_but_marker_written_meanwhile_skips(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a run that takes the lock re-checks the marker another run just wrote."""
+    snap, _ = _current_lock()
+    real = GateLock.try_acquire
+
+    def finish_other_run_first(path: Path) -> GateLock | None:
+        _write_marker(snap)
+        return real(path)
+
+    monkeypatch.setattr(GateLock, "try_acquire", finish_other_run_first)
+
+    assert run_gate(NAME, counter.argv()) == 0
+    assert counter.count == 0
+
+
+def test_waited_recorded_in_stats(
+    git_repo: Path,
+    counter: Counter,
+    other_run: OtherRun,
+    wait_spy: WaitSpy,
+    fake_clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify skips, timeouts, and reported failures after a wait record the wait."""
+    snap, path = _current_lock()
+    with other_run(path, then=lambda: _write_marker(snap)):
+        run_gate(NAME, counter.argv())
+
+    commit_change(git_repo, "b\n")
+    _, path = _current_lock()
+
+    def time_out(*_args: object, **_kwargs: object) -> GateLock | None:
+        fake_clock.offset += 1000
+        return None
+
+    with monkeypatch.context() as patch, other_run(path, release=False):
+        patch.setattr(GateLock, "wait", time_out)
+        run_gate(NAME, counter.argv(), wait=WaitSettings(timeout=1))
+
+    commit_change(git_repo, "c\n")
+    snap, path = _current_lock()
+    wait_spy.entered.clear()
+    with other_run(path, then=lambda: _write_miss(snap, 2)):
+        run_gate(NAME, counter.argv(), wait=WaitSettings(failed="report"))
+
+    lines = (stats_dirs[1] / "events.jsonl").read_text().splitlines()
+    skip, timed_out, reported = (json.loads(line) for line in lines)
+    assert skip["outcome"] == "skip"
+    assert skip["waited"] > 0
+    assert "wait_timed_out" not in skip
+    assert "reported" not in skip
+    assert timed_out["outcome"] == "pass"
+    assert timed_out["wait_timed_out"] is True
+    assert timed_out["waited"] >= 1000
+    assert timed_out["overhead"] < 1000
+    assert reported["outcome"] == "fail"
+    assert reported["duration"] is None
+    assert reported["exit_code"] == 2
+    assert reported["reason"] == "failed in another run, not rerun"
+    assert reported["reported"] is True
+    assert reported["waited"] > 0
+
+
+def test_run_without_wait_records_no_waited(
+    git_repo: Path, counter: Counter, stats_on: None, stats_dirs: tuple[Path, Path]
+) -> None:
+    """Verify a run that never waited leaves `waited` empty."""
+    run_gate(NAME, counter.argv())
+
+    event = json.loads((stats_dirs[1] / "events.jsonl").read_text())
+    assert event["waited"] is None
+
+
+def test_holder_publishes_held_env_to_child(
+    git_repo: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify the command sees the lock it runs under in the nested-call variable."""
+    _, path = _current_lock()
+    code = f"import os; print(os.environ[{HELD_ENV!r}])"
+
+    assert run_gate(NAME, [sys.executable, "-c", code]) == 0
+
+    assert path.name in capfd.readouterr().out.strip().split(":")
+    assert HELD_ENV not in os.environ
+    lock = GateLock.try_acquire(path)
+    assert lock is not None
+    lock.release()
+
+
+def test_new_holder_recorded_before_prerun_checks(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a run arriving during the holder's pre-run checks sees the new holder."""
+    snap, path = _current_lock()
+    stale = GateLock.try_acquire(path)
+    assert stale is not None
+    stale.write_holder(Path("/stale/wt"))
+    stale.release()
+    seen: list[Holder | None] = []
+    real = gate_module.marker_exists
+
+    def marker_exists(marker: Path) -> bool:
+        seen.append(read_holder(path))
+        return real(marker)
+
+    monkeypatch.setattr(gate_module, "marker_exists", marker_exists)
+    assert run_gate(NAME, counter.argv()) == 0
+
+    before_lock, during_checks = seen
+    assert before_lock is not None
+    assert before_lock.worktree == "/stale/wt"
+    assert during_checks is not None
+    assert during_checks.worktree == str(snap.root)
+    assert during_checks.pid == os.getpid()
+
+
+def _time_out(fake_clock: FakeClock, then: Callable[[], None] | None = None) -> Callable[..., None]:
+    """Return a GateLock.wait stand-in that reaches the timeout at once."""
+
+    def wait(*_args: object, **_kwargs: object) -> None:
+        fake_clock.offset += 1000
+        if then is not None:
+            then()
+
+    return wait
+
+
+def test_timeout_then_unknown_tree_records_timed_out(
+    git_repo: Path,
+    counter: Counter,
+    other_run: OtherRun,
+    fake_clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify an uncached run after a timed-out wait records that the wait timed out."""
+    _, path = _current_lock()
+
+    def hide_tree() -> None:
+        git("update-index", "--skip-worktree", "a.txt", cwd=git_repo)
+
+    monkeypatch.setattr(GateLock, "wait", _time_out(fake_clock, then=hide_tree))
+    with other_run(path, release=False):
+        assert run_gate(NAME, counter.argv(), wait=WaitSettings(timeout=1)) == 0
+
+    event = json.loads((stats_dirs[1] / "events.jsonl").read_text())
+    assert event["outcome"] == "uncached"
+    assert event["wait_timed_out"] is True
+    assert event["waited"] >= 1000
+
+
+def test_timeout_publishes_held_env_to_child(
+    git_repo: Path,
+    other_run: OtherRun,
+    fake_clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify a run that timed out lists the hung lock, so a nested call does not wait again."""
+    _, path = _current_lock()
+    monkeypatch.setattr(GateLock, "wait", _time_out(fake_clock))
+    code = f"import os; print(os.environ[{HELD_ENV!r}])"
+
+    with other_run(path, release=False):
+        assert run_gate(NAME, [sys.executable, "-c", code], wait=WaitSettings(timeout=1)) == 0
+
+    assert path.name in capfd.readouterr().out.strip().split(":")
+    assert HELD_ENV not in os.environ
+
+
+def test_timeout_zero_publishes_held_env_to_child(
+    git_repo: Path,
+    other_run: OtherRun,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify a run that skipped a held lock lists it, so a nested call does not wait on it."""
+    _, path = _current_lock()
+    code = f"import os; print(os.environ[{HELD_ENV!r}])"
+
+    with other_run(path, release=False):
+        assert run_gate(NAME, [sys.executable, "-c", code], wait=WaitSettings(timeout=0)) == 0
+
+    assert path.name in capfd.readouterr().out.strip().split(":")
+    assert HELD_ENV not in os.environ

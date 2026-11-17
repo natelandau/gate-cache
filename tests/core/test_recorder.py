@@ -341,8 +341,8 @@ def test_gate_path_does_not_load_dashboard(
     script = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from gate_cache.stats import config\n"
-        "config.config_path = lambda: Path(sys.argv[1])\n"
+        "from gate_cache import config as core_config\n"
+        "core_config.config_path = lambda: Path(sys.argv[1])\n"
         "from gate_cache.gate import run_gate\n"
         "assert run_gate('t', ['true']) == 0\n"
         "assert run_gate('t', ['true']) == 0\n"
@@ -415,6 +415,28 @@ def test_new_fields_default_to_null() -> None:
     assert data["v"] == 1
     assert all(data[field] is None for field in CONTEXT_FIELDS)
     assert "command_truncated" not in data
+
+
+def test_waited_is_encoded() -> None:
+    """A wait is written as `waited`, with no timeout flag."""
+    data = json.loads(long_event(host=None, command=None, waited=12.5).to_line())
+    assert data["waited"] == 12.5
+    assert "wait_timed_out" not in data
+
+
+def test_waited_defaults_to_null() -> None:
+    """An event with no wait writes `waited` as null."""
+    data = json.loads(long_event(host=None, command=None).to_line())
+    assert data["waited"] is None
+
+
+def test_wait_timed_out_is_encoded_only_when_set() -> None:
+    """The timeout flag appears only for a wait that timed out."""
+    data = json.loads(
+        long_event(host=None, command=None, waited=900.0, wait_timed_out=True).to_line()
+    )
+    assert data["wait_timed_out"] is True
+    assert "wait_timed_out" not in json.loads(long_event(host=None, command=None).to_line())
 
 
 def test_line_limit_drops_host_first() -> None:
@@ -679,3 +701,10 @@ def test_clear_keeps_machine_id(
     assert stats_clear(confirmed=True) == 0
     assert not (stats_dirs[1] / "events.jsonl").exists()
     assert machine.read_text() == identity
+
+
+def test_reported_is_encoded_only_when_set() -> None:
+    """Verify a reported failure carries `reported`, and other events leave it out."""
+    data = json.loads(long_event(host=None, command=None, reported=True).to_line())
+    assert data["reported"] is True
+    assert "reported" not in json.loads(long_event(host=None, command=None).to_line())

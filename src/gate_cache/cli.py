@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from gate_cache import __version__
+from gate_cache import config as core_config
 from gate_cache.console import kv, say
 from gate_cache.gate import (
     DEFAULT_MAX_AGE_DAYS,
@@ -19,9 +20,10 @@ from gate_cache.gate import (
 )
 from gate_cache.markers import MARKER_DIRNAME
 from gate_cache.stats import config as stats_config
+from gate_cache.wait_settings import FailedBehavior, parse_failed, parse_timeout, wait_settings
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 _USAGE_ERROR = 2
 _INTERRUPTED = 130
@@ -31,12 +33,38 @@ _NEEDS_SEPARATOR = "put -- before the command, e.g. gate-cache -- uv run pytest"
 _NEEDS_VALUE = {
     "--name": _NAME_NEEDS_VALUE,
     "--path": "--path needs a value, e.g. gate-cache --path src/ -- uv run pytest",
+    "--wait-timeout": (
+        "--wait-timeout needs a value, e.g. gate-cache --wait-timeout 300 -- uv run pytest"
+    ),
+    "--on-wait-failure": (
+        "--on-wait-failure needs a value, e.g. gate-cache --on-wait-failure report -- uv run pytest"
+    ),
 }
 _NAME_REPEATED = "--name given more than once"
+# Each wait flag: the _WaitFlags field it sets, its parser, and the invalid-value message.
+_WAIT_FLAGS: dict[str, tuple[str, Callable[[str], object | None], str]] = {
+    "--wait-timeout": (
+        "timeout",
+        parse_timeout,
+        (
+            "--wait-timeout takes whole seconds, 0 or more, "
+            "e.g. gate-cache --wait-timeout 300 -- uv run pytest"
+        ),
+    ),
+    "--on-wait-failure": (
+        "failed",
+        parse_failed,
+        (
+            "--on-wait-failure takes rerun or report, e.g. "
+            "gate-cache --on-wait-failure report -- uv run pytest"
+        ),
+    ),
+}
 _NO_COMMAND = "no command given after --"
 
 _USAGE = """\
-gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...]
+gate-cache [--name NAME] [--path PATHSPEC]... [--wait-timeout SECONDS]
+                  [--on-wait-failure rerun|report] -- COMMAND [ARGS...]
        gate-cache status [--name NAME] [--path PATHSPEC]... [--json] [-- COMMAND...]
        gate-cache clear [--yes]
        gate-cache stats [on|off|clear [--yes]]
@@ -54,11 +82,12 @@ passed on tree aaff74984ccc, skipping", and exits 0.
 AI agents: run `gate-cache --skill` and read the guide before you run, add, or
 change a gate.
 
--- is required, and only --name and --path can come before it. Everything after
--- is the command, verbatim. gate-cache does not use a shell. Without --name,
-the gate name is the command itself, so each set of arguments has its own
-records. Give --name to share records between commands that check the same
-thing, or to key on inputs that the tree does not cover.
+-- is required, and only --name, --path, --wait-timeout, and --on-wait-failure
+can come before it. Everything after -- is the command, verbatim. gate-cache
+does not use a shell. Without --name, the gate name is the command itself, so
+each set of arguments has its own records. Give --name to share records between
+commands that check the same thing, or to key on inputs that the tree does not
+cover.
 
 Only the name and the file content are keyed. The working directory is not, so
 a command whose meaning depends on it needs a distinct --name. To also key on an
@@ -73,6 +102,12 @@ top of the work tree. The working directory has no effect. Repeat --path for
 each path. The gate skips when nothing under its paths changed, so a path that
 is missing from the list hides a change that must run the command. A path that
 matches no file runs the command without the cache.
+
+A run waits for another run of the same gate that is still in progress, then
+skips when that run passed. --wait-timeout SECONDS sets the longest wait (default
+900, 0 never waits). --on-wait-failure sets what happens when the awaited run
+failed: rerun (default) runs the command, report exits with the failure without
+a rerun. Both flags override the [wait] table of the config file.
 
 A pass is recorded only when the command exits 0 and leaves the files
 unchanged. A command that changes files prints:
@@ -409,14 +444,14 @@ def _stats(action: str | None) -> int:
             stats_config.write_enabled(enabled=action == "on")
         except (OSError, stats_config.ConfigError) as error:
             reason = error.strerror if isinstance(error, OSError) else error
-            say(f"could not write {stats_config.config_path()}: {reason or error}")
+            say(f"could not write {core_config.config_path()}: {reason or error}")
             return 1
     setting = stats_config.stats_setting()
     kv(
         {
             "recording": "on" if setting.enabled else "off",
             "decided by": setting.source,
-            "config": str(stats_config.config_path()),
+            "config": str(core_config.config_path()),
             "data": str(stats_config.state_dir()),
         }
     )
@@ -430,6 +465,8 @@ class _RunArgs:
     name: str | None
     paths: list[str]
     command: list[str]
+    wait_timeout: int | None = None
+    on_wait_failure: FailedBehavior | None = None
 
 
 def _option_value(tokens: list[str], index: int, option: str) -> tuple[str, int] | None:
@@ -453,23 +490,59 @@ def _option_value(tokens: list[str], index: int, option: str) -> tuple[str, int]
     return value, after
 
 
+@dataclass
+class _WaitFlags:
+    """The wait flags seen so far while splitting a run invocation."""
+
+    timeout: int | None = None
+    failed: FailedBehavior | None = None
+
+
+def _wait_flag(tokens: list[str], index: int, wait: _WaitFlags) -> int | None:
+    """Read a wait flag at index into wait, returning the next index, or None if it is not one.
+
+    Raises:
+        _UsageError: When the flag is repeated or its value is invalid.
+    """
+    for flag, (field, parse, invalid) in _WAIT_FLAGS.items():
+        if (found := _option_value(tokens=tokens, index=index, option=flag)) is None:
+            continue
+        if getattr(wait, field) is not None:
+            repeated = f"{flag} given more than once"
+            raise _UsageError(repeated)
+        value, after = found
+        if (parsed := parse(value)) is None:
+            raise _UsageError(invalid)
+        setattr(wait, field, parsed)
+        return after
+    return None
+
+
 def _split_run(tokens: list[str]) -> _RunArgs:
     """Split a run invocation into its options and the command after the first --.
 
-    Only `--name` and `--path`, each as `--opt X` or `--opt=X`, may precede `--`, so a stray
-    option such as `--version` or the first word of the command can never be mistaken for
-    one of ours.
+    Only `--name`, `--path`, `--wait-timeout`, and `--on-wait-failure`, each as `--opt X`
+    or `--opt=X`, may precede `--`, so a stray option such as `--version` or the first word
+    of the command can never be mistaken for one of ours.
 
     Raises:
         _UsageError: When anything else precedes `--`, `--` is missing, an option is
-            missing its value, or `--name` is given twice.
+            missing its value or invalid, or `--name`, `--wait-timeout`, or
+            `--on-wait-failure` is given twice.
     """
     name: str | None = None
     paths: list[str] = []
+    wait = _WaitFlags()
     index = 0
     while index < len(tokens):
         if tokens[index] == "--":
-            return _RunArgs(name=name, paths=paths, command=tokens[index + 1 :])
+            return _RunArgs(
+                name=name,
+                paths=paths,
+                command=tokens[index + 1 :],
+                wait_timeout=wait.timeout,
+                on_wait_failure=wait.failed,
+            )
         if (found := _option_value(tokens=tokens, index=index, option="--name")) is not None:
             if name is not None:
                 raise _UsageError(_NAME_REPEATED)
@@ -477,6 +550,8 @@ def _split_run(tokens: list[str]) -> _RunArgs:
         elif (found := _option_value(tokens=tokens, index=index, option="--path")) is not None:
             value, index = found
             paths.append(value)
+        elif (found := _wait_flag(tokens, index, wait)) is not None:
+            index = found
         else:
             break
     raise _UsageError(_NEEDS_SEPARATOR)
@@ -507,6 +582,22 @@ def _status_command(tokens: list[str]) -> int:
     return gate_status(args.name, as_json=args.as_json, paths=args.path)
 
 
+def _run_command(tokens: list[str]) -> int:
+    """Run the gate for a run invocation and return its exit code.
+
+    Raises:
+        _UsageError: When the invocation is malformed.
+    """
+    run = _split_run(tokens)
+    if not run.command:
+        raise _UsageError(_NO_COMMAND)
+    name = shlex.join(run.command) if run.name is None else run.name
+    if run.wait_timeout is None and run.on_wait_failure is None:
+        return run_gate(name, run.command, paths=run.paths)
+    wait = wait_settings(timeout=run.wait_timeout, failed=run.on_wait_failure)
+    return run_gate(name, run.command, paths=run.paths, wait=wait)
+
+
 def _dispatch(tokens: list[str]) -> int:
     """Run the invocation in tokens and return its exit code.
 
@@ -530,11 +621,7 @@ def _dispatch(tokens: list[str]) -> int:
 
         return run_dashboard(port=args.port, open_browser=not args.no_browser)
 
-    run = _split_run(tokens)
-    if not run.command:
-        raise _UsageError(_NO_COMMAND)
-    name = shlex.join(run.command) if run.name is None else run.name
-    return run_gate(name, run.command, paths=run.paths)
+    return _run_command(tokens)
 
 
 def main() -> None:
