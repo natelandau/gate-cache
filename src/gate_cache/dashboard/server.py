@@ -65,6 +65,11 @@ class _BadRequestError(ValueError):
     """A query parameter is missing or malformed."""
 
 
+def _is_api(path: str) -> bool:
+    """Return whether a request path names an API endpoint."""
+    return urlsplit(path).path.startswith("/api/")
+
+
 def static_root() -> Path | None:
     """Return the packaged frontend directory, or None when this install has no UI."""
     root = Path(str(resources.files("gate_cache.dashboard") / "static"))
@@ -130,7 +135,6 @@ class _Handler(BaseHTTPRequestHandler):
 
     server: DashboardServer  # ty: ignore[incompatible-mutable-override]
     _headers_sent = False
-    _is_api = False
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """Silence request logging."""
@@ -143,12 +147,17 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache_control)
-        self.send_header("X-Content-Type-Options", "nosniff")
-        if not self._is_api:
-            for name, value in _PAGE_HEADERS:
-                self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
+
+    def end_headers(self) -> None:
+        """Add the security headers to every response, including the stdlib error pages."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # A request line too malformed to parse leaves no path, so it gets the page headers.
+        if not _is_api(getattr(self, "path", "")):
+            for name, value in _PAGE_HEADERS:
+                self.send_header(name, value)
+        super().end_headers()
 
     def _json(self, status: int, payload: dict[str, Any]) -> None:
         self._send(status, json.dumps(payload).encode(), "application/json")
@@ -156,11 +165,11 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """Serve one request."""
         self._headers_sent = False
-        parts = urlsplit(self.path)
-        self._is_api = is_api = parts.path.startswith("/api/")
         if self.headers.get("Host") not in self.server.allowed_hosts:
             self._json(_FORBIDDEN, {"error": "forbidden host"})
             return
+        parts = urlsplit(self.path)
+        is_api = _is_api(self.path)
         try:
             if is_api:
                 self._api(parts.path, parse_qs(parts.query, keep_blank_values=True))

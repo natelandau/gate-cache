@@ -197,24 +197,45 @@ def test_traversal_blocked(server: DashboardServer, path: str) -> None:
     assert '<div id="app">' in text(server, path)
 
 
-@pytest.mark.parametrize(
-    "path",
-    ["/", "/gates", "/assets/app.js", "/assets/missing.js"],
-    ids=["index", "spa-fallback", "asset", "missing-asset"],
-)
-def test_page_security_headers(server: DashboardServer, path: str) -> None:
-    """Every response outside the API carries the browser security headers."""
-    _, headers, _ = fetch(server, path)
+def _assert_page_headers(headers: dict[str, str]) -> None:
     assert headers["Content-Security-Policy"] == server_module.CONTENT_SECURITY_POLICY
     assert headers["X-Frame-Options"] == "DENY"
     assert headers["Referrer-Policy"] == "no-referrer"
     assert headers["X-Content-Type-Options"] == "nosniff"
 
 
-def test_csp_allows_no_inline_script(server: DashboardServer) -> None:
+@pytest.mark.parametrize(
+    ("path", "host"),
+    [
+        ("/", None),
+        ("/gates", None),
+        ("/assets/app.js", None),
+        ("/assets/missing.js", None),
+        ("/", "evil.example"),
+    ],
+    ids=["index", "spa-fallback", "asset", "missing-asset", "forbidden-host"],
+)
+def test_page_security_headers(server: DashboardServer, path: str, host: str | None) -> None:
+    """Every response outside the API carries the browser security headers."""
+    _assert_page_headers(fetch(server, path, host)[1])
+
+
+def test_stdlib_error_security_headers(server: DashboardServer) -> None:
+    """Errors the stdlib writes, such as 501 for an unsupported method, carry the headers."""
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+    try:
+        conn.request("POST", "/", headers={"Host": f"127.0.0.1:{server.port}"})
+        resp = conn.getresponse()
+        resp.read()
+        assert resp.status == 501
+        _assert_page_headers(dict(resp.getheaders()))
+    finally:
+        conn.close()
+
+
+def test_csp_allows_no_inline_script() -> None:
     """The policy never lets a script run from inline code or eval."""
-    _, headers, _ = fetch(server, "/")
-    policy = headers["Content-Security-Policy"]
+    policy = server_module.CONTENT_SECURITY_POLICY
     assert "unsafe-inline" not in policy
     assert "unsafe-eval" not in policy
     assert "frame-ancestors 'none'" in policy
@@ -227,14 +248,7 @@ def test_api_headers(server: DashboardServer, path: str) -> None:
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert "Content-Security-Policy" not in headers
     assert "X-Frame-Options" not in headers
-
-
-def test_forbidden_host_page_headers(server: DashboardServer) -> None:
-    """A rejected page request still carries the page headers."""
-    status, headers, _ = fetch(server, "/", host="evil.example")
-    assert status == 403
-    assert headers["Content-Security-Policy"] == server_module.CONTENT_SECURITY_POLICY
-    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert "Referrer-Policy" not in headers
 
 
 def test_no_cors(server: DashboardServer) -> None:

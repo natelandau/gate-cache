@@ -11,6 +11,8 @@ from pathlib import Path
 # Package files that a build must ship, as paths inside the wheel
 REQUIRED_FILES = (
     "gate_cache/dashboard/static/index.html",
+    "gate_cache/dashboard/static/theme.js",
+    "gate_cache/dashboard/static/favicon.svg",
     "gate_cache/agent/skill.md",
     "gate_cache/agent/prompt.md",
 )
