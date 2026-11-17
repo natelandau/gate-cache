@@ -5,6 +5,10 @@ import { summaryNote, summaryStats } from "./summary";
 const base: Summary = {
   time_saved: 90,
   unknown_saved_skips: 0,
+  overhead: 0,
+  waited: 0,
+  net_saved: 90,
+  cost_unknown_runs: 0,
   runs: 12,
   skips: 1,
   skip_rate: 0.5,
@@ -21,22 +25,41 @@ describe("summaryStats", () => {
     const stats = summaryStats(base);
     expect(stats.map((s) => [s.label, s.value])).toEqual([
       ["Time saved", "1m 30s"],
+      ["Net saved", "1m 30s"],
       ["Runs", "12"],
       ["Skip rate", "50%"],
       ["Flaky gates", "0"],
       ["Failures", "0"],
     ]);
-    expect(stats[1]?.hint).toBeUndefined();
-    expect(stats[2]?.hint).toBe("1 skip");
+    expect(stats[2]?.hint).toBeUndefined();
+    expect(stats[3]?.hint).toBe("1 skip");
   });
 
   it("flags problems and links flaky gates only when given a link", () => {
     const summary = { ...base, uncached: 2, failures: 3, flaky_gates: 1 };
     const linked = summaryStats(summary, { flakyHref: "#/flaky" });
-    expect(linked[1]?.hint).toBe("2 uncached");
-    expect(linked[3]).toMatchObject({ tone: "flaky", href: "#/flaky" });
-    expect(linked[4]).toMatchObject({ tone: "danger" });
-    expect(summaryStats(summary)[3]?.href).toBeUndefined();
+    expect(linked[2]?.hint).toBe("2 uncached");
+    expect(linked[4]).toMatchObject({ tone: "flaky", href: "#/flaky" });
+    expect(linked[5]).toMatchObject({ tone: "danger" });
+    expect(summaryStats(summary)[4]?.href).toBeUndefined();
+  });
+});
+
+describe("net saved", () => {
+  it("names what it subtracts and explains the sum in its title", () => {
+    const stat = summaryStats({ ...base, overhead: 3, waited: 60, net_saved: 27 })[1];
+    expect(stat).toMatchObject({
+      label: "Net saved",
+      value: "27s",
+      hint: "minus 1m 3s overhead and waits",
+      tone: "default",
+    });
+    expect(stat?.title).toContain("Time saved minus");
+  });
+
+  it("shows a cache that cost more than it saved as negative, in the danger tone", () => {
+    const stat = summaryStats({ ...base, time_saved: 0, overhead: 5, net_saved: -5 })[1];
+    expect(stat).toMatchObject({ value: "\u22125s", tone: "danger" });
   });
 });
 
@@ -49,6 +72,7 @@ describe("summaryStats deltas", () => {
     const previous = { ...base, days: 30, runs: 6 };
     const stats = summaryStats({ ...base, previous });
     expect(stats.map((s) => s.delta?.text)).toEqual([
+      "No change",
       "No change",
       "▲ 100%",
       "No change",
@@ -66,6 +90,16 @@ describe("summaryNote", () => {
     );
     expect(summaryNote({ ...base, unknown_saved_skips: 2 })).toBe(
       "2 skips had no recorded duration, so they add nothing to time saved.",
+    );
+  });
+
+  it("explains runs whose cost net saved leaves out, after the skips", () => {
+    expect(summaryNote({ ...base, cost_unknown_runs: 1 })).toBe(
+      "1 run came from an older gate-cache that did not record overhead or wait time, so net saved leaves out its cost.",
+    );
+    expect(summaryNote({ ...base, unknown_saved_skips: 1, cost_unknown_runs: 3 })).toBe(
+      "1 skip had no recorded duration, so it adds nothing to time saved. " +
+        "3 runs came from an older gate-cache that did not record overhead or wait time, so net saved leaves out their cost.",
     );
   });
 });

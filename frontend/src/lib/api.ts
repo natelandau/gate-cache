@@ -21,6 +21,17 @@ export interface Summary {
   time_saved: number;
   /** Skips whose saved time is unknown, so they add nothing to `time_saved`. */
   unknown_saved_skips: number;
+  /** Seconds gate-cache spent deciding whether to skip, over every run that recorded it. */
+  overhead: number;
+  /** Seconds runs spent waiting for a concurrent run of the same gate. */
+  waited: number;
+  /** `time_saved` minus `overhead` and `waited`; negative when the cache cost more than it saved. */
+  net_saved: number;
+  /**
+   * Runs that checked the cache but came from a gate-cache that recorded no overhead or no
+   * wait time, so `net_saved` leaves out their cost.
+   */
+  cost_unknown_runs: number;
   /** Every recorded event, including uncached runs. */
   runs: number;
   skips: number;
@@ -42,6 +53,11 @@ export interface Summary {
 
 export interface PreviousTotals {
   time_saved: number;
+  /**
+   * Null when either window holds runs with no recorded cost, since the two windows would then
+   * subtract different costs.
+   */
+  net_saved: number | null;
   runs: number;
   skips: number;
   skip_rate: number | null;
@@ -68,6 +84,33 @@ export interface ReasonRow {
   outcome: "uncached" | "pass_unrecorded";
   reason: string;
   count: number;
+}
+
+/**
+ * Runs that waited for a concurrent run of the same gate, and how each wait ended. Every
+ * count covers only runs that checked the cache or waited.
+ */
+export interface Coalescing {
+  /** Runs that checked the cache or waited. */
+  runs: number;
+  /** Runs from a gate-cache that did not record waits, so they count as not waiting. */
+  unknown_runs: number;
+  /** Runs that waited. */
+  waited: number;
+  /** Waited, then skipped on the awaited run's pass. */
+  skipped: number;
+  /** Waited, then reported the awaited run's failure without running. */
+  reported: number;
+  /** Waited, then ran the command: the awaited run did not pass, or the wait timed out. */
+  ran: number;
+  /** Runs whose wait reached the timeout, counted in `ran` or `skipped`. */
+  timed_out: number;
+  /** Seconds spent waiting, over every run that waited. */
+  total_wait: number;
+  /** Median seconds one run waited, or null when no run waited. */
+  median_wait: number | null;
+  /** Seconds saved by the skips after a wait. */
+  saved: number;
 }
 
 /** A gate whose median passing run time grew since the previous window. */
@@ -329,6 +372,11 @@ export async function getHourly(options: RequestOptions = {}): Promise<HourCell[
 export async function getReasons(options: RequestOptions = {}): Promise<ReasonRow[]> {
   const body = await request<{ reasons: ReasonRow[] }>("reasons", scoped(options), options.signal);
   return body.reasons;
+}
+
+/** Fetch how often runs waited for a concurrent run of the same gate. */
+export function getCoalescing(options: RequestOptions = {}): Promise<Coalescing> {
+  return request("coalescing", scoped(options), options.signal);
 }
 
 /** Fetch the gates whose run time grew most since the previous window. */

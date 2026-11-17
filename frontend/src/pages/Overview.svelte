@@ -2,6 +2,7 @@
   import type { Query } from "../lib/query.svelte";
   import type { SummaryView } from "../lib/summary";
   import CalendarModule from "./overview/CalendarModule.svelte";
+  import CoalescingModule from "./overview/CoalescingModule.svelte";
   import DailyModule from "./overview/DailyModule.svelte";
   import FailuresModule from "./overview/FailuresModule.svelte";
   import FlakyModule from "./overview/FlakyModule.svelte";
@@ -42,7 +43,10 @@
     <FailuresModule {repoLabel} />
     <SlowdownsModule {repoLabel} />
   </div>
-  <ReposModule />
+  <div class="row wide-narrow">
+    <ReposModule />
+    <CoalescingModule {repoLabel} />
+  </div>
 </section>
 
 <style>

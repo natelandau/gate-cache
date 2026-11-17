@@ -4,9 +4,22 @@ import {
   formatAxisDuration,
   formatCount,
   formatDuration,
+  formatSignedDuration,
   formatPercent,
   formatRelative,
 } from "./format";
+
+describe("formatSignedDuration", () => {
+  it("prefixes a negative duration with a minus sign", () => {
+    expect(formatSignedDuration(-90)).toBe("\u22121m 30s");
+    expect(formatSignedDuration(90)).toBe("1m 30s");
+  });
+
+  it("drops the sign for less than a second below zero", () => {
+    expect(formatSignedDuration(-0.7)).toBe("<1s");
+    expect(formatSignedDuration(-1)).toBe("\u22121s");
+  });
+});
 
 describe("formatDuration", () => {
   it("matches the Python format_duration table", () => {
