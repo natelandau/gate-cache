@@ -1,0 +1,74 @@
+---
+name: "Tests: frontend"
+
+# The paths below must match SUITES["frontend"] in duties.py; tests/tooling/test_workflows.py fails when they drift.
+on:
+    workflow_dispatch:
+    workflow_call:
+        secrets:
+            CODECOV_TOKEN:
+                required: false
+    push:
+        branches:
+            - main
+        paths: &paths
+            - "frontend/**"
+            - ".node-version"
+            - ".github/workflows/tests-frontend.yml"
+            - "duties.py"
+            - ".github/actions/**"
+            - "pyproject.toml"
+            - "uv.lock"
+            - ".python-version"
+    pull_request:
+        types:
+            - opened
+            - reopened
+            - synchronize
+        paths: *paths
+
+permissions:
+    contents: read
+
+# Under workflow_call, github.workflow holds the caller's name, so the group names the suite itself
+concurrency:
+    group: tests-frontend-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+    test-frontend:
+        if: ${{ github.ref_type == 'tag' || !contains(github.event.head_commit.message, 'bump(release)') }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+
+            - name: Setup Node
+              uses: actions/setup-node@v7
+              with:
+                  node-version-file: .node-version
+                  cache: npm
+                  cache-dependency-path: frontend/package-lock.json
+
+            - name: Install frontend dependencies
+              shell: bash
+              run: npm ci --prefix frontend
+
+            - name: Setup Python, uv, and the package
+              uses: ./.github/actions/setup_python_env
+
+            - name: Check the frontend
+              shell: bash
+              run: uv run duty frontend_check
+
+            - name: Test the frontend
+              shell: bash
+              run: uv run duty frontend_test
+
+            - name: Build the frontend
+              shell: bash
+              run: uv run duty frontend_build
+
+            - name: Confirm the build output
+              shell: bash
+              run: test -f src/gate_cache/dashboard/static/index.html

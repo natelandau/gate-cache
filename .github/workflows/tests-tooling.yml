@@ -1,0 +1,54 @@
+---
+name: "Tests: tooling"
+
+# The paths below must match SUITES["tooling"] in duties.py; tests/tooling/test_workflows.py fails when they drift.
+on:
+    workflow_dispatch:
+    workflow_call:
+        secrets:
+            CODECOV_TOKEN:
+                required: false
+    push:
+        branches:
+            - main
+        paths: &paths
+            - "src/gate_cache/**"
+            - "tests/**"
+            - ".github/workflows/**"
+            - "scripts/**"
+            - ".pre-commit-config.yaml"
+            - "codecov.yml"
+            - "duties.py"
+            - ".github/actions/**"
+            - "pyproject.toml"
+            - "uv.lock"
+            - ".python-version"
+    pull_request:
+        types:
+            - opened
+            - reopened
+            - synchronize
+        paths: *paths
+
+permissions:
+    contents: read
+
+# Under workflow_call, github.workflow holds the caller's name, so the group names the suite itself
+concurrency:
+    group: tests-tooling-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+    test-tooling:
+        if: ${{ github.ref_type == 'tag' || !contains(github.event.head_commit.message, 'bump(release)') }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+
+            - name: Setup Python, uv, and the package
+              uses: ./.github/actions/setup_python_env
+
+            - name: Run the tooling tests
+              shell: bash
+              run: uv run duty test_tooling

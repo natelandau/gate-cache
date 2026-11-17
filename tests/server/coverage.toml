@@ -1,0 +1,23 @@
+# Coverage scope of the server suite: `duty test_server` passes this file to --cov-config.
+
+[tool.coverage.report]
+    exclude_lines = [
+        'def __repr__',
+        'except [\w\s\._]+ as .*:',
+        'if TYPE_CHECKING',
+        'pragma: no cover',
+    ]
+    fail_under = 90
+    show_missing = true
+    skip_covered = true
+    skip_empty = true
+
+[tool.coverage.run]
+    branch       = true
+    command_line = "--module pytest"
+    data_file    = ".cache/coverage-server"
+    omit         = ["tests/*"]
+    source       = ["src/gate_cache/dashboard"]
+
+[tool.coverage.xml]
+    output = ".cache/coverage-server.xml"

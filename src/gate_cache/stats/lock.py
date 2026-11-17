@@ -1,4 +1,4 @@
-"""A single-instance lock for the dashboard, shared with `stats clear`."""
+"""A single-instance lock on the stats state directory, held by the dashboard and `stats clear`."""
 
 from __future__ import annotations
 

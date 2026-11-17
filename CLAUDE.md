@@ -11,9 +11,12 @@ Do all work in a git worktree under `.worktrees/`, never in the main checkout. S
 Run linters and tests only through these duties, never directly, so every run shares the same gate-cache markers.
 
 - `uv run duty lint` runs ruff, the ruff format check, ty, typos, and the prek hooks. To run one gate, use `uv run duty ruff`, `format`, `ty`, `typos`, or `prek`.
-- `uv run duty test` runs the full test suite with coverage.
-- `uv run duty test -k NAME --no-cov` runs a subset of the tests. Without `--no-cov`, the subset fails the 90% coverage threshold.
-- `uv run duty frontend_check`, `frontend_test`, and `frontend_build` check, test, and build the dashboard UI in `frontend/`. Only these three duties need Node.
+- `uv run duty test` runs the four test suites. Each suite skips when nothing in its paths changed since it last passed. If the change touches `frontend/`, the frontend suite runs and needs Node.
+- To run one suite, use `uv run duty test_core` (the gate and the CLI), `test_server` (the Python dashboard server), `test_tooling` (CI, duties, and scripts), or `frontend_test` (the dashboard UI). Core and server each have their own 90% coverage threshold, set in `tests/core/coverage.toml` and `tests/server/coverage.toml`.
+- `uv run duty test -k NAME --no-cov` runs a subset of the Python tests, with no gate. Without `--no-cov`, the subset fails the 90% coverage threshold.
+- Each test file goes in `tests/core/`, `tests/server/`, or `tests/tooling/`. A test module never imports from another suite's test module. Shared helpers go in `tests/conftest.py`.
+- `SUITES` in `duties.py` holds the paths of each suite. The `paths:` filters in `.github/workflows/tests-*.yml` must match it, and `tests/tooling/test_workflows.py` fails when they do not. When you change a suite's paths, change both. A release runs every suite.
+- `uv run duty frontend_check`, `frontend_test`, and `frontend_build` check, test, and build the dashboard UI in `frontend/`. These three duties, and `duty test` when `frontend/` changed, need Node.
 - To work on the dashboard UI with live reload, run `uv run gate-cache dashboard --no-browser --port 7879`, then `npm --prefix frontend run dev`. The Vite dev server sends `/api` requests to port 7879.
 - Before you change the dashboard UI, read `frontend/DESIGN.md` for the palette roles, the color rules, and which shared component to use.
 - `uv run duty dist_check dist/*` checks that built wheels and sdists ship the dashboard UI. Run it after `frontend_build` and `uv build`.

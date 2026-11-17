@@ -659,7 +659,7 @@ def test_clear_keeps_machine_id(
     git_repo: Path, stats_dirs: tuple[Path, Path], stats_on: None
 ) -> None:
     """Clearing stats deletes the events but keeps the machine's identity."""
-    from gate_cache.dashboard.app import stats_clear
+    from gate_cache.stats.clear import stats_clear
 
     run_gate("t", ["true"])
     machine = stats_dirs[1] / "machine-id"
