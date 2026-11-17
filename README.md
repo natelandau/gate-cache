@@ -26,7 +26,29 @@ gate-cache requires Python 3.11 or later, on macOS or Linux.
 uv tool install gate-cache
 ```
 
-The prek and pre-commit hooks install gate-cache themselves, so the hooks work without this step.
+The prek and pre-commit hooks install gate-cache themselves, so the hooks work without this step. In a project without Python tooling, `uvx gate-cache` runs gate-cache without an install.
+
+## Add gate-cache to a project with an agent
+
+A coding agent can add gate-cache to a project in any language. Open an agent session at the top of the repository and give it this prompt:
+
+```text
+Run `uvx gate-cache --prompt` and follow the instructions that it prints.
+```
+
+The agent reads the guide that gate-cache prints and asks you which commands to wrap, how to install gate-cache, which gates to scope to their paths, and whether git hooks run the gates. Then it wraps the commands, makes sure that each gate works, and stops before it commits. The instructions always match the version of gate-cache that the agent runs.
+
+Two flags print text for agents:
+
+- `gate-cache --prompt` prints the setup task that the agent follows.
+- `gate-cache --skill` prints the guide for an agent that works in a repository that uses gate-cache. The output is a `SKILL.md` file. To give it to Claude Code in every session, save it as a skill:
+
+```sh
+mkdir -p ~/.claude/skills/gate-cache
+gate-cache --skill > ~/.claude/skills/gate-cache/SKILL.md
+```
+
+Run the second command again after you upgrade gate-cache. `gate-cache --help` tells agents to run `gate-cache --skill`, so an agent without the saved skill also finds the guide.
 
 ## Run a command through gate-cache
 
@@ -80,7 +102,7 @@ gate-cache works with [prek](https://github.com/j178/prek) and with [pre-commit]
 ```yaml
 repos:
   - repo: https://github.com/natelandau/gate-cache
-    rev: v0.1.0
+    rev: v0.7.0
     hooks:
       - id: gate-cache
         name: pytest
@@ -370,3 +392,4 @@ Each marker is one small file in the `.git` directory of the repository, so all 
 
 - [How gate-cache works](docs/how-it-works.md) describes the exact rules for a skip, what a marker covers, the marker format for tools that read markers directly, and how gate-cache stores and measures stats.
 - `gate-cache --help` gives the full command reference.
+- `gate-cache --skill` gives the guide for coding agents.

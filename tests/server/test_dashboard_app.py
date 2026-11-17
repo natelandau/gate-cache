@@ -219,7 +219,7 @@ def test_default_port_in_use_falls_back(
 ) -> None:
     """With no explicit port, a taken default falls back to a free port and serves."""
     monkeypatch.setattr(app, "static_root", lambda: STATIC)
-    monkeypatch.setattr(app, "DEFAULT_PORT", _taken_port())
+    monkeypatch.setattr(app.config, "DASHBOARD_PORT", _taken_port())
     monkeypatch.setattr(app, "_wait", _interrupt)
     assert app.run_dashboard(port=None, open_browser=True) == 0
     err = capsys.readouterr().err

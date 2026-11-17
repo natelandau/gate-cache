@@ -7,6 +7,8 @@ import tarfile
 import zipfile
 from typing import TYPE_CHECKING
 
+import pytest
+
 from tests.tooling import load_script
 
 if TYPE_CHECKING:
@@ -15,22 +17,26 @@ if TYPE_CHECKING:
 dist_check = load_script("scripts/dist_check.py")
 
 
-def make_wheel(path: Path, *, index: bool = True, padding: int = 0) -> Path:
-    """Write a synthetic wheel."""
+def make_wheel(path: Path, *, missing: tuple[str, ...] = (), padding: int = 0) -> Path:
+    """Write a synthetic wheel that ships every required file except those in missing."""
     with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
         archive.writestr("gate_cache/__init__.py", "")
-        if index:
-            archive.writestr(dist_check.WHEEL_INDEX, "<html></html>")
+        for required in dist_check.REQUIRED_FILES:
+            if required not in missing:
+                archive.writestr(required, "x")
         if padding:
             archive.writestr("pad.bin", b"x" * padding)
     return path
 
 
-def make_sdist(path: Path, *, index: bool = True) -> Path:
-    """Write a synthetic sdist."""
+def make_sdist(path: Path, *, missing: tuple[str, ...] = ()) -> Path:
+    """Write a synthetic sdist that ships every required file except those in missing."""
     names = ["gate_cache-1.0/pyproject.toml"]
-    if index:
-        names.append("gate_cache-1.0/src/gate_cache/dashboard/static/index.html")
+    names += [
+        f"gate_cache-1.0/src/{required}"
+        for required in dist_check.REQUIRED_FILES
+        if required not in missing
+    ]
     with tarfile.open(path, "w:gz") as archive:
         for name in names:
             data = b"x"
@@ -48,12 +54,12 @@ def test_wheel_with_index_passes(tmp_path: Path) -> None:
     assert lines[0].startswith(f"ok: {wheel}")
 
 
-def test_wheel_missing_index_fails(tmp_path: Path) -> None:
-    """Verify wheel missing index fails."""
-    make_wheel(tmp_path / "a.whl", index=False)
+@pytest.mark.parametrize("missing", list(dist_check.REQUIRED_FILES))
+def test_wheel_missing_required_file_fails(tmp_path: Path, missing: str) -> None:
+    """Verify a wheel without the dashboard UI or an agent guide fails."""
+    make_wheel(tmp_path / "a.whl", missing=(missing,))
     _, problems = dist_check.check_dists((str(tmp_path / "a.whl"),))
-    assert len(problems) == 1
-    assert "missing the dashboard UI" in problems[0]
+    assert problems == [f"{tmp_path / 'a.whl'} is missing {missing}"]
 
 
 def test_wheel_over_budget_fails(tmp_path: Path) -> None:
@@ -70,11 +76,12 @@ def test_sdist_with_index_passes(tmp_path: Path) -> None:
     assert problems == []
 
 
-def test_sdist_missing_index_fails(tmp_path: Path) -> None:
-    """Verify sdist missing index fails."""
-    make_sdist(tmp_path / "a.tar.gz", index=False)
+@pytest.mark.parametrize("missing", list(dist_check.REQUIRED_FILES))
+def test_sdist_missing_required_file_fails(tmp_path: Path, missing: str) -> None:
+    """Verify an sdist without the dashboard UI or an agent guide fails."""
+    make_sdist(tmp_path / "a.tar.gz", missing=(missing,))
     _, problems = dist_check.check_dists((str(tmp_path / "a.tar.gz"),))
-    assert len(problems) == 1
+    assert problems == [f"{tmp_path / 'a.tar.gz'} is missing {missing}"]
 
 
 def test_sdist_size_is_not_budgeted(tmp_path: Path) -> None:
@@ -103,7 +110,7 @@ def test_unknown_file_type_fails(tmp_path: Path) -> None:
 def test_multiple_paths_are_all_checked(tmp_path: Path) -> None:
     """Verify multiple paths are all checked."""
     make_wheel(tmp_path / "a.whl")
-    make_sdist(tmp_path / "a.tar.gz", index=False)
+    make_sdist(tmp_path / "a.tar.gz", missing=("gate_cache/agent/skill.md",))
     lines, problems = dist_check.check_dists((str(tmp_path / "*.whl"), str(tmp_path / "*.tar.gz")))
     assert len(lines) + len(problems) == 2
 

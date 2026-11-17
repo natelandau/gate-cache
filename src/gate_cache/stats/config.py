@@ -26,6 +26,7 @@ _ENABLED_KEY = re.compile(r"^\s*enabled\s*=")
 _NEW_FILE_MODE = 0o644
 # The stats data holds paths and host names, so only the user may read it.
 STATE_DIR_MODE = 0o700
+DASHBOARD_PORT = 7878
 
 
 class ConfigError(Exception):

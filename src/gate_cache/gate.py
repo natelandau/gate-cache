@@ -47,6 +47,7 @@ _DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
 _CI_REASON = f"caching disabled in CI ({DISABLE_ENV}=0 keeps it on)"
 _NO_COMMON_DIR_REASON = "could not locate git directory"
 _FILES_CHANGED = "files changed during the run"
+FILES_CHANGED_NOTICE = f"{_FILES_CHANGED}, not recording pass"
 
 
 def disabled_reason(environ: Mapping[str, str] | None = None) -> str | None:
@@ -394,7 +395,7 @@ class _Attempt:
             except Exception as error:  # noqa: BLE001
                 say(f"warning: could not record pass: {error}")
             return True
-        say(f"{_FILES_CHANGED}, not recording pass")
+        say(FILES_CHANGED_NOTICE)
         self.record_miss(exit_code=0, reason=_FILES_CHANGED)
         return False
 

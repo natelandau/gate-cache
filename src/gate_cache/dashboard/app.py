@@ -18,12 +18,10 @@ from gate_cache.stats.recorder import inbox_path
 if TYPE_CHECKING:
     from pathlib import Path
 
-DEFAULT_PORT = 7878
-
 
 def _bind(port: int | None, static_dir: Path) -> server_module.DashboardServer | None:
     """Bind the server, falling back to a free port only when no port was requested."""
-    wanted = DEFAULT_PORT if port is None else port
+    wanted = config.DASHBOARD_PORT if port is None else port
     try:
         return _make(wanted, static_dir)
     except OSError as error:
@@ -47,7 +45,7 @@ def run_dashboard(*, port: int | None, open_browser: bool) -> int:
     """Serve the dashboard until interrupted.
 
     Args:
-        port: Port to bind, or None for 7878 with a free-port fallback.
+        port: Port to bind, or None for the default dashboard port with a free-port fallback.
         open_browser: Whether to open the dashboard in the default browser.
 
     Returns:
