@@ -52,6 +52,30 @@ export class QueryTracker<T> {
   }
 }
 
+/** Options for `createQuery`. */
+export interface QueryOptions {
+  /** False when the load ignores the repo filter, so changing it does not reload. */
+  repos?: boolean;
+  /** False when the load ignores the range, so changing it does not reload. */
+  range?: boolean;
+}
+
+/**
+ * Return the identity of a load's inputs: the global range unless `options.range` is false,
+ * the repo filter unless `options.repos` is false, and `key`.
+ */
+export function queryInputs(
+  scope: { repos: string[]; range: unknown },
+  key: unknown,
+  options: QueryOptions = {},
+): string {
+  return JSON.stringify([
+    options.repos === false ? null : scope.repos,
+    options.range === false ? null : scope.range,
+    key,
+  ]);
+}
+
 /**
  * Load data for a page, reload it when the archive changes, and reload it when its inputs
  * change.
@@ -67,17 +91,19 @@ export class QueryTracker<T> {
  *
  * @param load Fetch the data; abort the request when `signal` aborts.
  * @param key Return the inputs beyond the global filters; any JSON-serializable value.
+ * @param options Pass `repos: false` when `load` ignores the repo filter.
  */
 export function createQuery<T>(
   load: (signal: AbortSignal) => Promise<T>,
   key: () => unknown = () => null,
+  options: QueryOptions = {},
 ): Query<T> {
   const state: QueryState<T> = $state({ data: undefined, error: undefined, loading: true });
   const tracker = new QueryTracker(state);
 
   $effect(() => {
     void freshness.changes;
-    const inputs = JSON.stringify([filters.repo, filters.range, key()]);
+    const inputs = queryInputs(filters, key(), options);
     tracker.begin(inputs);
     const controller = new AbortController();
     load(controller.signal).then(

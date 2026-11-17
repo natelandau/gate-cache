@@ -243,12 +243,14 @@ The dashboard moves events from the inbox into an archive, a SQLite file named `
 
 ### Metrics
 
-The dashboard computes its numbers from the archive, for the repository and the time range that you choose:
+The dashboard computes its numbers from the archive, for the repositories and the time range that you choose:
 
 - Runs: every recorded event, including `uncached` events.
 - Time saved: the sum of `saved` over `skip` events. A skip with no `saved` adds nothing, and the dashboard counts these skips separately.
 - Skip rate: `skip` events divided by the events in which a gate checked its cache: `skip`, `pass`, `pass_unrecorded`, and `fail`. `uncached` events are not part of it.
 - Average and median run time: the `duration` of `pass` events.
 - Flaky gate: a gate that has, for one tree key, both a `fail` event and a `pass` or `pass_unrecorded` event. The same content both failed and passed, so the result is not stable. The dashboard lists the trees and the runs for each.
+- Change: each number on the stat strip shows its change against the previous period of the same length. The dashboard hides the change for the range All. It also hides the change when the previous period starts more than 365 days ago. This occurs for any range longer than about six months, such as 1y, Last year, and This year after June. The dashboard also hides the change when stats started after the previous period began.
+- Slower gate: a gate whose median `duration` of `pass` events is higher in the current period than in the previous period. Each period must have at least 5 `pass` events. Only `pass` events count, so `pass_unrecorded`, `fail`, and `skip` events do not.
 
-Days start and end in the time zone of your browser.
+Days and hours start and end in the time zone of your browser. The calendar, the daily chart, and the chart of when gates run use these buckets. Calendar ranges such as This week start on Sunday, and a current period runs to now.

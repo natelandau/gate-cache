@@ -35,7 +35,7 @@
       label="Gates"
       rows={query.data}
       activeKey={openKey}
-      onRowClick={(g) => openGatePanel(g, open !== null)}
+      onRowClick={(g) => openGatePanel(g)}
       busy={query.loading}
     >
       {#snippet empty()}

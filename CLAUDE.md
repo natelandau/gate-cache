@@ -26,6 +26,10 @@ Run linters and tests only through these duties, never directly, so every run sh
 - Before you change the dashboard UI, read `frontend/DESIGN.md` for the palette roles, the color rules, and which shared component to use.
 - `uv run duty dist_check dist/*` checks that built wheels and sdists ship the dashboard UI and the agent guides. Run it after `frontend_build` and `uv build`.
 
+## Commits
+
+Mark a commit as a breaking change (`!` in the subject and a `BREAKING CHANGE:` footer) only when it breaks the CLI: a removed or renamed command or flag, a changed exit code, or a change to the CLI's output. A change to the dashboard UI is never breaking, even when it removes a page.
+
 ## Gates
 
 The duties run each gate through the gate-cache of this working copy. If a change breaks gate-cache, the duties fail too. A gate that already passed on the same content, committed or not, prints `already passed on tree` and skips. To force a full run, set `GATE_CACHE_DISABLE=1`.

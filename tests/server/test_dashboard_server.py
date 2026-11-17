@@ -102,7 +102,18 @@ def test_api_summary_shape(server: DashboardServer) -> None:
 
 
 @pytest.mark.parametrize(
-    "path", ["gates", "repos", "activity", "flaky", "freshness", "gate?name=lint"]
+    "path",
+    [
+        "gates",
+        "hourly",
+        "reasons",
+        "repos",
+        "activity",
+        "flaky",
+        "slowdowns",
+        "freshness",
+        "gate?name=lint&repo=-",
+    ],
 )
 def test_api_endpoints_respond(server: DashboardServer, path: str) -> None:
     """Every endpoint answers 200 JSON with no-store caching."""
@@ -189,6 +200,68 @@ def test_activity_limit_clamped(server: DashboardServer) -> None:
     """An out-of-range limit is clamped, not rejected."""
     assert get(server, "/api/v1/activity?limit=0")[0] == 200
     assert get(server, "/api/v1/activity?limit=100000")[0] == 200
+
+
+def test_repeated_repo_param(server: DashboardServer, archive: Archive) -> None:
+    """Repeated repo params select several repos; - selects the unknown repo."""
+    archive.connection.executemany(
+        "INSERT INTO events (line_hash, ts, repo, name, paths, outcome)"
+        " VALUES (?, ?, ?, 'lint', '[]', 'pass')",
+        [("h1", 1000.0, "/r/a/.git"), ("h2", 1001.0, "/r/b/.git"), ("h3", 1002.0, None)],
+    )
+    archive.connection.commit()
+    _, body = get(server, "/api/v1/repos?repo=/r/a/.git&repo=-")
+    assert {r["repo"] for r in body["repos"]} == {"/r/a/.git", None}
+
+
+def test_repo_params_dedup_and_drop_empty(server: DashboardServer, archive: Archive) -> None:
+    """Repeated repo params collapse to one, and an empty one selects nothing extra."""
+    assert server_module._repos({"repo": ["/r/a/.git", "/r/a/.git", "", "-"]}) == (
+        "/r/a/.git",
+        None,
+    )
+    archive.connection.executemany(
+        "INSERT INTO events (line_hash, ts, repo, name, paths, outcome)"
+        " VALUES (?, ?, ?, 'lint', '[]', 'pass')",
+        [("h1", 1000.0, "/r/a/.git"), ("h2", 1001.0, "/r/b/.git")],
+    )
+    archive.connection.commit()
+    _, body = get(server, "/api/v1/repos?repo=/r/a/.git&repo=/r/a/.git&repo=")
+    assert [(r["repo"], r["runs"]) for r in body["repos"]] == [("/r/a/.git", 1)]
+
+
+def test_gate_unknown_repo(server: DashboardServer, archive: Archive) -> None:
+    """repo=- selects the gate's events recorded without a repo."""
+    archive.connection.executemany(
+        "INSERT INTO events (line_hash, ts, repo, name, paths, outcome)"
+        " VALUES (?, ?, ?, 'lint', '[]', 'pass')",
+        [("h1", 1000.0, None), ("h2", 1001.0, "/r/a/.git"), ("h3", 1002.0, None)],
+    )
+    archive.connection.commit()
+    status, body = get(server, "/api/v1/gate?name=lint&repo=-")
+    assert status == 200
+    assert body["repo"] is None
+    assert [e["ts"] for e in body["recent"]] == [1002.0, 1000.0]
+
+
+def test_activity_reason_filter(server: DashboardServer, archive: Archive) -> None:
+    """The reason parameter keeps only events recorded with that reason."""
+    archive.connection.executemany(
+        "INSERT INTO events (line_hash, ts, name, paths, outcome, reason)"
+        " VALUES (?, ?, 'lint', '[]', 'uncached', ?)",
+        [("h1", 1000.0, "a b&c"), ("h2", 1001.0, "other"), ("h3", 1002.0, None)],
+    )
+    archive.connection.commit()
+    status, body = get(server, "/api/v1/activity?reason=a%20b%26c")
+    assert status == 200
+    assert [e["reason"] for e in body["events"]] == ["a b&c"]
+
+
+def test_gate_requires_repo(server: DashboardServer) -> None:
+    """The gate endpoint rejects a request without repo."""
+    status, body = get(server, "/api/v1/gate?name=lint")
+    assert status == 400
+    assert "repo" in body["error"]
 
 
 def test_activity_outcome_filter(server: DashboardServer, archive: Archive) -> None:

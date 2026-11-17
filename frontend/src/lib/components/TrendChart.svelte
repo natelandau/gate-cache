@@ -37,7 +37,7 @@
     ),
   );
 
-  const color = "var(--chart-saved)";
+  const color = "var(--chart-runs)";
 </script>
 
 {#snippet pointTooltip(context: ChartState<Point>)}

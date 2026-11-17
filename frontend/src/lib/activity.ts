@@ -7,7 +7,9 @@
  * events instead, and the user reloads from the top.
  */
 
-import type { ActivityPage, EventRow } from "./api";
+import type { ActivityPage, EventRow, Outcome } from "./api";
+import { OUTCOMES } from "./events";
+import { emptyHint, type ScopeText } from "./scope";
 
 export const PAGE_SIZE = 100;
 
@@ -59,4 +61,30 @@ export function feedView(
     next: paged.next,
     newer: latest !== undefined && (frozen === undefined || latest.ts > frozen.ts),
   };
+}
+
+/**
+ * Return what the feed lists under the page-local filters, for empty-state copy: "runs",
+ * '"Fail" runs', or '"Uncached" runs with reason "..."'.
+ */
+export function activitySubject(filter: { outcome?: Outcome; reason?: string }): string {
+  const runs = filter.outcome ? `"${OUTCOMES[filter.outcome].label}" runs` : "runs";
+  return filter.reason ? `${runs} with reason "${filter.reason}"` : runs;
+}
+
+/**
+ * Return the next step for an empty feed. Under an outcome or reason filter it names the filter
+ * to clear, since loosening the global filters may not help; otherwise it is the generic hint.
+ */
+export function activityHint(
+  filter: { outcome?: Outcome; reason?: string },
+  scope: ScopeText & { recording: boolean | null },
+): string {
+  if (scope.recording === false || (!filter.outcome && !filter.reason)) return emptyHint(scope);
+  const steps: string[] = [];
+  if (filter.outcome) steps.push("Pick All outcomes");
+  if (filter.reason) steps.push(steps.length ? "remove the reason filter" : "Remove the reason filter");
+  const clear = steps.join(" and ");
+  const allTime = scope.range.kind === "preset" && scope.range.preset === "all";
+  return allTime ? `${clear}.` : `${clear}, or pick a longer range.`;
 }

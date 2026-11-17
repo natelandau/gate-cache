@@ -1,22 +1,29 @@
 <!--
   @component
-  Daily time saved as bars, with a short failures strip below on the same day axis. The two
-  measures have different units, so each gets its own y scale instead of sharing one.
+  Daily time saved as tall bars over a short panel of daily failures. Both panels share one day
+  axis, so hovering a day highlights it in both and shows one tooltip with both values. The two
+  measures have different units, so each panel has its own y scale.
 
   Props:
   - `days`: one bucket per day with gaps already filled, in order
 -->
 <script lang="ts">
   import type { ChartState } from "layerchart";
-  import { BarChart, Tooltip } from "layerchart/svg";
+  import { BarChart, Bars, Text, Tooltip } from "layerchart/svg";
+  import { dailyScale, FAIL_TOP } from "../daily";
   import type { DayBucket } from "../fill";
-  import { durationTicks, formatAxisDuration, formatCount, formatDuration } from "../format";
+  import { formatCount, formatDuration } from "../format";
 
   interface Props {
     days: DayBucket[];
   }
 
   let { days }: Props = $props();
+
+  interface Row extends DayBucket {
+    savedSpan: [number, number];
+    failSpan: [number, number];
+  }
 
   const dayLabel = new Intl.DateTimeFormat(undefined, {
     month: "short",
@@ -40,21 +47,33 @@
     return dayLong.format(new Date(`${day}T00:00:00Z`));
   }
 
-  const savedTicks = $derived(durationTicks(Math.max(0, ...days.map((d) => d.saved))));
-  const savedTop = $derived(Math.max(1, savedTicks.at(-1) ?? 0));
-  const maxFailures = $derived(Math.max(1, ...days.map((d) => d.failures)));
+  // Both panels live on one y scale from 0 to 1, so one band scale and one tooltip serve both.
+  const scale = $derived(dailyScale(days));
   const totalFailures = $derived(days.reduce((sum, d) => sum + d.failures, 0));
   const totalSaved = $derived(days.reduce((sum, d) => sum + d.saved, 0));
   const activeDays = $derived(days.filter((d) => d.runs > 0));
 
-  const padding = { top: 10, right: 4, bottom: 4, left: 52 };
+  const rows = $derived(
+    days.map(
+      (d): Row => ({
+        ...d,
+        savedSpan: [scale.savedY(0), scale.savedY(d.saved)],
+        failSpan: [0, scale.failY(d.failures)],
+      }),
+    ),
+  );
+
+  const tickLabels = $derived(new Map(scale.ticks.map((t) => [t.value, t.label])));
+
+  // The top padding holds the time-saved label, clear of the bars below it.
+  const padding = { top: 18, right: 4, bottom: 20, left: 52 };
   const savedColor = "var(--chart-saved)";
   const failColor = "var(--chart-failures)";
 </script>
 
-{#snippet dayTooltip(context: ChartState<DayBucket>)}
+{#snippet dayTooltip(context: ChartState<Row>)}
   <Tooltip.Root {context}>
-    {#snippet children({ data }: { data: DayBucket })}
+    {#snippet children({ data }: { data: Row })}
       <Tooltip.Header value={longDay(data.day)} />
       <Tooltip.List>
         <Tooltip.Item
@@ -69,7 +88,6 @@
           color={failColor}
           valueAlign="right"
         />
-        <Tooltip.Item label="Runs" value={formatCount(data.runs)} valueAlign="right" />
       </Tooltip.List>
     {/snippet}
   </Tooltip.Root>
@@ -80,51 +98,45 @@
     <span><i style:background={savedColor}></i>Time saved per day</span>
     <span><i style:background={failColor}></i>Failures per day</span>
   </figcaption>
-  <div class="saved" aria-hidden="true">
+  <div class="plot" aria-hidden="true">
     <BarChart
-      data={days}
+      data={rows}
       x="day"
-      y="saved"
-      yDomain={[0, savedTop]}
-      series={[{ key: "saved", label: "Time saved", value: "saved", color: savedColor }]}
+      y={(d: Row) => d.savedSpan}
+      yDomain={[0, 1]}
       bandPadding={0.25}
       {padding}
       rule={false}
-      grid={{ x: false, y: true, yTicks: savedTicks }}
+      grid={{ x: false, y: true, yTicks: scale.gridTicks }}
       props={{
-        xAxis: { ticks: [], tickLength: 0 },
+        xAxis: { tickSpacing: 72, tickLength: 3, format: (d: string) => shortDay(d) },
         yAxis: {
-          ticks: savedTicks,
+          ticks: [...tickLabels.keys()],
           tickLength: 0,
-          format: formatAxisDuration,
+          format: (v: number) => tickLabels.get(v) ?? "",
         },
-        bars: { radius: 2, strokeWidth: 0 },
       }}
     >
-      {#snippet tooltip({ context })}{@render dayTooltip(context)}{/snippet}
-    </BarChart>
-  </div>
-  <div class="failures" aria-hidden="true">
-    <BarChart
-      data={days}
-      x="day"
-      y="failures"
-      yDomain={[0, maxFailures]}
-      series={[{ key: "failures", label: "Failures", value: "failures", color: failColor }]}
-      bandPadding={0.25}
-      padding={{ ...padding, bottom: 20 }}
-      rule={false}
-      grid={false}
-      props={{
-        xAxis: {
-          tickSpacing: 72,
-          tickLength: 3,
-          format: (d: string) => shortDay(d),
-        },
-        yAxis: { ticks: [maxFailures], tickLength: 0, format: (v: number) => formatCount(v) },
-        bars: { radius: 2, strokeWidth: 0 },
-      }}
-    >
+      {#snippet marks({ context }: { context: ChartState<Row> })}
+        <Bars y={(d: Row) => d.savedSpan} fill={savedColor} radius={2} strokeWidth={0} />
+        <Bars y={(d: Row) => d.failSpan} fill={failColor} radius={2} strokeWidth={0} />
+        <!-- Each label sits just above its band: in the top padding and in the gap between bands,
+             where no bars or tick labels reach. -->
+        <Text
+          class="panel-label"
+          x={0}
+          y={context.yScale(1) - 4}
+          value="Time saved"
+          verticalAnchor="end"
+        />
+        <Text
+          class="panel-label"
+          x={0}
+          y={context.yScale(FAIL_TOP) - 4}
+          value="Failures"
+          verticalAnchor="end"
+        />
+      {/snippet}
       {#snippet tooltip({ context })}{@render dayTooltip(context)}{/snippet}
     </BarChart>
   </div>
@@ -140,7 +152,6 @@
           <th scope="col">Day</th>
           <th scope="col">Time saved</th>
           <th scope="col">Failures</th>
-          <th scope="col">Runs</th>
         </tr>
       </thead>
       <tbody>
@@ -149,7 +160,6 @@
             <th scope="row">{longDay(day.day)}</th>
             <td>{formatDuration(day.saved)}</td>
             <td>{formatCount(day.failures)}</td>
-            <td>{formatCount(day.runs)}</td>
           </tr>
         {/each}
       </tbody>
@@ -160,14 +170,11 @@
 <style>
   .daily {
     margin: 0;
-    padding: var(--space-2) var(--space-3) var(--space-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
   }
 
   .legend {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-4);
     font-size: var(--text-xs);
     color: var(--text-muted);
@@ -186,19 +193,19 @@
     border-radius: 2px;
   }
 
-  .saved {
-    height: 180px;
-  }
-
-  .failures {
-    height: 64px;
-    border-top: 1px dashed var(--border);
+  .plot {
+    height: 260px;
   }
 
   .daily :global(.lc-axis-tick-label),
   .daily :global(text) {
     font-size: var(--text-xs);
     fill: var(--text-muted);
+  }
+
+  .daily :global(.panel-label) {
+    fill: var(--text-muted);
+    font-weight: 600;
   }
 
   .daily :global(.lc-grid-line),

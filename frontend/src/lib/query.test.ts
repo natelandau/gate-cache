@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { QueryTracker } from "./query.svelte";
+import { QueryTracker, queryInputs } from "./query.svelte";
 
 function tracker() {
   return new QueryTracker<string>({ data: undefined, error: undefined, loading: true });
@@ -44,5 +44,38 @@ describe("QueryTracker", () => {
     t.fail("a", new Error("x"));
     t.succeed("a", "ok");
     expect(t.state.error).toBeUndefined();
+  });
+});
+
+describe("queryInputs", () => {
+  const range = { kind: "preset", preset: "7d" };
+
+  it("changes with the repo filter by default", () => {
+    expect(queryInputs({ repos: ["a"], range }, null)).not.toBe(
+      queryInputs({ repos: ["b"], range }, null),
+    );
+  });
+
+  it("ignores the repo filter when told to", () => {
+    const options = { repos: false };
+    expect(queryInputs({ repos: ["a"], range }, null, options)).toBe(
+      queryInputs({ repos: ["b"], range }, null, options),
+    );
+    expect(queryInputs({ repos: [], range }, null, options)).not.toBe(
+      queryInputs({ repos: [], range: { kind: "preset", preset: "30d" } }, null, options),
+    );
+  });
+
+  it("ignores the range when told to", () => {
+    const options = { range: false };
+    expect(queryInputs({ repos: [], range }, null, options)).toBe(
+      queryInputs({ repos: [], range: { kind: "preset", preset: "30d" } }, null, options),
+    );
+  });
+
+  it("changes with the key", () => {
+    expect(queryInputs({ repos: [], range }, ["x"])).not.toBe(
+      queryInputs({ repos: [], range }, ["y"]),
+    );
   });
 });

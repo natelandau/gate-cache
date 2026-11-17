@@ -3,38 +3,38 @@
   The persistent header: product name, repo filter, range filter, freshness, and the theme switch.
 
   Props:
-  - `repos`, `repo`, `onRepoChange`: passed to RepoFilter
-  - `range`, `onRangeChange`: passed to RangeFilter
+  - `repos`, `selectedRepos`, `onReposChange`: passed to RepoPicker
+  - `range`, `onRangeChange`: passed to RangePicker
   - `freshness`: the props of Freshness
 
   The theme switch is the last control. It cycles System, Light, Dark through `cycleTheme`.
 -->
 <script lang="ts">
   import type { ComponentProps } from "svelte";
-  import type { Range } from "../state.svelte";
+  import type { RangeSpec } from "../range";
   import { cycleTheme, theme, themeLabel } from "../theme.svelte";
   import Button from "./Button.svelte";
   import Freshness from "./Freshness.svelte";
-  import RangeFilter from "./RangeFilter.svelte";
-  import RepoFilter, { type RepoOption } from "./RepoFilter.svelte";
+  import RangePicker from "./RangePicker.svelte";
+  import RepoPicker, { type RepoOption } from "./RepoPicker.svelte";
 
   interface Props {
     repos: RepoOption[];
-    repo: string | null;
-    onRepoChange: (repo: string | null) => void;
-    range: Range;
-    onRangeChange: (range: Range) => void;
+    selectedRepos: string[];
+    onReposChange: (repos: string[]) => void;
+    range: RangeSpec;
+    onRangeChange: (range: RangeSpec) => void;
     freshness: ComponentProps<typeof Freshness>;
   }
 
-  let { repos, repo, onRepoChange, range, onRangeChange, freshness }: Props = $props();
+  let { repos, selectedRepos, onReposChange, range, onRangeChange, freshness }: Props = $props();
 </script>
 
 <header class="topbar">
   <a class="brand" href="#/overview">gate-cache <span>stats</span></a>
   <div class="filters" role="group" aria-label="Filters">
-    <RepoFilter options={repos} value={repo} onchange={onRepoChange} />
-    <RangeFilter value={range} onchange={onRangeChange} />
+    <RangePicker value={range} onchange={onRangeChange} />
+    <RepoPicker options={repos} value={selectedRepos} onchange={onReposChange} />
   </div>
   <div class="status">
     <Freshness {...freshness} />

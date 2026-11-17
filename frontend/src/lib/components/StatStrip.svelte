@@ -3,8 +3,11 @@
   A row of headline numbers separated by hairlines. Wraps on narrow screens.
 
   Props:
-  - `stats`: the cells, each `{ label, value, hint?, tone?, href? }`. `tone` "danger" or "flaky" colors a
-    non-zero problem count; `href` turns the value into a link (for example to the Flaky page).
+  - `stats`: the cells, each `{ label, value, hint?, tone?, href?, delta? }`. `tone` "danger" or
+    "flaky" colors a non-zero problem count; `href` turns the value into a link (for example to the
+    Flaky page); `delta` adds a line with the change against the previous window, from
+    `statDeltas` in `src/lib/deltas.ts`.
+  - `deltaLabel`: optional text after each delta, such as "vs prev 30d"
   - `note`: optional footnote below the strip
   - `busy`: dims the values while newer numbers load
 -->
@@ -16,6 +19,8 @@
     hint?: string;
     tone?: "default" | "danger" | "flaky";
     href?: string;
+    /** Change against the previous window; its arrow and text carry the meaning, not the tone. */
+    delta?: { text: string; tone: "good" | "bad" | "neutral" };
   }
 </script>
 
@@ -23,10 +28,11 @@
   interface Props {
     stats: Stat[];
     note?: string;
+    deltaLabel?: string;
     busy?: boolean;
   }
 
-  let { stats, note, busy = false }: Props = $props();
+  let { stats, note, deltaLabel, busy = false }: Props = $props();
 </script>
 
 <div class="strip-wrap" aria-busy={busy}>
@@ -42,6 +48,11 @@
           {/if}
         </dd>
         {#if stat.hint}<dd class="hint">{stat.hint}</dd>{/if}
+        {#if stat.delta}
+          <dd class="delta {stat.delta.tone}">
+            {stat.delta.text}{#if deltaLabel}{" "}<span class="vs">{deltaLabel}</span>{/if}
+          </dd>
+        {/if}
       </div>
     {/each}
   </dl>
@@ -103,6 +114,25 @@
     font-size: var(--text-xs);
     font-weight: 400;
     color: var(--text-muted);
+  }
+
+  .delta {
+    margin-top: 2px;
+    font-size: var(--text-sm);
+    font-weight: 400;
+    color: var(--text-faint);
+  }
+
+  .delta.good {
+    color: var(--ok);
+  }
+
+  .delta.bad {
+    color: var(--danger);
+  }
+
+  .vs {
+    color: var(--text-faint);
   }
 
   .busy dd {

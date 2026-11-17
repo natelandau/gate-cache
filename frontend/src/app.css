@@ -6,7 +6,12 @@
   The six palette colors are mid-tones for marks, dots, and focus. Text tones are derived from
   each slot's OKLCH hue: light L 0.50 / C <= 0.13, dark L 0.80 / C <= 0.11; soft backgrounds are
   light L 0.95 / C 0.03, dark L 0.29 / C 0.045. All reach 4.5:1 on bg, surface, and soft.
+  The gray text tones (text, text-muted, text-faint) reach 4.5:1 on bg, surface,
+  surface-sunken, and surface-hover; text-faint stays less prominent than text-muted.
   Blue (100) and violet (200) are not distinguishable for protanopes: never chart them together.
+  Heatmap ramps are marks, not text, so they need no contrast target. Each runs from a faint tint
+  (step 1) to a deep shade (step 5) of its slot's hue: runs on 100, saved on 500, fail on 300.
+  In dark mode the order flips toward light, so step 5 is always the most prominent cell.
 */
 :root {
   color-scheme: light;
@@ -33,6 +38,7 @@
   --topbar-height: 44px;
   --sidebar-width: 176px;
   --radius: 4px;
+  --radius-popover: 6px;
 
   --palette-100: #3a93e6;
   --palette-200: #bb82e3;
@@ -49,7 +55,7 @@
   --border-strong: #c9c9c3;
   --text: #1c1d1f;
   --text-muted: #5f6166;
-  --text-faint: #8a8c91;
+  --text-faint: #6b6d72;
 
   --accent: #1766aa;
   --accent-text: #ffffff;
@@ -67,11 +73,36 @@
   --flaky: #7a4b9a;
   --flaky-soft: #f5e9fe;
 
-  --chart-saved: var(--palette-100);
+  --chart-saved: var(--palette-500);
+  --chart-runs: var(--palette-100);
   --chart-failures: var(--palette-300);
+  --chart-neutral: #b5b6b1;
   --chart-grid: #ebebe7;
+  --chart-skip: var(--palette-100);
+  --chart-pass: var(--palette-500);
+  --chart-pass-unrecorded: var(--palette-600);
+  --chart-fail: var(--palette-300);
+  --chart-uncached: var(--chart-neutral);
+
+  --heat-empty: #f0f0ed;
+  --heat-runs-1: #cfe6fb;
+  --heat-runs-2: #96c7f3;
+  --heat-runs-3: #57a3e9;
+  --heat-runs-4: #2a7ccb;
+  --heat-runs-5: #155a99;
+  --heat-saved-1: #dcedc8;
+  --heat-saved-2: #b4d68e;
+  --heat-saved-3: #8bbb55;
+  --heat-saved-4: #5f8f24;
+  --heat-saved-5: #3f6410;
+  --heat-fail-1: #fbdde2;
+  --heat-fail-2: #f3b1bd;
+  --heat-fail-3: #e5808f;
+  --heat-fail-4: #c7566c;
+  --heat-fail-5: #9f3d52;
 
   --shadow-panel: -8px 0 24px rgb(0 0 0 / 0.12);
+  --shadow-popover: 0 8px 24px rgb(0 0 0 / 0.14);
 }
 
 :root[data-theme="dark"] {
@@ -85,7 +116,7 @@
   --border-strong: #3a3d42;
   --text: #e6e7e9;
   --text-muted: #a0a3a9;
-  --text-faint: #74777d;
+  --text-faint: #878a90;
 
   --accent: #86c3ff;
   --accent-text: #0d1526;
@@ -102,9 +133,28 @@
   --flaky: #d4aaf3;
   --flaky-soft: #32253c;
 
+  --chart-neutral: #55585e;
   --chart-grid: #26282c;
 
+  --heat-empty: #202125;
+  --heat-runs-1: #1d3b5c;
+  --heat-runs-2: #1f5281;
+  --heat-runs-3: #2f74b6;
+  --heat-runs-4: #4f9be3;
+  --heat-runs-5: #8cc6ff;
+  --heat-saved-1: #2b401d;
+  --heat-saved-2: #355321;
+  --heat-saved-3: #4f7a2a;
+  --heat-saved-4: #79a845;
+  --heat-saved-5: #a6cc7f;
+  --heat-fail-1: #48262c;
+  --heat-fail-2: #5e2c35;
+  --heat-fail-3: #8c3a4b;
+  --heat-fail-4: #c45f74;
+  --heat-fail-5: #fba0ad;
+
   --shadow-panel: -8px 0 24px rgb(0 0 0 / 0.5);
+  --shadow-popover: 0 8px 24px rgb(0 0 0 / 0.5);
 }
 
 *,
@@ -173,6 +223,13 @@ code {
 
 .mono {
   font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* The "see all" link at the foot of a homepage module. */
+.more-link {
+  display: inline-block;
+  margin-top: var(--space-2);
   font-size: var(--text-sm);
 }
 

@@ -3,7 +3,7 @@
   The page navigation. Collapses into a horizontal tab row on narrow screens.
 
   Props:
-  - `current`: the active page; the gate detail page highlights Gates and a repo page Repos
+  - `current`: the active page; a gate panel over the Gates page highlights Gates
   - `flakyCount`: flaky gates under the current filters, shown as a badge when above zero
 -->
 <script lang="ts">
@@ -16,15 +16,14 @@
 
   let { current, flakyCount }: Props = $props();
 
-  const items: { page: Exclude<Page, "gate" | "repo">; label: string }[] = [
+  const items: { page: Exclude<Page, "gate">; label: string }[] = [
     { page: "overview", label: "Overview" },
     { page: "gates", label: "Gates" },
-    { page: "repos", label: "Repos" },
     { page: "activity", label: "Activity" },
     { page: "flaky", label: "Flaky" },
   ];
 
-  const active = $derived(current === "gate" ? "gates" : current === "repo" ? "repos" : current);
+  const active = $derived(current === "gate" ? "gates" : current);
 </script>
 
 <nav class="sidebar" aria-label="Pages">

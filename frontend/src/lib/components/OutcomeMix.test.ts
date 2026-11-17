@@ -1,0 +1,25 @@
+import { render } from "svelte/server";
+import { describe, expect, it } from "vitest";
+import OutcomeMix from "./OutcomeMix.svelte";
+
+const counts = { skip: 6, pass: 3, pass_unrecorded: 0, fail: 1, uncached: 0 };
+
+describe("OutcomeMix", () => {
+  it("draws one hidden bar segment per nonzero outcome in its color", () => {
+    const { body } = render(OutcomeMix, { props: { counts } });
+    expect(body).toMatch(/class="bar[^"]*"[^>]*aria-hidden="true"/);
+    const segments = [...body.matchAll(/class="segment[^"]*"[^>]*style="([^"]+)"/g)].map((m) => m[1]);
+    expect(segments).toHaveLength(3);
+    expect(segments[0]).toContain("background: var(--chart-skip)");
+    expect(segments[0]).toContain("width: 60%");
+    expect(segments[2]).toContain("background: var(--chart-fail)");
+  });
+
+  it("lists every outcome with its label, count, and percent for screen readers too", () => {
+    const { body } = render(OutcomeMix, { props: { counts } });
+    expect(body.match(/<li/g)).toHaveLength(5);
+    expect(body).toContain("Pass, not cached");
+    expect(body).toMatch(/Skip<\/span>\s*<span[^>]*>6<\/span>\s*<span[^>]*>60%</);
+    expect(body).not.toMatch(/<ul[^>]*aria-hidden/);
+  });
+});
