@@ -31,8 +31,8 @@ _NO_COMMAND = "no command given after --"
 _USAGE = """\
 gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...]
        gate-cache status [--name NAME [--path PATHSPEC]...] [--json]
-       gate-cache clear
-       gate-cache stats [on|off|clear]
+       gate-cache clear [--yes]
+       gate-cache stats [on|off|clear [--yes]]
        gate-cache dashboard [--port N] [--no-browser]"""
 
 _HELP = """\
@@ -53,7 +53,7 @@ Exit codes:
           Usage errors exit 2.
   status  0 when the named gate, or any gate without --name, passed on the
           current tree. 1 otherwise. --json prints one JSON object instead.
-  clear   0 on success, 1 on failure.
+  clear   0 on success, 1 on failure or when not confirmed.
 
 GATE_CACHE_DISABLE and CI are on when the value is not empty, 0, or false (any
 case). If GATE_CACHE_DISABLE is on, the command always runs without the cache.
@@ -120,10 +120,11 @@ passed, 1 otherwise.
 """
 
 _CLEAR_HELP = """\
-Delete every recorded pass for this repository.
+Permanently delete every recorded pass for this repository.
 
-Use after something outside git changes, such as a tool upgrade. Exits 1 outside a
-git repository.
+Use after something outside git changes, such as a tool upgrade. It asks you to type
+`yes` first, and refuses when stdin is not a terminal unless you give --yes. Exits 1
+outside a git repository.
 """
 
 _STATS_HELP = """\
@@ -133,7 +134,9 @@ Without an action, print whether recording is on and what decided it. `on` and
 `off` write the setting to the config file. GATE_CACHE_STATS overrides the file,
 and CI turns recording off unless GATE_CACHE_STATS is set.
 
-`clear` deletes all recorded stats. It refuses while the dashboard is running.
+`clear` permanently deletes all recorded stats. It asks you to type `yes` first, and
+refuses when stdin is not a terminal unless you give --yes. It refuses while the
+dashboard is running.
 """
 
 _DASHBOARD_HELP = """\
@@ -223,14 +226,21 @@ def _status_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_yes(parser: argparse.ArgumentParser, help_text: str) -> None:
+    """Add the -y/--yes flag that skips a deletion's confirmation prompt."""
+    parser.add_argument("-y", "--yes", action="store_true", help=help_text)
+
+
 def _clear_parser() -> argparse.ArgumentParser:
     """Build the parser for the clear subcommand."""
-    return argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         prog="gate-cache clear",
         description=_CLEAR_HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
     )
+    _add_yes(parser, "Delete without asking for confirmation.")
+    return parser
 
 
 def _stats_parser() -> argparse.ArgumentParser:
@@ -247,6 +257,7 @@ def _stats_parser() -> argparse.ArgumentParser:
         choices=["on", "off", "clear"],
         help="Turn recording on or off, or delete all recorded stats.",
     )
+    _add_yes(parser, "With clear, delete without asking for confirmation.")
     return parser
 
 
@@ -275,6 +286,19 @@ def _dashboard_parser() -> argparse.ArgumentParser:
         "--no-browser", action="store_true", help="Do not open the dashboard in a browser."
     )
     return parser
+
+
+def _stats_command(tokens: list[str]) -> int:
+    """Parse the stats subcommand and run its action."""
+    parser = _stats_parser()
+    args = parser.parse_args(tokens)
+    if args.yes and args.action != "clear":
+        parser.error("--yes only applies to clear")
+    if args.action == "clear":
+        from gate_cache.dashboard.app import stats_clear
+
+        return stats_clear(confirmed=args.yes)
+    return _stats(args.action)
 
 
 def _stats(action: str | None) -> int:
@@ -374,15 +398,9 @@ def _dispatch(tokens: list[str]) -> int:
             parser.error(_NEEDS_VALUE["--path"])
         return gate_status(args.name, as_json=args.as_json, paths=args.path)
     if tokens and tokens[0] == "clear":
-        _clear_parser().parse_args(tokens[1:])
-        return clear_cache()
+        return clear_cache(confirmed=_clear_parser().parse_args(tokens[1:]).yes)
     if tokens and tokens[0] == "stats":
-        action = _stats_parser().parse_args(tokens[1:]).action
-        if action == "clear":
-            from gate_cache.dashboard.app import stats_clear
-
-            return stats_clear()
-        return _stats(action)
+        return _stats_command(tokens[1:])
     if tokens and tokens[0] == "dashboard":
         args = _dashboard_parser().parse_args(tokens[1:])
         from gate_cache.dashboard.app import run_dashboard

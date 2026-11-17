@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gate_cache import __version__
-from gate_cache.console import format_duration, kv, say
+from gate_cache.console import confirm_deletion, format_duration, kv, say, stdin_isatty
 from gate_cache.env import CI_ENV, flag_on
 from gate_cache.markers import (
     RecordIndex,
     clear_markers,
+    marker_dir,
     marker_duration,
     marker_exists,
     marker_path,
@@ -242,7 +243,7 @@ class _Stats:
         cwd = _cwd()
         if worktree is None and cwd is not None:
             worktree = run_context.find_worktree(cwd)
-        source = run_context.detect_source(os.environ, isatty=run_context.stdin_isatty())
+        source = run_context.detect_source(os.environ, isatty=stdin_isatty())
         head = run_context.read_head(run_context.worktree_git_dir(worktree))
         url = run_context.config_remote_url(common_dir)
         joined = shlex.join(command)
@@ -689,15 +690,27 @@ def _list_gates(*, as_json: bool) -> int:
     return code
 
 
-def clear_cache() -> int:
-    """Delete every marker for the current repository.
+def clear_cache(*, confirmed: bool = False) -> int:
+    """Delete every marker for the current repository, after the user confirms.
+
+    Args:
+        confirmed: Skip the confirmation prompt, as `--yes` does for scripts.
 
     Returns:
-        0 on success, 1 outside a git repository or when markers cannot be removed.
+        0 on success, 1 outside a git repository, when the user does not confirm, or when
+        markers cannot be removed.
     """
     common_dir = git_common_dir()
     if common_dir is None:
         say("not a git repository")
+        return 1
+    warning = [
+        "this permanently deletes every recorded pass for this repository.",
+        f"markers: {marker_dir(common_dir)}",
+        "Every gate runs again in full, even on code that already passed.",
+        "Recorded run stats are not affected.",
+    ]
+    if not confirmed and not confirm_deletion("clear markers", warning):
         return 1
     try:
         count = clear_markers(common_dir)

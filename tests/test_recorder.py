@@ -626,7 +626,6 @@ def test_stats_off_does_no_context_work(
 
     for helper in (
         "detect_source",
-        "stdin_isatty",
         "find_worktree",
         "relative_subdir",
         "worktree_git_dir",
@@ -640,6 +639,7 @@ def test_stats_off_does_no_context_work(
         "child_usage",
     ):
         monkeypatch.setattr(context, helper, tripwire(helper))
+    monkeypatch.setattr("gate_cache.gate.stdin_isatty", tripwire("stdin_isatty"))
     monkeypatch.setattr(uuid, "uuid4", tripwire("uuid4"))
     if sys.platform != "win32":
         import resource
@@ -664,6 +664,6 @@ def test_clear_keeps_machine_id(
     run_gate("t", ["true"])
     machine = stats_dirs[1] / "machine-id"
     identity = machine.read_text()
-    assert stats_clear() == 0
+    assert stats_clear(confirmed=True) == 0
     assert not (stats_dirs[1] / "events.jsonl").exists()
     assert machine.read_text() == identity

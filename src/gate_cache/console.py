@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 _DIM = "\033[2m"
 _RESET = "\033[0m"
@@ -11,13 +15,58 @@ _MINUTE = 60
 _HOUR = 3600
 
 
-def say(message: str) -> None:
+def say(message: str, *, end: str = "\n") -> None:
     """Print a gate-cache message to stderr, verbatim.
 
     Args:
         message: Text to print after the `gate-cache: ` prefix.
+        end: Text printed after the message; empty for a prompt that waits on the same line.
     """
-    print(f"gate-cache: {message}", file=sys.stderr)  # noqa: T201
+    print(f"gate-cache: {message}", end=end, file=sys.stderr, flush=True)  # noqa: T201
+
+
+def stdin_isatty() -> bool:
+    """Return whether standard input is a terminal, treating a missing stdin as not one."""
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (OSError, ValueError):
+        return False
+
+
+def confirm_deletion(action: str, warning: Sequence[str]) -> bool:
+    """Warn that a deletion is permanent and return True only when the user types `yes`.
+
+    Call before any command deletes data the user asked to delete. Without a terminal on
+    stdin nobody can answer, so refuse rather than block or guess; the caller's `--yes`
+    flag skips this call.
+
+    Args:
+        action: The command's verb phrase, such as `clear stats`, used in the prompt.
+        warning: What is deleted and what is lost; the first line is the headline.
+
+    Returns:
+        True when the user typed `yes`, False when they refused or could not answer.
+    """
+    if not stdin_isatty():
+        say(f"refusing to {action} without confirmation; pass --yes to {action} non-interactively")
+        return False
+    headline, *details = warning
+    say(f"WARNING: {headline}")
+    for line in [*details, "This cannot be undone."]:
+        say(f"  {line}")
+    say(f"type 'yes' to {action}: ", end="")
+    try:
+        answer = input()
+    except (EOFError, KeyboardInterrupt) as interrupt:
+        print(file=sys.stderr)  # noqa: T201
+        say("aborted; nothing was deleted")
+        if isinstance(interrupt, KeyboardInterrupt):
+            raise
+        return False
+    if answer.strip() != "yes":
+        say("aborted; nothing was deleted")
+        return False
+    return True
 
 
 def _use_color() -> bool:

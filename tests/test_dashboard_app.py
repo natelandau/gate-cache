@@ -2,7 +2,7 @@
 
 import socket
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -47,6 +47,20 @@ def test_second_dashboard_reports_running(
     opener.assert_called_once_with("http://127.0.0.1:7878")
 
 
+def test_dashboard_during_stats_clear_prompt(
+    stats_dirs: tuple[Path, Path], opener: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dashboard started while `stats clear` holds the lock names both possible holders."""
+    held = InstanceLock.acquire(stats_dirs[1])
+    assert held is not None
+    try:
+        assert app.run_dashboard(port=0, open_browser=True) == 0
+    finally:
+        held.release()
+    assert "already running, or stats clear is in progress" in capsys.readouterr().err
+    opener.assert_not_called()
+
+
 def test_second_dashboard_no_browser(lock: InstanceLock, opener: MagicMock) -> None:
     """--no-browser suppresses opening the running dashboard."""
     try:
@@ -84,7 +98,7 @@ def test_stats_clear_deletes(
     ]
     for name in names:
         (state / name).write_text("x")
-    assert app.stats_clear() == 0
+    assert app.stats_clear(confirmed=True) == 0
     assert "cleared stats" in capsys.readouterr().err
     assert [p.name for p in state.iterdir() if p.name != "dashboard.lock"] == []
 
@@ -96,9 +110,64 @@ def test_stats_clear_removes_machine_id_temp_files(stats_dirs: tuple[Path, Path]
     (state / "machine-id").write_text(f"{'a' * 32}\n")
     (state / f".machine-id.123.{'c' * 32}").write_text("x")
     (state / f".machine-id.456.{'d' * 32}").write_text("")
-    assert app.stats_clear() == 0
+    assert app.stats_clear(confirmed=True) == 0
     assert sorted(p.name for p in state.iterdir() if p.name != "dashboard.lock") == ["machine-id"]
     assert (state / "machine-id").read_text() == f"{'a' * 32}\n"
+
+
+@pytest.fixture
+def seeded(stats_dirs: tuple[Path, Path]) -> Path:
+    """Write an inbox so a test can see whether clearing deleted it."""
+    state = stats_dirs[1]
+    state.mkdir(parents=True)
+    (state / "events.jsonl").write_text("x")
+    return state
+
+
+def test_stats_clear_keeps_stats_unless_confirmed(
+    seeded: Path, answer: Callable[[str | None], None], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Declining the prompt deletes nothing, and the warning names the data directory."""
+    answer("no")
+    assert app.stats_clear() == 1
+    assert (seeded / "events.jsonl").exists()
+    assert f"data: {seeded}" in capsys.readouterr().err
+
+
+def test_stats_clear_deletes_when_yes_typed(
+    seeded: Path, answer: Callable[[str | None], None], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Typing yes at the prompt clears the stats."""
+    answer("yes")
+    assert app.stats_clear() == 0
+    assert not (seeded / "events.jsonl").exists()
+    assert "cleared stats" in capsys.readouterr().err
+
+
+def test_stats_clear_ctrl_c_keeps_stats_and_releases_lock(
+    seeded: Path, answer: Callable[[str | None], None]
+) -> None:
+    """Ctrl-C at the prompt keeps the stats and frees the dashboard lock."""
+    answer("^C")
+    with pytest.raises(KeyboardInterrupt):
+        app.stats_clear()
+    assert (seeded / "events.jsonl").exists()
+    held = InstanceLock.acquire(seeded)
+    assert held is not None
+    held.release()
+
+
+def test_stats_clear_refuses_before_prompting_while_running(
+    lock: InstanceLock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A running dashboard is reported before the user is asked anything."""
+    asked = MagicMock(return_value=False)
+    monkeypatch.setattr(app, "confirm_deletion", asked)
+    try:
+        assert app.stats_clear() == 1
+    finally:
+        lock.release()
+    asked.assert_not_called()
 
 
 def test_stats_clear_reports_os_error(
@@ -118,7 +187,7 @@ def test_stats_clear_reports_os_error(
         real(self, missing_ok=missing_ok)
 
     monkeypatch.setattr(Path, "unlink", fail)
-    assert app.stats_clear() == 1
+    assert app.stats_clear(confirmed=True) == 1
     assert "could not clear stats: denied" in capsys.readouterr().err
     monkeypatch.setattr(Path, "unlink", real)
     held = InstanceLock.acquire(state)
@@ -340,4 +409,19 @@ def test_cli_stats_clear_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     clear = MagicMock(return_value=0)
     monkeypatch.setattr(app, "stats_clear", clear)
     assert invoke(monkeypatch, "stats", "clear") == 0
-    clear.assert_called_once_with()
+    clear.assert_called_once_with(confirmed=False)
+
+
+def test_cli_stats_clear_yes_skips_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`stats clear --yes` and `-y` clear without asking."""
+    clear = MagicMock(return_value=0)
+    monkeypatch.setattr(app, "stats_clear", clear)
+    assert invoke(monkeypatch, "stats", "clear", "--yes") == 0
+    assert invoke(monkeypatch, "stats", "clear", "-y") == 0
+    assert clear.call_args_list == [((), {"confirmed": True})] * 2
+
+
+def test_cli_stats_yes_needs_clear(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--yes with any action other than clear is a usage error."""
+    for args in (("--yes",), ("on", "--yes"), ("off", "-y")):
+        assert invoke(monkeypatch, "stats", *args) == 2

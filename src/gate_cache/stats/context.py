@@ -100,14 +100,6 @@ def detect_source(environ: Mapping[str, str], *, isatty: bool) -> Source:
     return Source(trigger="terminal" if isatty else "other")
 
 
-def stdin_isatty() -> bool:
-    """Return whether standard input is a terminal, treating a missing stdin as not one."""
-    try:
-        return sys.stdin is not None and sys.stdin.isatty()
-    except (OSError, ValueError):
-        return False
-
-
 def find_worktree(start: Path) -> Path | None:
     """Return the nearest directory at or above start that holds a `.git` entry.
 

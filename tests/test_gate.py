@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -438,10 +438,36 @@ def test_clear_removes_markers(
 ) -> None:
     """Clear deletes markers so the next run executes."""
     run_gate(NAME, counter.argv())
-    assert clear_cache() == 0
+    assert clear_cache(confirmed=True) == 0
     assert "gate-cache: removed 1 marker\n" in capfd.readouterr().err
     run_gate(NAME, counter.argv())
     assert counter.count == 2
+
+
+def test_clear_keeps_markers_unless_confirmed(
+    git_repo: Path,
+    counter: Counter,
+    answer: Callable[[str | None], None],
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Declining the prompt keeps every marker, and the warning names the marker directory."""
+    run_gate(NAME, counter.argv())
+    answer("no")
+    assert clear_cache() == 1
+    err = capfd.readouterr().err
+    assert "permanently deletes every recorded pass" in err
+    assert f"markers: {marker_dir(git_repo / '.git')}" in err
+    assert len(markers(git_repo)) == 1
+
+
+def test_clear_deletes_when_yes_typed(
+    git_repo: Path, counter: Counter, answer: Callable[[str | None], None]
+) -> None:
+    """Typing yes at the prompt clears the markers."""
+    run_gate(NAME, counter.argv())
+    answer("yes")
+    assert clear_cache() == 0
+    assert markers(git_repo) == []
 
 
 def test_clear_outside_repo_fails(
@@ -455,7 +481,7 @@ def test_clear_outside_repo_fails(
     outside.mkdir()
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     monkeypatch.chdir(outside)
-    assert clear_cache() == 1
+    assert clear_cache(confirmed=True) == 1
     assert "gate-cache: not a git repository" in capfd.readouterr().err
 
 
@@ -468,7 +494,7 @@ def test_clear_reports_os_error(
         raise OSError(16, "Resource busy")
 
     monkeypatch.setattr("gate_cache.gate.clear_markers", fail)
-    assert clear_cache() == 1
+    assert clear_cache(confirmed=True) == 1
     assert "gate-cache: could not clear markers: " in capfd.readouterr().err
 
 
@@ -601,7 +627,7 @@ def test_clear_reports_plural_count(
 ) -> None:
     """Clear uses the plural for any count other than one."""
     monkeypatch.setattr("gate_cache.gate.clear_markers", lambda _common_dir: count)
-    assert clear_cache() == 0
+    assert clear_cache(confirmed=True) == 0
     assert f"gate-cache: removed {expected}\n" in capfd.readouterr().err
 
 

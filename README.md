@@ -256,11 +256,23 @@ $ gate-cache status --json
 
 A marker records only the content of the files that git does not ignore. A new tool version, a changed environment variable, or a change to a service does not change that content, so the old markers still match. To make a gate run again when one of these inputs changes, put the input in the name, as [Inputs that git does not track](#inputs-that-git-does-not-track) shows.
 
-`gate-cache clear` deletes every marker for the repository, and the records of missed runs:
+`gate-cache clear` permanently deletes every marker for the repository, and the records of missed runs. After a clear, every gate runs again in full. Before it deletes anything, it shows a warning and asks you to type `yes`. Any other answer stops the command, and no markers are deleted:
 
 ```console
 $ gate-cache clear
+gate-cache: WARNING: this permanently deletes every recorded pass for this repository.
+gate-cache:   markers: /path/to/repo/.git/gate-cache
+gate-cache:   Every gate runs again in full, even on code that already passed.
+gate-cache:   Recorded run stats are not affected.
+gate-cache:   This cannot be undone.
+gate-cache: type 'yes' to clear markers: yes
 gate-cache: removed 3 markers
+```
+
+If standard input is not a terminal, as in a script, the command refuses unless you give `--yes` (or `-y`):
+
+```sh
+gate-cache clear --yes
 ```
 
 `GATE_CACHE_DISABLE=1` runs every command without the cache, for one command or for a whole session:
@@ -299,7 +311,13 @@ The dashboard listens on `127.0.0.1` and opens in your browser. It listens on po
 
 The dashboard has pages for an overview, gates, repositories, recent activity, and flaky gates. It updates while it runs, so new runs appear within seconds. The theme button at the top right cycles between the system theme (the default), light, and dark, and the dashboard remembers your choice.
 
-`gate-cache stats clear` deletes all recorded stats. It keeps the random machine ID. It refuses while the dashboard runs. It does not delete markers. Use `gate-cache clear` for those.
+`gate-cache stats clear` permanently deletes all recorded stats. You cannot undo it. Like `gate-cache clear`, it shows a warning and asks you to type `yes`. Any other answer stops the command, and no stats are deleted. If standard input is not a terminal, as in a script, the command refuses unless you give `--yes` (or `-y`):
+
+```sh
+gate-cache stats clear --yes
+```
+
+It keeps the random machine ID. It refuses while the dashboard runs. It does not delete markers. Use `gate-cache clear` for those.
 
 ### What gate-cache records
 
