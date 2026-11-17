@@ -11,33 +11,36 @@ from gate_cache.console import say
 from gate_cache.dashboard import server as server_module
 from gate_cache.dashboard.server import static_root
 from gate_cache.stats import config
-from gate_cache.stats.archive import Archive, ArchiveVersionError, archive_path
+from gate_cache.stats.archive import ARCHIVE_NAME, Archive, ArchiveVersionError
 from gate_cache.stats.lock import InstanceLock, running_url
-from gate_cache.stats.recorder import inbox_path
+from gate_cache.stats.recorder import INBOX_NAME
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _bind(port: int | None, static_dir: Path) -> server_module.DashboardServer | None:
+def _bind(port: int | None, state: Path, static_dir: Path) -> server_module.DashboardServer | None:
     """Bind the server, falling back to a free port only when no port was requested."""
     wanted = config.DASHBOARD_PORT if port is None else port
     try:
-        return _make(wanted, static_dir)
+        return _make(wanted, state, static_dir)
     except OSError as error:
         if port is not None:
             say(f"could not listen on 127.0.0.1:{port}: {error.strerror or error}")
             return None
     try:
-        return _make(0, static_dir)
+        return _make(0, state, static_dir)
     except OSError as error:
         say(f"could not listen on 127.0.0.1: {error.strerror or error}")
         return None
 
 
-def _make(port: int, static_dir: Path) -> server_module.DashboardServer:
+def _make(port: int, state: Path, static_dir: Path) -> server_module.DashboardServer:
     return server_module.make_server(
-        port=port, archive_path=archive_path(), inbox=inbox_path(), static_dir=static_dir
+        port=port,
+        archive_path=state / ARCHIVE_NAME,
+        inbox=state / INBOX_NAME,
+        static_dir=static_dir,
     )
 
 
@@ -69,25 +72,25 @@ def run_dashboard(*, port: int | None, open_browser: bool) -> int:
             webbrowser.open(url)
         return 0
     try:
-        return _serve(lock, port=port, open_browser=open_browser)
+        return _serve(lock, state=state, port=port, open_browser=open_browser)
     finally:
         lock.release()
 
 
-def _serve(lock: InstanceLock, *, port: int | None, open_browser: bool) -> int:
-    """Run the server while holding the instance lock."""
+def _serve(lock: InstanceLock, *, state: Path, port: int | None, open_browser: bool) -> int:
+    """Run the server on the locked data directory while holding the instance lock."""
     static_dir = static_root()
     if static_dir is None:
         say(server_module.NO_UI_MESSAGE)
         return 1
     try:
-        with Archive.open(archive_path()) as archive:
-            server = _bind(port, static_dir)
+        with Archive.open(state / ARCHIVE_NAME) as archive:
+            server = _bind(port, state, static_dir)
             if server is None:
                 return 1
             try:
                 lock.write_url(server.url)
-                archive.ingest(inbox_path())
+                archive.ingest(state / INBOX_NAME)
             except (OSError, sqlite3.Error) as error:
                 say(str(error))
                 server.server_close()

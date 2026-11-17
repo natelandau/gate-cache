@@ -375,9 +375,31 @@ The setting comes from the first of these that applies:
 
 A CI runner is not your machine, so CI does not record unless `GATE_CACHE_STATS` is on. Recording never changes whether a command skips, its exit code, or its output. A failure to record is silent.
 
+### Where the data lives
+
+The data directory comes from the first of these that applies:
+
+1. `GATE_CACHE_DATA_DIR`, when it is not empty. A relative path starts from the current directory.
+2. `data_dir` in the `[stats]` table of the config file, when it is a text value that is not empty. A relative path starts from the directory of the config file, so every repository uses the same data.
+3. The state directory of your platform.
+
+A leading `~` in either value expands to your home directory. gate-cache ignores a `data_dir` value that is not text. `gate-cache stats` shows the data directory that applies.
+
+```toml
+[stats]
+enabled = true
+data_dir = "~/gate-cache-stats"
+```
+
+To try the dashboard on test data and keep your real stats unchanged, set a separate data directory:
+
+```sh
+GATE_CACHE_DATA_DIR=/tmp/gc-uat GATE_CACHE_STATS=1 gate-cache dashboard
+```
+
 ## Settings
 
-Four environment variables control gate-cache.
+Five environment variables control gate-cache.
 
 | Variable                  | Effect                                                                         | Default |
 | ------------------------- | ------------------------------------------------------------------------------ | ------- |
@@ -385,6 +407,7 @@ Four environment variables control gate-cache.
 | `CI`                      | If on, turns off caching. A value in `GATE_CACHE_DISABLE` overrides it.        | not set |
 | `GATE_CACHE_MAX_AGE_DAYS` | Each time gate-cache records a result, it deletes markers older than this number of days. | `30`    |
 | `GATE_CACHE_STATS`        | If on, records stats, even in CI. If `0` or `false`, turns recording off. If empty, `CI` and then the config file decide. | not set |
+| `GATE_CACHE_DATA_DIR`     | The directory for recorded stats. If empty, `[stats] data_dir` in the config file and then the platform state directory decide. | not set |
 
 A variable is on when its value is not empty, `0`, or `false`. Case and spaces around the value do not matter.
 

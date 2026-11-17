@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 Outcome = Literal["skip", "pass", "pass_unrecorded", "fail", "uncached"]
 
 MAX_LINE_BYTES = 4096
+INBOX_NAME = "events.jsonl"
 # Fields with no bound on their length that an over-long line drops before it cuts anything
 # the event is keyed on.
 _DROPPABLE = ("worktree", "subdir", "branch", "remote", "hook_stage", "reason")
@@ -197,9 +198,17 @@ class Event:
         return len(line) <= MAX_LINE_BYTES
 
 
-def inbox_path() -> Path:
-    """Return the path of the events inbox."""
-    return config.state_dir() / "events.jsonl"
+def inbox_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the path of the events inbox.
+
+    Args:
+        environ: Environment to read the data directory from; defaults to the process
+            environment.
+
+    Returns:
+        The path of `events.jsonl` in the stats data directory.
+    """
+    return config.state_dir(environ) / INBOX_NAME
 
 
 def record_event(
@@ -212,7 +221,8 @@ def record_event(
 
     Args:
         event: The event to store.
-        environ: Environment to read the setting from; defaults to the process environment.
+        environ: Environment to read the setting and the data directory from; defaults to
+            the process environment.
         setting: A setting the caller already read, which skips reading it again.
     """
     # Stats are optional telemetry: no failure here may touch a gate's exit code or output.
@@ -221,7 +231,7 @@ def record_event(
             setting = config.stats_setting(environ)
         if not setting.enabled:
             return
-        path = inbox_path()
+        path = inbox_path(environ)
         path.parent.mkdir(mode=config.STATE_DIR_MODE, parents=True, exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _INBOX_MODE)
         try:

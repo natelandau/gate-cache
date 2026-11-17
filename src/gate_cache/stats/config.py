@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 STATS_ENV = "GATE_CACHE_STATS"
+DATA_DIR_ENV = "GATE_CACHE_DATA_DIR"
 _APP = "gate-cache"
 _TABLE = "[stats]"
 _STATS_HEADER = re.compile(r"^\s*\[\s*stats\s*\]\s*(#.*)?$")
@@ -46,19 +47,74 @@ def config_path() -> Path:
     return user_config_path(_APP, appauthor=False) / "config.toml"
 
 
-def state_dir() -> Path:
-    """Return the directory that holds stats data."""
+def state_dir(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the directory that holds stats data.
+
+    GATE_CACHE_DATA_DIR, when not empty, decides, and a relative value resolves against
+    the current directory. Otherwise `[stats] data_dir` in the config file decides, and a
+    relative value resolves against the config file's directory so every repository sees
+    the same data. Otherwise the data lives in the platform state directory. A leading
+    `~` expands in both.
+
+    Args:
+        environ: Environment to read; defaults to the process environment.
+
+    Returns:
+        The absolute path of the stats data directory.
+    """
+    env = os.environ if environ is None else environ
+    if value := env.get(DATA_DIR_ENV, "").strip():
+        # absolute() reads the cwd only for a relative path, so an absolute value still
+        # works from a deleted directory.
+        return _expand_user(value).absolute()
+    configured = _stats_table().get("data_dir")
+    if isinstance(configured, str) and configured.strip():
+        return config_path().parent / _expand_user(configured.strip())
     return user_state_path(_APP, appauthor=False)
+
+
+def _expand_user(value: str) -> Path:
+    """Expand a leading `~`, keeping the value as written when no home can be found.
+
+    A shell leaves `~unknown-user` as written too, so an unresolvable value never stops
+    the stats commands with a traceback.
+    """
+    path = Path(value)
+    try:
+        return path.expanduser()
+    except RuntimeError:
+        return path
+
+
+_table_cache: tuple[tuple[Path, int, int], dict[str, object]] | None = None
+
+
+def _stats_table() -> dict[str, object]:
+    """Return the `[stats]` table of the config file, or an empty one when unusable."""
+    global _table_cache  # noqa: PLW0603
+    path = config_path()
+    try:
+        info = path.stat()
+    except OSError:
+        return {}
+    # A recorded gate run looks the table up several times; re-parse only when the file
+    # changes, so a long-running dashboard still sees edits.
+    key = (path, info.st_mtime_ns, info.st_size)
+    if _table_cache is not None and _table_cache[0] == key:
+        return _table_cache[1]
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return {}
+    table = data.get("stats")
+    result: dict[str, object] = table if isinstance(table, dict) else {}
+    _table_cache = (key, result)
+    return result
 
 
 def _config_value() -> bool | None:
     """Return `[stats] enabled` from the config file, or None when absent or invalid."""
-    try:
-        data = tomllib.loads(config_path().read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-        return None
-    table = data.get("stats")
-    value = table.get("enabled") if isinstance(table, dict) else None
+    value = _stats_table().get("enabled")
     return value if isinstance(value, bool) else None
 
 

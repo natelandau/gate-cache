@@ -60,7 +60,7 @@ def processing_files(inbox: Path) -> list[Path]:
 
 def test_archive_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The archive lives in the state directory."""
-    monkeypatch.setattr(archive_module.config, "state_dir", lambda: tmp_path)
+    monkeypatch.setenv(archive_module.config.DATA_DIR_ENV, str(tmp_path))
     assert archive_path() == tmp_path / "stats.sqlite3"
 
 

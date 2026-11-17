@@ -102,6 +102,8 @@ Environment:
   lasts (default {DEFAULT_MAX_AGE_DAYS}).
   GATE_CACHE_STATS: if on, record run stats even in CI. If 0 or false, do not
   record. If empty or not set, CI and then the config file decide.
+  GATE_CACHE_DATA_DIR: the directory for recorded stats. If empty or not set,
+  [stats] data_dir in the config file and then the platform default decide.
 
 Typical use:
   gate-cache -- uv run pytest -x
@@ -168,7 +170,8 @@ recording is on, what decided it, the config file, and the data directory.
 `on` and `off` write [stats] enabled to the config file and keep its other
 lines. The setting comes from the first of: GATE_CACHE_STATS when not empty
 (0 or false is off, any other value is on), CI (on means off), the config file,
-and then off.
+and then off. GATE_CACHE_DATA_DIR, or `data_dir` in the [stats] table of the
+config file, moves the data directory.
 
 Recording never changes whether a command skips, its exit code, or its output,
 and a failure to record is silent. Each run adds one event: the gate name, the

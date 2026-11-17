@@ -163,6 +163,7 @@ After you add or change a gate, do these steps to make sure that it works:
 - Never run `gate-cache clear` or `gate-cache stats clear` unless the user asks. Both permanently delete data. Give `--yes` only when the user asked for the deletion.
 - Never edit or delete files in `{{marker_dir}}`.
 - Never turn stats recording on or off unless the user asks.
+- To try stats or the dashboard on test data, set `GATE_CACHE_DATA_DIR` to a temporary directory and `GATE_CACHE_STATS=1` for that command, so it never writes to the user's real stats.
 - Never set `GATE_CACHE_DISABLE=1` in a recipe, a hook, a shell profile, or a committed file. It removes every skip.
 - Never put a secret in a gate name or in the command line of a gate without `--name`.
 - When a gate skips, do not run the tool another way to confirm the result.
