@@ -8,6 +8,7 @@ const current: Summary = {
   overhead: 0,
   waited: 0,
   net_saved: 100,
+  cost_unknown_runs: 0,
   runs: 10,
   skips: 5,
   skip_rate: 0.5,
