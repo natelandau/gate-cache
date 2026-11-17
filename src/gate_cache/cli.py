@@ -37,7 +37,7 @@ _NO_COMMAND = "no command given after --"
 
 _USAGE = """\
 gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...]
-       gate-cache status [--name NAME [--path PATHSPEC]...] [--json]
+       gate-cache status [--name NAME] [--path PATHSPEC]... [--json] [-- COMMAND...]
        gate-cache clear [--yes]
        gate-cache stats [on|off|clear [--yes]]
        gate-cache dashboard [--port N] [--no-browser]
@@ -130,22 +130,23 @@ Run gate-cache SUBCOMMAND --help for the options of a subcommand.
 _STATUS_HELP = """\
 Report which gates skip on the current content. Nothing runs.
 
-With --name, print the name, the tree hash (or why it is unknown), the marker
-path, hit or miss, how long the passing run took, and how the last run on this
-tree failed when it did. Exit 0 on a hit, 1 otherwise. A gate that ran without
---name has the command line as its name, with shell quoting, such as
---name "uv run ruff check .". A name built with $(...) must be given expanded.
-For a gate scoped with --path, give the same --path values with --name. The
-report adds "paths" and "scope" lines.
+With --name or a command, print the name, the tree hash (or why it is
+unknown), the marker path, hit or miss, how long the passing run took, and how
+the last run on this tree failed when it did. Exit 0 on a hit, 1 otherwise. A
+gate that ran without --name has the command line as its name. To look it up,
+give the same command after --, such as `gate-cache status -- uv run ruff
+check .`. A name built with $(...) must be given expanded. For a gate scoped
+with --path, give the same --path values. The report adds "paths" and "scope"
+lines.
 
-Without --name, list the gates that passed on the current tree and the gates
+Without either, list the gates that passed on the current tree and the gates
 that ran on it without passing, with the exit code. Scoped gates are listed
 when they passed or missed on the current content of their paths. Exit 0 when
 at least one gate passed, 1 otherwise.
 
 --json prints one object with "enabled", "tree", "reason" (why the tree is
-unknown, or null), and either "passed" and "missed" (without --name) or "name",
-"marker", "result", "last_run", and "duration" (with --name). With --path,
+unknown, or null), and either "passed" and "missed" (without either) or "name",
+"marker", "result", "last_run", and "duration" (with either). With --path,
 "tree" holds the scope and the object adds "paths" and "full_tree".
 """
 
@@ -295,6 +296,7 @@ def _status_parser() -> argparse.ArgumentParser:
     """Build the parser for the status subcommand."""
     parser = argparse.ArgumentParser(
         prog="gate-cache status",
+        usage="%(prog)s [--name NAME] [--path PATHSPEC]... [--json] [-- COMMAND...]",
         description=_STATUS_HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
@@ -475,6 +477,31 @@ def _split_run(tokens: list[str]) -> _RunArgs:
     raise _UsageError(_NEEDS_SEPARATOR)
 
 
+def _status_command(tokens: list[str]) -> int:
+    """Look up a gate by --name, or by the command after -- as a run without --name names it.
+
+    Raises:
+        _UsageError: When -- is given with no command after it.
+    """
+    parser = _status_parser()
+    command: list[str] | None = None
+    if "--" in tokens:
+        split = tokens.index("--")
+        tokens, command = tokens[:split], tokens[split + 1 :]
+    args = parser.parse_args(tokens)
+    if command is not None:
+        if not command:
+            raise _UsageError(_NO_COMMAND)
+        if args.name is not None:
+            parser.error("give --name or a command after --, not both")
+        args.name = shlex.join(command)
+    if args.path and args.name is None:
+        parser.error("--path needs --name or a command after --")
+    if "" in args.path:
+        parser.error(_NEEDS_VALUE["--path"])
+    return gate_status(args.name, as_json=args.as_json, paths=args.path)
+
+
 def _dispatch(tokens: list[str]) -> int:
     """Run the invocation in tokens and return its exit code.
 
@@ -487,13 +514,7 @@ def _dispatch(tokens: list[str]) -> int:
         sys.stdout.write(agent_text(args.guide))
         return 0
     if tokens and tokens[0] == "status":
-        parser = _status_parser()
-        args = parser.parse_args(tokens[1:])
-        if args.path and args.name is None:
-            parser.error("--path needs --name")
-        if "" in args.path:
-            parser.error(_NEEDS_VALUE["--path"])
-        return gate_status(args.name, as_json=args.as_json, paths=args.path)
+        return _status_command(tokens[1:])
     if tokens and tokens[0] == "clear":
         return clear_cache(confirmed=_clear_parser().parse_args(tokens[1:]).yes)
     if tokens and tokens[0] == "stats":

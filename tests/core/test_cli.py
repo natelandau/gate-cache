@@ -46,6 +46,46 @@ def test_status_finds_a_pass_recorded_under_the_default_name(
     assert invoke(monkeypatch, "status", "--name", shlex.join(counter.argv())) == 0
 
 
+def test_status_command_finds_a_pass_recorded_under_the_default_name(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify status -- COMMAND looks up the gate that the same command ran without --name."""
+    assert invoke(monkeypatch, "status", "--", *counter.argv()) == 1
+    assert invoke(monkeypatch, "--", *counter.argv()) == 0
+    assert invoke(monkeypatch, "status", "--", *counter.argv()) == 0
+    assert counter.count == 1
+
+
+def test_status_command_passes_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify status -- COMMAND joins the command as the name and keeps --path and --json."""
+    status = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "gate_status", status)
+    args = ["status", "--json", "--path", "a", "--", "uv", "run", "ruff", "check", "."]
+    assert invoke(monkeypatch, *args) == 0
+    status.assert_called_once_with("uv run ruff check .", as_json=True, paths=["a"])
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["status", "--name", "x", "--", "pytest"], "not both"),
+        (["status", "--"], "no command given after --"),
+    ],
+)
+def test_status_command_usage_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+    message: str,
+) -> None:
+    """Verify status rejects --name with a command, and an empty command after --."""
+    status = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "gate_status", status)
+    assert invoke(monkeypatch, *args) == 2
+    status.assert_not_called()
+    assert message in capfd.readouterr().err
+
+
 def test_run_rejects_empty_name(
     git_repo: Path,
     counter: Counter,

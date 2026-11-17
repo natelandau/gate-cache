@@ -31,7 +31,7 @@ When the command runs, gate-cache exits with the exit code of the command. It ex
 2. If a gate skips, the check passed on this content. Continue with your task.
 3. If a gate fails, fix the cause and run the same recipe again.
 
-To see which gates passed on the current content, run `gate-cache status`. To look up one gate, run `gate-cache status --name NAME`, and add the same `--path` options that the gate uses. A gate that ran without `--name` has the command line as its name, quoted as a shell quotes it, such as `--name "uv run ruff check ."`. Add `--json` for machine-readable output.
+To see which gates passed on the current content, run `gate-cache status`. To look up one gate, run `gate-cache status --name NAME`, and add the same `--path` options that the gate uses. For a gate that ran without `--name`, give the same command after `--`, such as `gate-cache status -- uv run ruff check .`. Add `--json` for machine-readable output.
 
 To force a full run, set `GATE_CACHE_DISABLE=1` for one command, such as `GATE_CACHE_DISABLE=1 just test`. Force a full run only for one of these reasons:
 

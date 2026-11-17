@@ -229,10 +229,10 @@ $ gate-cache status
 
 A name is missed when its command failed, or when it exited 0 but changed the files. A later pass of the same name removes it from the `missed` line.
 
-With `--name`, it reports on one name. For a gate that ran without `--name`, give the command line as the name:
+With `--name`, it reports on one name. For a gate that ran without `--name`, give the same command after `--`. gate-cache then looks up the command line as the name:
 
 ```console
-$ gate-cache status --name "uv run ruff check ."
+$ gate-cache status -- uv run ruff check .
   name:     uv run ruff check .
   tree:     aaff74984cccd156a469afa7d9ab10e4777beb24
   marker:   /path/to/repo/.git/gate-cache/7d94ca2f57ec0a77f60d328fb405d339fb0c2a645991b97c042ac54403104e9e
@@ -242,7 +242,7 @@ $ gate-cache status --name "uv run ruff check ."
 
 The `last run` line shows only when the name ran on this content without a pass. The `duration` line shows how long the command ran when it passed.
 
-For a scoped gate, give the same `--path` options with `--name`. The report adds a `paths` line and a `scope` line, and the `tree` line shows the whole tree:
+For a scoped gate, give the same `--path` options with `--name` or the command. The report adds a `paths` line and a `scope` line, and the `tree` line shows the whole tree:
 
 ```console
 $ gate-cache status --name api-test --path api/ --path uv.lock
@@ -255,9 +255,9 @@ $ gate-cache status --name api-test --path api/ --path uv.lock
   duration: 1m 34s
 ```
 
-Without `--name`, `status` also lists the scoped gates that passed or missed on the current content of their paths.
+Without `--name` or a command, `status` also lists the scoped gates that passed or missed on the current content of their paths.
 
-`status` runs nothing. With `--name`, it exits 0 when a marker matches and 1 when none does. Without `--name`, it exits 0 when at least one name passed. When gate-cache cannot match the content, for example during a merge conflict, the `tree` line gives the reason. For a scoped gate whose paths match no file, the `scope` line gives it.
+`status` runs nothing. With `--name` or a command, it exits 0 when a marker matches and 1 when none does. Without either, it exits 0 when at least one name passed. When gate-cache cannot match the content, for example during a merge conflict, the `tree` line gives the reason. For a scoped gate whose paths match no file, the `scope` line gives it.
 
 With `--json`, `status` writes one JSON object to stdout instead of text. The exit codes do not change:
 
