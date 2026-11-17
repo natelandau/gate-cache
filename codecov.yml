@@ -1,0 +1,11 @@
+---
+# A suite that a change did not touch uploads nothing, so its flag keeps its last report.
+# Carryforward is off by default so a retired flag stops counting.
+flag_management:
+    default_rules:
+        carryforward: false
+    individual_flags:
+        - name: core
+          carryforward: true
+        - name: server
+          carryforward: true

@@ -1,0 +1,55 @@
+---
+name: "Lint"
+
+on:
+    workflow_dispatch:
+    workflow_call:
+    push:
+        branches:
+            - main
+        paths-ignore:
+            - "**.md"
+            - "docs/**"
+            - "LICENSE"
+            - ".github/dependabot.yml"
+            - ".github/workflows/pr-linter.yml"
+            - ".github/workflows/create-release.yml"
+    pull_request:
+        types:
+            - opened
+            - reopened
+            - synchronize
+        paths-ignore:
+            - "**.md"
+            - "docs/**"
+            - "LICENSE"
+            - ".github/dependabot.yml"
+            - ".github/workflows/pr-linter.yml"
+            - ".github/workflows/create-release.yml"
+
+permissions:
+    contents: read
+
+# Under workflow_call, github.workflow holds the caller's name, so the group names lint itself
+concurrency:
+    group: lint-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+    lint-project:
+        if: ${{ github.ref_type == 'tag' || !contains(github.event.head_commit.message, 'bump(release)') }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+
+            - name: Setup Python, uv, and the package
+              uses: ./.github/actions/setup_python_env
+
+            - name: Run all linters
+              shell: bash
+              run: uv run duty lint
+
+            - name: Validate the hook manifest
+              shell: bash
+              run: uv run prek validate-manifest .pre-commit-hooks.yaml

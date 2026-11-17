@@ -1,0 +1,71 @@
+---
+name: "Tests: server"
+
+# The paths below must match SUITES["server"] in duties.py; tests/tooling/test_workflows.py fails when they drift.
+on:
+    workflow_dispatch:
+    workflow_call:
+        secrets:
+            CODECOV_TOKEN:
+                required: false
+    push:
+        branches:
+            - main
+        paths: &paths
+            - "src/gate_cache/dashboard/**"
+            - "src/gate_cache/stats/**"
+            - "src/gate_cache/console.py"
+            - "src/gate_cache/env.py"
+            - "src/gate_cache/__init__.py"
+            - "tests/server/**"
+            - ".github/workflows/tests-server.yml"
+            - "tests/conftest.py"
+            - "tests/__init__.py"
+            - "duties.py"
+            - ".github/actions/**"
+            - "pyproject.toml"
+            - "uv.lock"
+            - ".python-version"
+    pull_request:
+        types:
+            - opened
+            - reopened
+            - synchronize
+        paths: *paths
+
+permissions:
+    contents: read
+
+# Under workflow_call, github.workflow holds the caller's name, so the group names the suite itself
+concurrency:
+    group: tests-server-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+    test-server:
+        if: ${{ github.ref_type == 'tag' || !contains(github.event.head_commit.message, 'bump(release)') }}
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: true
+            matrix:
+                python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+
+            - name: Setup Python, uv, and the package
+              uses: ./.github/actions/setup_python_env
+              with:
+                  python-version: ${{ matrix.python-version }}
+
+            - name: Run the server tests with coverage
+              shell: bash
+              run: uv run duty test_server
+
+            - name: Upload coverage to Codecov
+              if: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref_type == 'branch' }}
+              uses: codecov/codecov-action@v7
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
+                  files: .cache/coverage-server.xml
+                  flags: server
