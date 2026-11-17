@@ -1,7 +1,6 @@
 /** Rankings and shares for the homepage modules. */
 
-import type { FlakyGate, GateRow, Outcome } from "./api";
-import { OUTCOMES } from "./events";
+import type { FlakyGate, GateRow } from "./api";
 
 /** What Top gates ranks by: time saved, runs, failures, or median passing run time. */
 export type GateRank = "saved" | "runs" | "fails" | "slow";
@@ -40,23 +39,33 @@ export function topFlaky(gates: FlakyGate[], limit = 5): FlakyGate[] {
   return [...gates].sort((a, b) => b.tree_count - a.tree_count || byName(a, b)).slice(0, limit);
 }
 
-export interface OutcomeShare {
-  outcome: Outcome;
+/** One part of a whole, for a stacked share bar. */
+export interface MixPart {
+  key: string;
+  label: string;
   count: number;
-  /** 0..1 of all runs; 0 when nothing ran. */
+  /** A chart color token, such as `var(--chart-skip)`. */
+  color: string;
+  /** Optional longer description, shown as a tooltip on the legend row. */
+  title?: string;
+}
+
+export interface PartShare<T> {
+  part: T;
+  count: number;
+  /** 0..1 of the total; 0 when the total is 0. */
   share: number;
   /** Whole percent, or "<1%" for a nonzero count that rounds to zero. */
   percent: string;
 }
 
-/** Return each outcome, in `OUTCOMES` order, with its count and share of all runs. */
-export function outcomeShares(counts: Record<Outcome, number>): OutcomeShare[] {
-  const outcomes = Object.keys(OUTCOMES) as Outcome[];
-  const total = outcomes.reduce((sum, outcome) => sum + counts[outcome], 0);
-  return outcomes.map((outcome) => {
-    const count = counts[outcome];
-    const share = total > 0 ? count / total : 0;
+/** Return each item, in order, with its count and share of the sum of all counts. */
+export function partShares<T>(items: T[], count: (item: T) => number): PartShare<T>[] {
+  const total = items.reduce((sum, item) => sum + count(item), 0);
+  return items.map((part) => {
+    const n = count(part);
+    const share = total > 0 ? n / total : 0;
     const whole = Math.round(share * 100);
-    return { outcome, count, share, percent: count > 0 && whole === 0 ? "<1%" : `${whole}%` };
+    return { part, count: n, share, percent: n > 0 && whole === 0 ? "<1%" : `${whole}%` };
   });
 }
