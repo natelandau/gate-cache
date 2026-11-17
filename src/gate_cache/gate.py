@@ -527,7 +527,11 @@ def gate_status(
     reason = disabled_reason()
     if reason is not None:
         if as_json:
-            empty = _named_report(name) if name is not None else {"passed": [], "missed": []}
+            empty = (
+                _named_report(name, paths=paths)
+                if name is not None
+                else {"passed": [], "missed": []}
+            )
             _print_json({"enabled": False, "tree": None, "reason": reason, **empty})
         else:
             say(reason)
@@ -561,6 +565,8 @@ def _named_report(
     hit: bool = False,
     last_run: dict[str, Any] | None = None,
     duration: float | None = None,
+    paths: Sequence[str] = (),
+    full_tree: str | None = None,
 ) -> dict[str, Any]:
     """Build the per-gate keys of a `status --name --json` report.
 
@@ -572,6 +578,7 @@ def _named_report(
         "result": "hit" if hit else "miss",
         "last_run": last_run,
         "duration": duration,
+        **scope_fields(paths, full_tree),
     }
 
 
@@ -612,8 +619,9 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
                     hit=hit,
                     last_run=last_run,
                     duration=duration,
+                    paths=snapshot.paths,
+                    full_tree=snapshot.tree,
                 ),
-                **scope_fields(snapshot.paths, snapshot.tree),
             }
         )
         return 0 if hit else 1
