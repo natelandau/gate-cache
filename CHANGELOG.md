@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.9.0 (2026-11-18)
+
+### Feat
+
+- **dashboard**: group a gate's keyed names into one gate (#27)
+- **dashboard**: redesign the dashboard around a shared design system (#26)
+- **dashboard**: show what each gate costs to run (#25)
+- **cli**: have --prompt review an existing gate-cache setup
+
+### Fix
+
+- **duties**: reinstall frontend packages when the lockfile changes
+- **dashboard**: name the source checkout when the UI is missing
+
 ## v0.8.0 (2026-11-17)
 
 ### Feat
