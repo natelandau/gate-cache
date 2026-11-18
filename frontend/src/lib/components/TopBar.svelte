@@ -15,6 +15,7 @@
   import { cycleTheme, theme, themeLabel } from "../theme.svelte";
   import Button from "./Button.svelte";
   import Freshness from "./Freshness.svelte";
+  import Icon from "./Icon.svelte";
   import RangePicker from "./RangePicker.svelte";
   import RepoPicker, { type RepoOption } from "./RepoPicker.svelte";
 
@@ -31,7 +32,7 @@
 </script>
 
 <header class="topbar">
-  <a class="brand" href="#/overview">gate-cache <span>stats</span></a>
+  <a class="brand" href="#/overview"><span class="mark"><Icon name="check-check" size={14} /></span>gate-cache</a>
   <div class="filters" role="group" aria-label="Filters">
     <RangePicker value={range} onchange={onRangeChange} />
     <RepoPicker options={repos} value={selectedRepos} onchange={onReposChange} />
@@ -39,17 +40,7 @@
   <div class="status">
     <Freshness {...freshness} />
     <Button square onclick={cycleTheme} label={themeLabel(theme.value)} title={themeLabel(theme.value)}>
-      <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        {#if theme.value === "system"}
-          <circle cx="8" cy="8" r="5.5" />
-          <path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor" />
-        {:else if theme.value === "light"}
-          <circle cx="8" cy="8" r="2.75" />
-          <path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.05 1.05M11.55 11.55l1.05 1.05M3.4 12.6l1.05-1.05M11.55 4.45l1.05-1.05" />
-        {:else}
-          <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z" />
-        {/if}
-      </svg>
+      <Icon name={theme.value === "system" ? "sun-moon" : theme.value === "light" ? "sun" : "moon"} />
     </Button>
   </div>
 </header>
@@ -60,24 +51,33 @@
     align-items: center;
     gap: var(--space-4);
     min-height: var(--topbar-height);
-    padding: var(--space-1) var(--space-4);
+    padding: var(--space-2) var(--space-4);
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    background: var(--bg);
     flex-wrap: wrap;
   }
 
   .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
     width: calc(var(--sidebar-width) - var(--space-4));
     flex: none;
     color: var(--text);
+    font-size: 15px;
     font-weight: 600;
+    letter-spacing: -0.02em;
     text-decoration: none;
-    font-size: var(--text-md);
   }
 
-  .brand span {
-    color: var(--text-faint);
-    font-weight: 400;
+  .mark {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-control);
+    background: var(--text);
+    color: var(--bg);
   }
 
   .filters {

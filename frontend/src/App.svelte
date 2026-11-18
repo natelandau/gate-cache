@@ -175,15 +175,14 @@
 
   .nav {
     border-right: 1px solid var(--border);
-    background: var(--surface);
   }
 
   main {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-5);
-    max-width: 1280px;
+    gap: var(--space-4);
+    padding: var(--space-5) 28px var(--space-6);
+    max-width: var(--content-max);
     width: 100%;
   }
 

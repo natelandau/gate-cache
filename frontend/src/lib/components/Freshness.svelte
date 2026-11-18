@@ -74,19 +74,28 @@
   }
 
   .label {
-    color: var(--text);
-    font-weight: 500;
+    color: var(--text-muted);
   }
 
   .dot {
-    width: 8px;
-    height: 8px;
+    position: relative;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: var(--text-faint);
   }
 
   .live .dot {
     background: var(--palette-500);
+  }
+
+  .live .dot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--palette-500);
+    animation: pulse 2.4s var(--ease-in) infinite;
   }
 
   .stale .dot {

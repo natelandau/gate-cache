@@ -8,6 +8,8 @@
 -->
 <script lang="ts">
   import { href, type Page } from "../router.svelte";
+  import Badge from "./Badge.svelte";
+  import Icon, { type IconName } from "./Icon.svelte";
 
   interface Props {
     current: Page;
@@ -16,11 +18,11 @@
 
   let { current, flakyCount }: Props = $props();
 
-  const items: { page: Exclude<Page, "gate">; label: string }[] = [
-    { page: "overview", label: "Overview" },
-    { page: "gates", label: "Gates" },
-    { page: "activity", label: "Activity" },
-    { page: "flaky", label: "Flaky" },
+  const items: { page: Exclude<Page, "gate">; label: string; icon: IconName }[] = [
+    { page: "overview", label: "Overview", icon: "layout-dashboard" },
+    { page: "gates", label: "Gates", icon: "list-checks" },
+    { page: "activity", label: "Activity", icon: "activity" },
+    { page: "flaky", label: "Flaky", icon: "triangle-alert" },
   ];
 
   const active = $derived(current === "gate" ? "gates" : current);
@@ -34,9 +36,10 @@
           href={href({ page: item.page })}
           aria-current={active === item.page ? "page" : undefined}
         >
-          <span>{item.label}</span>
+          <Icon name={item.icon} />
+          <span class="label">{item.label}</span>
           {#if item.page === "flaky" && flakyCount}
-            <span class="badge">{flakyCount}</span>
+            <Badge tone="flaky">{flakyCount}</Badge>
           {/if}
         </a>
       </li>
@@ -46,7 +49,7 @@
 
 <style>
   .sidebar {
-    padding: var(--space-2);
+    padding: var(--space-3) 10px;
   }
 
   ul {
@@ -55,20 +58,25 @@
     list-style: none;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
   }
 
   a {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
+    gap: 10px;
     height: var(--row-height);
-    padding: 0 var(--space-2);
-    border-radius: var(--radius);
+    padding: 0 10px;
+    border-radius: var(--radius-control);
     color: var(--text-muted);
     text-decoration: none;
-    font-weight: 500;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease);
+  }
+
+  .label {
+    flex: 1;
   }
 
   a:hover {
@@ -77,21 +85,10 @@
   }
 
   a[aria-current="page"] {
-    background: var(--accent-soft);
+    background: var(--surface);
     color: var(--text);
-    box-shadow: inset 2px 0 0 var(--accent);
-  }
-
-  .badge {
-    min-width: 18px;
-    padding: 0 5px;
-    border-radius: 9px;
-    background: var(--flaky-soft);
-    color: var(--flaky);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    line-height: 16px;
-    text-align: center;
+    font-weight: 500;
+    box-shadow: var(--ring);
   }
 
   @media (max-width: 720px) {
@@ -107,10 +104,6 @@
 
     a {
       white-space: nowrap;
-    }
-
-    a[aria-current="page"] {
-      box-shadow: inset 0 -2px 0 var(--accent);
     }
   }
 </style>
