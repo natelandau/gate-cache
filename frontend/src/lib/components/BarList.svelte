@@ -84,7 +84,7 @@
             </div>
           </td>
           {#each columns as column (column.label)}
-            <td class="num mono">{column.text(bar.row)}</td>
+            <td class="num">{column.text(bar.row)}</td>
           {/each}
         </tr>
       {/each}

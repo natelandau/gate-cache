@@ -18,7 +18,9 @@
   import Notice from "../lib/components/Notice.svelte";
   import OutcomeBadge from "../lib/components/OutcomeBadge.svelte";
   import Select from "../lib/components/Select.svelte";
-  import { eventKeys, eventTitle, OUTCOMES, timeText } from "../lib/events";
+  import { eventKeys, eventTitle, OUTCOMES, ranText, savedText } from "../lib/events";
+  import TimeValue from "../lib/components/TimeValue.svelte";
+  import PageHeader from "../lib/components/PageHeader.svelte";
   import { formatCount, formatRelative, formatTimestamp } from "../lib/format";
   import { createQuery } from "../lib/query.svelte";
   import { navigate } from "../lib/router.svelte";
@@ -61,7 +63,7 @@
 
   function remove(part: FilterPart): void {
     show(part.without);
-    heading.focus();
+    heading?.focus();
   }
 
   let paged: PagedFeed | null = $state(null);
@@ -104,10 +106,11 @@
     { key: "name", label: "Gate", sortable: false, cell: gate },
     { key: "repo_name", label: "Repo", sortable: false, title: (e) => e.repo ?? undefined },
     { key: "outcome", label: "Outcome", sortable: false, cell: outcomeCell },
-    { key: "time", label: "Time", sortable: false, align: "right", text: timeText },
+    { key: "ran", label: "Ran for", sortable: false, align: "right", cell: ranCell },
+    { key: "saved", label: "Saved", sortable: false, align: "right", cell: savedCell },
   ];
 
-  let heading: HTMLElement;
+  let heading: HTMLElement | undefined = $state();
 
   async function loadMore(): Promise<void> {
     const live = first.data;
@@ -143,10 +146,13 @@
 
   function showLatest(): void {
     resetPaging();
-    heading.focus();
+    heading?.focus();
     window.scrollTo({ top: 0 });
   }
 </script>
+
+{#snippet ranCell(e: EventRow)}<TimeValue value={ranText(e)} />{/snippet}
+{#snippet savedCell(e: EventRow)}<TimeValue value={savedText(e)} />{/snippet}
 
 {#snippet when(e: Row)}{formatRelative(e.ts, clock.now)}{/snippet}
 {#snippet gate(e: Row)}<span class="gate">{e.name}</span>{/snippet}
@@ -154,7 +160,7 @@
 
 <section class="page" aria-labelledby="activity-title">
   <div class="head">
-    <h1 id="activity-title" class="page-title" tabindex="-1" bind:this={heading}>Activity</h1>
+    <PageHeader title="Activity" headingId="activity-title" subtitle="Every run, newest first" bind:heading />
     {#if view.newer}
       <Button tone="accent" onclick={showLatest}>New runs. Show latest</Button>
     {/if}
@@ -231,7 +237,7 @@
 
   .head {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
     gap: var(--space-3);
     min-height: var(--control-height);
@@ -244,9 +250,6 @@
     gap: var(--space-3);
   }
 
-  .page-title:focus {
-    outline: none;
-  }
 
   .gate {
     font-weight: 500;

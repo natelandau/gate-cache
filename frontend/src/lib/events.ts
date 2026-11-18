@@ -22,7 +22,26 @@ export const OUTCOMES: Record<Outcome, { label: string; tone: OutcomeTone; descr
   uncached: { label: "Uncached", tone: "neutral", description: "Ran without the cache." },
 };
 
-/** Return "saved 1m 31s" for a skip, "ran 54s" for a run, or "not rerun" for a reported failure. */
+/**
+ * Return the run time of an event for a "Ran for" column: "not rerun" for a reported failure,
+ * null for a skip, which did not run, and "unknown" when no time was recorded.
+ */
+export function ranText(event: EventRow): string | null {
+  if (event.reported) return "not rerun";
+  if (event.outcome === "skip") return null;
+  return event.duration === null ? "unknown" : formatDuration(event.duration);
+}
+
+/**
+ * Return the time a skip saved for a "Saved" column: null for anything that is not a skip,
+ * and "unknown" when the skip's saving was not recorded.
+ */
+export function savedText(event: EventRow): string | null {
+  if (event.outcome !== "skip") return null;
+  return event.saved === null ? "unknown" : formatDuration(event.saved);
+}
+
+/** Return "saved 1m 31s" for a skip, "ran 54s" for a run, or "not rerun" for a reported failure, as one phrase for hover text. */
 export function timeText(event: EventRow): string {
   if (event.reported) return "not rerun";
   const skip = event.outcome === "skip";

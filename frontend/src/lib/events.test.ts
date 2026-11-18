@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EventRow } from "./api";
-import { eventKeys, eventTitle, OUTCOMES, shortTree, timeText } from "./events";
+import { eventKeys, eventTitle, OUTCOMES, ranText, savedText, shortTree, timeText } from "./events";
 
 function event(overrides: Partial<EventRow>): EventRow {
   return {
@@ -26,6 +26,29 @@ describe("OUTCOMES", () => {
     );
     expect(OUTCOMES.fail.tone).toBe("danger");
     expect(OUTCOMES.skip.label).toBe("Skip");
+  });
+});
+
+describe("ranText and savedText", () => {
+  it("puts a run's time under Ran for and a skip's under Saved", () => {
+    const run = event({ outcome: "fail", duration: 54 });
+    expect(ranText(run)).toBe("54s");
+    expect(savedText(run)).toBeNull();
+    const skip = event({ outcome: "skip", duration: null, saved: 91 });
+    expect(ranText(skip)).toBeNull();
+    expect(savedText(skip)).toBe("1m 31s");
+  });
+
+  it("says not rerun for a reported failure", () => {
+    const reported = event({ outcome: "fail", duration: null, reported: true });
+    expect(ranText(reported)).toBe("not rerun");
+    expect(savedText(reported)).toBeNull();
+  });
+
+  it("says unknown when the time was not recorded", () => {
+    expect(ranText(event({ outcome: "pass", duration: null }))).toBe("unknown");
+    expect(ranText(event({ outcome: "uncached", duration: null }))).toBe("unknown");
+    expect(savedText(event({ outcome: "skip", saved: null }))).toBe("unknown");
   });
 });
 
