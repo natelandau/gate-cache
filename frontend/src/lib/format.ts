@@ -1,6 +1,6 @@
 const MINUTE = 60;
-const HOUR = 3600;
-const DAY = 86400;
+export const HOUR = 3600;
+export const DAY = 86400;
 
 /**
  * Render a duration in seconds the way the CLI does: `<1s`, `42s`, `1m 34s`, `1h 2m`.
@@ -158,4 +158,23 @@ export function valueParts(value: string): { text: string; unit: boolean }[] {
     parts.push({ text, unit: !digits && !!unit });
   }
   return parts;
+}
+
+/** Split a pause between runs into whole days from 48 hours up, and whole hours below. */
+function idleUnits(seconds: number): { count: number; days: boolean } {
+  return seconds >= 2 * DAY
+    ? { count: Math.round(seconds / DAY), days: true }
+    : { count: Math.max(1, Math.round(seconds / HOUR)), days: false };
+}
+
+/** Render a pause between runs for an axis, such as "9d" from 48 hours up and "36h" below. */
+export function formatGap(seconds: number): string {
+  const { count, days } = idleUnits(seconds);
+  return `${count}${days ? "d" : "h"}`;
+}
+
+/** Render a pause between runs in words, such as "9 days" from 48 hours up and "36 hours" below. */
+export function formatIdle(seconds: number): string {
+  const { count, days } = idleUnits(seconds);
+  return days ? plural(count, "day", "days") : plural(count, "hour", "hours");
 }

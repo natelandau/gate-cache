@@ -19,12 +19,13 @@
   import { counted, TERMS } from "../terms";
   import { barMotion } from "../motion";
   import type { ChartState } from "layerchart";
-  import { BarChart, Bars, Tooltip } from "layerchart/svg";
+  import { BarChart, Tooltip } from "layerchart/svg";
   import { dailyScale } from "../daily";
   import { METRIC_COLORS } from "../heat";
   import type { DayBucket } from "../fill";
   import { formatCount, formatDuration, formatLongDay, formatShortDay } from "../format";
   import { createDayPick } from "../daypick.svelte";
+  import FloorBars from "./FloorBars.svelte";
   import TooltipSurface from "./TooltipSurface.svelte";
   import DayPicker from "./DayPicker.svelte";
   import { PICK_DAY_HINT, type DaySpan } from "../selection";
@@ -134,8 +135,8 @@
       }}
     >
       {#snippet marks()}
-        <Bars y={(d: Row) => d.runsSpan} fill={runsColor} radius={3} strokeWidth={0} motion={barMotion()} />
-        <Bars y={(d: Row) => d.failSpan} fill={failColor} radius={3} strokeWidth={0} motion={barMotion()} />
+        <FloorBars y={(d: Row) => d.runsSpan} fill={runsColor} radius={3} strokeWidth={0} motion={barMotion()} />
+        <FloorBars y={(d: Row) => d.failSpan} fill={failColor} radius={3} strokeWidth={0} motion={barMotion()} />
       {/snippet}
       {#snippet tooltip({ context })}{@render dayTooltip(context)}{/snippet}
     </BarChart>

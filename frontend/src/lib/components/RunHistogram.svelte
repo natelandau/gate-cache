@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import type { GateDetail } from "../api";
+  import { MIN_BAR_PX } from "../bars";
   import { formatCount, formatDuration } from "../format";
   import { histogramBars } from "../gates";
 
@@ -44,6 +45,7 @@
         <div
           class="bar"
           style:height="{(bar.count / peak) * 100}%"
+          style:min-height="{bar.count ? MIN_BAR_PX : 0}px"
           title="{bar.label}: {formatCount(bar.count)} {bar.count === 1 ? 'run' : 'runs'}"
         ></div>
       {/each}
@@ -85,7 +87,6 @@
 
   .bar {
     flex: 1;
-    min-height: 1px;
     background: var(--chart-runs);
     border-radius: 2px 2px 0 0;
   }

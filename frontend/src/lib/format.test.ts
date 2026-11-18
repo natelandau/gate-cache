@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { durationTicks, formatAxisDuration, formatBytes, formatCount, formatDuration, formatLongDay, formatPercent, formatRatio, formatRelative, formatShortDay, formatSignedDuration, plural, valueParts } from "./format";
+import { durationTicks, formatAxisDuration, formatBytes, formatCount, formatDuration, formatGap, formatIdle, formatLongDay, formatPercent, formatRatio, formatRelative, formatShortDay, formatSignedDuration, plural, valueParts } from "./format";
+
+const HOUR = 3600;
+const DAY = 86400;
 
 describe("formatSignedDuration", () => {
   it("prefixes a negative duration with a minus sign", () => {
@@ -151,5 +154,17 @@ describe("valueParts", () => {
 
   it("keeps a sign with its number", () => {
     expect(valueParts("−2m")[0]).toEqual({ text: "−2", unit: false });
+  });
+});
+
+describe("gap text", () => {
+  it.each([
+    { seconds: 9 * DAY, gap: "9d", idle: "9 days" },
+    { seconds: 2 * DAY, gap: "2d", idle: "2 days" },
+    { seconds: 36 * HOUR, gap: "36h", idle: "36 hours" },
+    { seconds: HOUR, gap: "1h", idle: "1 hour" },
+  ])("renders $seconds seconds as $gap and $idle", ({ seconds, gap, idle }) => {
+    expect(formatGap(seconds)).toBe(gap);
+    expect(formatIdle(seconds)).toBe(idle);
   });
 });

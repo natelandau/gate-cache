@@ -142,7 +142,8 @@ Use an existing component before you write markup of your own. If a page needs a
 | A small trend line inside a card                      | `Sparkline`                       |
 | Gate calls and failures per day                       | `DailyChart`                      |
 | Run time per day, stacked by gate                     | `SpentChart`                      |
-| Run time of one gate over time                        | `TrendChart`                      |
+| Run time of one gate, by run, with idle gaps marked   | `TrendChart`                      |
+| Bars in a LayerChart chart, so a non-zero value always shows | `FloorBars` (2px minimum from `src/lib/bars.ts`) |
 | Any tooltip: a chart's values or a plain explanation  | `TooltipSurface`, the one tooltip surface; a chart renders it inside a LayerChart `Tooltip.Root` with `variant="none"` |
 | The outcome of one run                                | `OutcomeBadge`                    |
 | A run's time in a table cell                          | `TimeValue`, with `ranText` or `savedText` from `src/lib/events.ts` |
