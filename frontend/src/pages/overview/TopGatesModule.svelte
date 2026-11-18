@@ -8,6 +8,7 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
+  import Icon from "../../lib/components/Icon.svelte";
   import { getGates, spanScope } from "../../lib/api";
   import MetricTabs from "../../lib/components/MetricTabs.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -59,8 +60,19 @@
     rankGates((query.data ?? []).filter((row) => (rankValue(row, by) ?? 0) > 0), by),
   );
 
+  const BAR_COLORS: Record<GateRank, string> = {
+    saved: "var(--chart-saved)",
+    spent: "var(--chart-runs)",
+    runs: "var(--chart-runs)",
+    fails: "var(--chart-failures)",
+    slow: "var(--chart-runs)",
+  };
+  const top = $derived(Math.max(0, ...ranked.map((row) => rankValue(row, by) ?? 0)));
+
   const items = $derived(
     ranked.map((row) => ({
+      share: top > 0 ? (rankValue(row, by) ?? 0) / top : 0,
+      barColor: BAR_COLORS[by],
       key: gateKey(row),
       title: row.name,
       subtitle: [row.repo_name, gateRunText(row)].filter(Boolean).join(" \u00b7 "),
@@ -94,5 +106,7 @@
     />
   {/snippet}
   <RankedList {items} />
-  <a class="more-link" href={href({ page: "gates" })}>All gates <span aria-hidden="true">→</span></a>
+  {#snippet footer()}
+    <a class="more-link" href={href({ page: "gates" })}>All gates <Icon name="arrow-right" size={14} /></a>
+  {/snippet}
 </Module>

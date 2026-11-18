@@ -55,7 +55,7 @@
     {#each facts as fact (fact.label)}
       <div class="fact">
         <dt>{fact.label}</dt>
-        <dd class="mono">{fact.value}</dd>
+        <dd class="value">{fact.value}</dd>
       </div>
     {/each}
   </dl>

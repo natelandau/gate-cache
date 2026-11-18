@@ -12,7 +12,7 @@
 <script lang="ts">
   import { calendarFacts } from "../../lib/calendar";
   import CalendarHeatmap from "../../lib/components/CalendarHeatmap.svelte";
-  import { formatCount, formatLongDay } from "../../lib/format";
+  import { formatCount, formatShortDay } from "../../lib/format";
   import MetricTabs from "../../lib/components/MetricTabs.svelte";
   import Module from "../../lib/components/Module.svelte";
   import { HEAT_OPTIONS, type HeatMetric } from "../../lib/heat";
@@ -60,7 +60,7 @@
     <dl class="facts">
       <div>
         <dt>Busiest day</dt>
-        <dd>{facts.busiest ? formatLongDay(facts.busiest.day) : "–"}</dd>
+        <dd>{facts.busiest ? formatShortDay(facts.busiest.day) : "–"}</dd>
       </div>
       <div>
         <dt>Active days</dt>

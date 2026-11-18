@@ -43,6 +43,7 @@
 </script>
 
 <Module
+  subtitle="Run time per day, by gate"
   title="Time spent"
   titleId="spent-title"
   noun="time spent"

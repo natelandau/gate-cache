@@ -112,4 +112,37 @@ describe("Overview", () => {
     // The scoped modules load their own data, so the shell summary's stats are not shown.
     expect(body).not.toContain("vs prev 30d");
   });
+
+  it("keeps every module and headline number", () => {
+    const { body } = render(Overview, {
+      props: { query: query({ summary, days }), repoLabel: null },
+    });
+    for (const title of [
+      "Activity",
+      "Daily",
+      "Time spent",
+      "When gates run",
+      "Top gates",
+      "Outcome mix",
+      "Flaky gates",
+      "Why gates ran uncached",
+      "Recent failures",
+      "Gates getting slower",
+      "Breakdown",
+      "Waits for concurrent runs",
+    ]) {
+      expect(body).toMatch(new RegExp(`<h2[^>]*>${title}</h2>`));
+    }
+    for (const label of ["Time saved", "Net saved", "Time spent", "Runs", "Skip rate", "Flaky gates", "Failures"]) {
+      expect(body).toMatch(new RegExp(`<dt[^>]*>(<!--[^>]*-->)*<span>${label}</span>`));
+    }
+  });
+
+  it("names the repo filter and the range under the title", () => {
+    const { body } = render(Overview, {
+      props: { query: query({ summary, days }), repoLabel: "api-server" },
+    });
+    expect(body).toMatch(/<h1[^>]*>Overview<\/h1>/);
+    expect(body).toMatch(/class="subtitle[^"]*">api-server · /);
+  });
 });

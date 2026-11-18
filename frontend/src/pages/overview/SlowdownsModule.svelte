@@ -9,6 +9,8 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
+  import Icon from "../../lib/components/Icon.svelte";
+  import Badge from "../../lib/components/Badge.svelte";
   import { getSlowdowns, spanScope, type SlowdownRow } from "../../lib/api";
   import DataTable, { type Column } from "../../lib/components/DataTable.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -57,7 +59,9 @@
   {g.name} <span class="repo" title={g.repo ?? undefined}>{g.repo_name}</span>
 {/snippet}
 {#snippet change(g: SlowdownRow)}
-  <span class="up mono"><span aria-hidden="true">▲</span> {formatPercent(g.change)}</span>
+  <Badge tone="danger"
+    ><Icon name="trending-up" size={12} /><span class="visually-hidden">Up</span>&nbsp;{formatPercent(g.change)}</Badge
+  >
 {/snippet}
 
 <Module
@@ -84,7 +88,9 @@
     rowLabel={(g) => `Open ${g.name}`}
     busy={query.loading}
   />
-  <p class="caption">Gates with at least {MIN_RUNS} passing runs in both periods.</p>
+  {#snippet footer()}
+    <span>Gates with at least {MIN_RUNS} passing runs in both periods.</span>
+  {/snippet}
 </Module>
 
 <style>
@@ -93,13 +99,5 @@
     font-size: var(--text-xs);
   }
 
-  .up {
-    color: var(--danger);
-  }
 
-  .caption {
-    margin: var(--space-2) 0 0;
-    color: var(--text-faint);
-    font-size: var(--text-xs);
-  }
 </style>

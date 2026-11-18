@@ -8,6 +8,7 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
+  import Icon from "../../lib/components/Icon.svelte";
   import { getFlaky, spanScope, type FlakyGate } from "../../lib/api";
   import Badge from "../../lib/components/Badge.svelte";
   import DataTable from "../../lib/components/DataTable.svelte";
@@ -75,7 +76,9 @@
     rowLabel={(g) => `Open ${g.name}`}
     busy={query.loading}
   />
-  <a class="more-link" href={href({ page: "flaky" })}>All flaky gates <span aria-hidden="true">→</span></a>
+  {#snippet footer()}
+    <a class="more-link" href={href({ page: "flaky" })}>All flaky gates <Icon name="arrow-right" size={14} /></a>
+  {/snippet}
 </Module>
 
 <style>

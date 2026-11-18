@@ -64,7 +64,7 @@
           <span class="track" aria-hidden="true">
             <span class="fill" style:width="{max > 0 ? (row.count / max) * 100 : 0}%"></span>
           </span>
-          <span class="count mono">{formatCount(row.count)}</span>
+          <span class="count">{formatCount(row.count)}</span>
         </a>
       </li>
     {/each}

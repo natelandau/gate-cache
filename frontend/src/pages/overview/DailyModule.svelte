@@ -28,6 +28,7 @@
 </script>
 
 <Module
+  subtitle="Time saved and failures per day"
   title="Daily"
   titleId="daily-title"
   noun="daily totals"

@@ -1,5 +1,8 @@
 <script lang="ts">
   import FilterChip from "../lib/components/FilterChip.svelte";
+  import PageHeader from "../lib/components/PageHeader.svelte";
+  import { rangeLabel } from "../lib/range";
+  import { filters } from "../lib/state.svelte";
   import { createQuery, type Query } from "../lib/query.svelte";
   import { navigate } from "../lib/router.svelte";
   import { spanLabel, type DaySpan } from "../lib/selection";
@@ -36,7 +39,9 @@
   );
   const scopedQuery = $derived(span ? scoped : query);
 
-  let heading: HTMLElement;
+  let heading: HTMLElement | undefined = $state();
+
+  const subtitle = $derived(`${repoLabel ?? "All repos"} · ${rangeLabel(filters.range)}`);
 
   // Picking replaces the history entry, like the Activity filters.
   function pick(next: DaySpan | undefined): void {
@@ -45,39 +50,32 @@
 
   function clear(): void {
     pick(undefined);
-    heading.focus();
+    heading?.focus();
   }
 </script>
 
 <section class="page" aria-labelledby="overview-title">
-  <div class="head">
-    <h1 id="overview-title" class="page-title" tabindex="-1" bind:this={heading}>Overview</h1>
+  <PageHeader title="Overview" headingId="overview-title" {subtitle} bind:heading>
     {#if span}
       <FilterChip label="Days: {spanLabel(span)}" removeLabel="Show the whole range" onremove={clear} />
     {/if}
-  </div>
+  </PageHeader>
 
   <StatsModule query={scopedQuery} {span} days={query.data?.days} />
-  <CalendarModule {query} {repoLabel} {span} onselect={pick} />
-  <DailyModule {query} {repoLabel} {span} onselect={pick} />
-  <SpentModule {repoLabel} {span} onselect={pick} />
 
-  <div class="row halves">
-    <HourlyModule {repoLabel} {span} />
-    <TopGatesModule {repoLabel} {span} />
-  </div>
-  <div class="row thirds">
-    <OutcomeModule query={scopedQuery} {repoLabel} {span} />
-    <FlakyModule {repoLabel} {span} />
-    <ReasonsModule {repoLabel} {span} />
-  </div>
-  <div class="row wide-narrow">
-    <FailuresModule {repoLabel} {span} />
-    <SlowdownsModule {repoLabel} {span} />
-  </div>
-  <div class="row wide-narrow">
-    <BreakdownModule {repoLabel} {span} />
-    <CoalescingModule {repoLabel} {span} />
+  <div class="grid">
+    <div class="s8"><DailyModule {query} {repoLabel} {span} onselect={pick} /></div>
+    <div class="s4"><CalendarModule {query} {repoLabel} {span} onselect={pick} /></div>
+    <div class="s12"><SpentModule {repoLabel} {span} onselect={pick} /></div>
+    <div class="s6"><HourlyModule {repoLabel} {span} /></div>
+    <div class="s6"><TopGatesModule {repoLabel} {span} /></div>
+    <div class="s4"><OutcomeModule query={scopedQuery} {repoLabel} {span} /></div>
+    <div class="s4"><FlakyModule {repoLabel} {span} /></div>
+    <div class="s4"><ReasonsModule {repoLabel} {span} /></div>
+    <div class="s7"><FailuresModule {repoLabel} {span} /></div>
+    <div class="s5"><SlowdownsModule {repoLabel} {span} /></div>
+    <div class="s7"><BreakdownModule {repoLabel} {span} /></div>
+    <div class="s5"><CoalescingModule {repoLabel} {span} /></div>
   </div>
 </section>
 
@@ -88,37 +86,49 @@
     gap: var(--space-4);
   }
 
-  .head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-3);
-  }
-
-  .page-title:focus {
-    outline: none;
-  }
-
-  .row {
+  .grid {
     display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
     gap: var(--space-4);
   }
 
-  .halves {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Each slot stretches its module to the row's height, so cards in a row line up. */
+  .grid > div {
+    display: grid;
+    min-width: 0;
   }
 
-  .thirds {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .s4 {
+    grid-column: span 4;
   }
 
-  .wide-narrow {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  .s5 {
+    grid-column: span 5;
   }
 
-  @media (max-width: 900px) {
-    .row {
-      grid-template-columns: minmax(0, 1fr);
+  .s6 {
+    grid-column: span 6;
+  }
+
+  .s7 {
+    grid-column: span 7;
+  }
+
+  .s8 {
+    grid-column: span 8;
+  }
+
+  .s12 {
+    grid-column: span 12;
+  }
+
+  @media (max-width: 1100px) {
+    .s4,
+    .s5,
+    .s6,
+    .s7,
+    .s8 {
+      grid-column: span 12;
     }
   }
 </style>
