@@ -106,16 +106,29 @@
   th,
   td {
     height: var(--row-height);
-    padding: 0 var(--space-2);
-    border-bottom: 1px solid var(--border);
+    padding: 0 10px;
+    border-bottom: 1px solid var(--border-row);
+    font-size: var(--text-sm);
     white-space: nowrap;
     text-align: left;
   }
 
   thead th {
+    height: 32px;
+    border-bottom-color: var(--border);
     font-size: var(--text-xs);
-    font-weight: 600;
+    font-weight: 500;
     color: var(--text-muted);
+  }
+
+  th:first-child,
+  td:first-child {
+    padding-left: var(--space-1);
+  }
+
+  th:last-child,
+  td:last-child {
+    padding-right: var(--space-1);
   }
 
   tbody tr:last-child > * {
@@ -131,7 +144,7 @@
     max-width: 180px;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-weight: 400;
+    font-weight: 500;
   }
 
   .name button {
@@ -158,15 +171,16 @@
   }
 
   .track {
-    height: 12px;
+    height: 6px;
     border-radius: 2px;
-    background: var(--surface-sunken);
+    background: var(--track);
     overflow: hidden;
   }
 
   .fill {
     height: 100%;
     border-radius: 2px;
+    transition: width var(--dur-slow) var(--ease);
   }
 
   .dimmed .name button,

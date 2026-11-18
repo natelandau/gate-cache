@@ -33,6 +33,28 @@ describe("DataTable", () => {
     expect(body).toContain('class="right');
   });
 
+  it("sets numbers in right-aligned cells and draws the sort arrow as an icon", () => {
+    const { body } = render(DataTable<Row>, {
+      props: {
+        label: "Gates",
+        rows: [{ name: "lint", runs: 2 }],
+        columns,
+        rowKey: (r: Row) => r.name,
+        sort: { key: "runs", direction: "desc" },
+      },
+    });
+    expect(body).toMatch(/<td class="right num[^"]*"[^>]*>(<!--[^>]*-->)*2 runs/);
+    expect(body).toMatch(/aria-sort="descending"[\s\S]*?lucide-arrow-down/);
+  });
+
+  it("gives a text cell its full text as a title, so a cut name can still be read", () => {
+    const long = "a-very-long-gate-name-that-will-not-fit-in-its-column-at-all";
+    const { body } = render(DataTable<Row>, {
+      props: { label: "Gates", rows: [{ name: long, runs: 1 }], columns, rowKey: (r: Row) => r.name },
+    });
+    expect(body).toContain(`title="${long}"`);
+  });
+
   it("renders the empty snippet when there are no rows", () => {
     const { body } = render(DataTable<Row>, {
       props: {

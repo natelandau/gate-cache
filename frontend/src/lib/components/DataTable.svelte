@@ -45,6 +45,7 @@
 <script lang="ts" generics="T">
   import type { Snippet } from "svelte";
   import { raw, sortRows, type Column, type SortState } from "../table";
+  import Icon from "./Icon.svelte";
 
   interface Props {
     rows: T[];
@@ -127,8 +128,11 @@
             {#if column.sortable ?? true}
               <button type="button" onclick={() => toggle(column)}>
                 <span>{column.label}</span>
-                <span class="arrow" aria-hidden="true">
-                  {#if sort?.key === column.key}{sort.direction === "asc" ? "↑" : "↓"}{/if}
+                <span class="arrow">
+                  {#if sort?.key === column.key}<Icon
+                      name={sort.direction === "asc" ? "arrow-up" : "arrow-down"}
+                      size={12}
+                    />{/if}
                 </span>
               </button>
             {:else}
@@ -152,7 +156,10 @@
             onkeydown={(event) => activate(event, row)}
           >
             {#each columns as column (column.key)}
-              <td class={column.align ?? "left"} title={column.title?.(row)}>
+              <td
+                class={column.align === "right" ? "right num" : "left"}
+                title={column.title ? column.title(row) : column.cell || column.align === "right" ? undefined : cellText(row, column)}
+              >
                 {#if column.cell}
                   {@render column.cell(row)}
                 {:else}
@@ -172,16 +179,16 @@
 
 <style>
   .table-wrap {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-card);
     background: var(--surface);
+    box-shadow: var(--ring);
     overflow-x: auto;
   }
 
   .table-wrap.bare {
-    border: 0;
     border-radius: 0;
     background: none;
+    box-shadow: none;
   }
 
   table {
@@ -194,7 +201,8 @@
   th,
   td {
     height: var(--row-height);
-    padding: 0 var(--space-3);
+    padding: 0 10px;
+    font-size: var(--text-sm);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -202,12 +210,22 @@
   }
 
   th {
-    background: var(--surface-sunken);
+    height: 32px;
     border-bottom: 1px solid var(--border);
     font-size: var(--text-xs);
-    font-weight: 600;
+    font-weight: 500;
     color: var(--text-muted);
     text-align: left;
+  }
+
+  .bare th:first-child,
+  .bare td:first-child {
+    padding-left: var(--space-1);
+  }
+
+  .bare th:last-child,
+  .bare td:last-child {
+    padding-right: var(--space-1);
   }
 
   .right {
@@ -238,13 +256,14 @@
   }
 
   .arrow {
-    display: inline-block;
-    width: 1ch;
-    color: var(--accent);
+    display: inline-flex;
+    width: 12px;
+    color: var(--text);
   }
 
   td {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-row);
+    transition: background-color var(--dur-fast) var(--ease);
   }
 
   tbody tr:first-child td {
@@ -255,14 +274,17 @@
     cursor: pointer;
   }
 
-  tr.live:hover,
-  tr.live:focus-visible {
+  tr.live:hover td,
+  tr.live:focus-visible td {
     background: var(--surface-hover);
   }
 
-  tr.active,
-  tr.active:hover {
+  tr.active td,
+  tr.active:hover td {
     background: var(--accent-soft);
+  }
+
+  tr.active td:first-child {
     box-shadow: inset 2px 0 0 var(--accent);
   }
 
