@@ -55,6 +55,8 @@ The syntax is `gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...
 
 - Without `--name`, the name is the command line. Each set of arguments then has its own markers, so a pass of `pytest -k unit` never skips `pytest`.
 - With `--name`, the arguments are not part of the key. Give a short, stable name, such as `lint`, `typecheck`, or `test`, to a gate whose command line is fixed.
+- A gate in a recipe, a script, or a hook must have a `--name` when its command line is fixed. Without one, `gate-cache status` and the stats dashboard show the full command line as the gate name. A change to any argument then also starts a new gate with no history. A recipe that forwards its arguments is the exception, as the next item explains.
+- Keep a name free of spaces, so that it reads as a name and the `@` rule in "Inputs that git does not see" applies to it.
 - If a recipe passes extra arguments to its command, such as a test filter, do not give it a fixed `--name`. With a fixed name, a pass with a filter also skips the full suite. When the recipe gets arguments, run the command without gate-cache. Another option is to give no `--name`.
 - The working directory is not part of the key. If the same command reads different files in different directories, give each directory its own name.
 
