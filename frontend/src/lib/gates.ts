@@ -81,6 +81,7 @@ export function sourceParts(rows: GateDetail["by_source"]): MixPart[] {
  * come back whole with an empty suffix.
  */
 export function splitGateName(name: string): { base: string; suffix: string } {
-  const match = /^(.+?)(@[0-9a-f]{6,})$/i.exec(name);
+  // A digit-only suffix, such as a date, is part of the name, not a hash.
+  const match = /^(.+?)(@(?=[0-9]*[a-f])[0-9a-f]{6,})$/i.exec(name);
   return match ? { base: match[1]!, suffix: match[2]! } : { base: name, suffix: "" };
 }

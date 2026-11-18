@@ -1,16 +1,16 @@
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
-import Tooltip from "./Tooltip.svelte";
+import TooltipSurface from "./TooltipSurface.svelte";
 
-describe("Tooltip", () => {
+describe("TooltipSurface", () => {
   it("shows a plain explanation", () => {
-    const { body } = render(Tooltip, { props: { text: "What this measures." } });
+    const { body } = render(TooltipSurface, { props: { text: "What this measures." } });
     expect(body).toContain("What this measures.");
     expect(body).not.toContain('class="title');
   });
 
   it("shows the title, a color bar and value per row, and the hint", () => {
-    const { body } = render(Tooltip, {
+    const { body } = render(TooltipSurface, {
       props: {
         title: "Tue, Nov 4",
         rows: [
@@ -28,12 +28,12 @@ describe("Tooltip", () => {
   });
 
   it("leaves out the hint line when there is none", () => {
-    const { body } = render(Tooltip, { props: { title: "x", rows: [] } });
+    const { body } = render(TooltipSurface, { props: { title: "x", rows: [] } });
     expect(body).not.toContain('class="hint');
   });
 
   it("shows rows that share a label, such as a gate named Total", () => {
-    const { body } = render(Tooltip, {
+    const { body } = render(TooltipSurface, {
       props: {
         title: "Tue, Nov 4",
         rows: [

@@ -135,7 +135,11 @@
                   {describedby}
                 />
               {:else}
-                <span class:explained={!!describedby} aria-describedby={describedby}>{column.label}</span>
+                <!-- A focusable label, so keyboard focus can open its explanation. -->
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                <span class:explained={!!describedby} aria-describedby={describedby} tabindex={describedby ? 0 : undefined}
+                  >{column.label}</span
+                >
               {/if}
             {/snippet}
             <!-- One centered row, so a header with an explanation lines up with one without. Its
@@ -206,6 +210,10 @@
     position: sticky;
     left: 0;
     z-index: 1;
+  }
+
+  /* At the lowest specificity, so the row hover and active rules below override it. */
+  :where(.table-wrap:not(.bare)) :where(th, td):first-child {
     background: var(--surface);
   }
 

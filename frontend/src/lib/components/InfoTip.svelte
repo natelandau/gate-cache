@@ -18,7 +18,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
-  import Tooltip from "./Tooltip.svelte";
+  import TooltipSurface from "./TooltipSurface.svelte";
 
   interface Props {
     text: string;
@@ -31,7 +31,7 @@
 
   const uid = $props.id();
   const tipId = `${uid}-tip`;
-  // Tooltip's max-width plus a margin from the window edge.
+  // TooltipSurface max-width plus a margin from the window edge.
   const BUBBLE_ROOM = 300;
   const GAP = 6;
 
@@ -39,14 +39,36 @@
   // Escape hides the bubble even while hover or focus would show it, until the pointer or focus leaves.
   let dismissed = $state(false);
   let position = $state({ top: 0, left: 0 });
+  let root: HTMLElement | undefined = $state();
+  let bubble: HTMLElement | undefined = $state();
 
   // Measure where the tip is each time it opens, so a scrolled table or a resized window never
   // leaves the bubble in a stale spot.
-  function place(event: Event): void {
-    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  function place(): void {
+    if (!root) return;
+    const box = root.getBoundingClientRect();
     const left = box.left + BUBBLE_ROOM > window.innerWidth ? box.right - BUBBLE_ROOM + 20 : box.left - 8;
-    position = { top: box.bottom + GAP, left: Math.max(8, left) };
+    // Open upward when the bubble would run past the bottom of the window.
+    const height = bubble?.offsetHeight ?? 0;
+    const below = box.bottom + GAP;
+    const top = below + height > window.innerHeight - 8 ? box.top - GAP - height : below;
+    position = { top: Math.max(8, top), left: Math.max(8, left) };
   }
+
+  // The bubble is fixed to the window, so an open one follows its label when anything scrolls.
+  function follow(): void {
+    if (root && (pinned || root.matches(":hover, :has(:focus-visible)"))) place();
+  }
+
+  $effect(() => {
+    const options = { capture: true, passive: true };
+    window.addEventListener("scroll", follow, options);
+    window.addEventListener("resize", follow, options);
+    return () => {
+      window.removeEventListener("scroll", follow, options);
+      window.removeEventListener("resize", follow, options);
+    };
+  });
 
   function reset(): void {
     pinned = false;
@@ -56,6 +78,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <span
+  bind:this={root}
   class="tip"
   class:pinned
   class:dismissed
@@ -88,8 +111,8 @@
       <Icon name="info" size={13} />
     </button>
   {/if}
-  <span class="bubble" role="tooltip" id={tipId} style:top="{position.top}px" style:left="{position.left}px"
-    ><Tooltip {text} /></span
+  <span class="bubble" bind:this={bubble} role="tooltip" id={tipId} style:top="{position.top}px" style:left="{position.left}px"
+    ><TooltipSurface {text} /></span
   >
 </span>
 
@@ -122,7 +145,7 @@
     color: var(--text);
   }
 
-  /* Fixed to the window, so an ancestor that scrolls or clips never cuts it off. Tooltip owns
+  /* Fixed to the window, so an ancestor that scrolls or clips never cuts it off. TooltipSurface owns
      how it looks. */
   .bubble {
     position: fixed;
@@ -136,7 +159,7 @@
   }
 
   .tip:hover .bubble,
-  .tip:focus-within .bubble,
+  .tip:has(:focus-visible) .bubble,
   .pinned .bubble {
     opacity: 1;
     transform: none;

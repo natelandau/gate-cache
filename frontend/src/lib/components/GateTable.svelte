@@ -199,7 +199,6 @@
     overflow-wrap: anywhere;
   }
 
-
   .danger {
     color: var(--danger);
   }

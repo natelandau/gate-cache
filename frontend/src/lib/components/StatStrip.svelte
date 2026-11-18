@@ -152,7 +152,6 @@
   }
 
   /* Above the value link's card-wide overlay, so a linked card's tip still opens on hover or tap. */
-  /* The card's link overlay covers the card, so the label's tip sits above it. */
   dt :global(.tip) {
     position: relative;
     z-index: 1;

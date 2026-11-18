@@ -83,5 +83,6 @@ describe("splitGateName", () => {
   it("leaves other names whole", () => {
     expect(splitGateName("ruff format --check")).toEqual({ base: "ruff format --check", suffix: "" });
     expect(splitGateName("deploy@prod")).toEqual({ base: "deploy@prod", suffix: "" });
+    expect(splitGateName("deploy@20241118")).toEqual({ base: "deploy@20241118", suffix: "" });
   });
 });

@@ -25,8 +25,7 @@
   import type { DayBucket } from "../fill";
   import { formatCount, formatDuration, formatLongDay, formatShortDay } from "../format";
   import { createDayPick } from "../daypick.svelte";
-  // The shared tooltip surface; `Tooltip` here is LayerChart's positioning layer.
-  import TooltipSurface from "./Tooltip.svelte";
+  import TooltipSurface from "./TooltipSurface.svelte";
   import DayPicker from "./DayPicker.svelte";
   import { PICK_DAY_HINT, type DaySpan } from "../selection";
 

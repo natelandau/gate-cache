@@ -143,7 +143,7 @@ Use an existing component before you write markup of your own. If a page needs a
 | Time saved and failures per day                       | `DailyChart`                      |
 | Time spent per day, stacked by gate                   | `SpentChart`                      |
 | Run time of one gate over time                        | `TrendChart`                      |
-| Any tooltip: a chart's values or a plain explanation  | `Tooltip`, the one tooltip surface; a chart renders it inside a LayerChart `Tooltip.Root` with `variant="none"` |
+| Any tooltip: a chart's values or a plain explanation  | `TooltipSurface`, the one tooltip surface; a chart renders it inside a LayerChart `Tooltip.Root` with `variant="none"` |
 | The outcome of one run                                | `OutcomeBadge`                    |
 | A run's time in a table cell                          | `TimeValue`, with `ranText` or `savedText` from `src/lib/events.ts` |
 | Any other short label, such as "flaky"                | `Badge` (pick the tone by role)   |

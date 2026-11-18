@@ -22,8 +22,7 @@
   import { durationTicks, formatAxisDuration, formatDuration, formatLongDay, formatShortDay } from "../format";
   import { PICK_DAY_HINT, type DaySpan } from "../selection";
   import { spentTotals, type SpentRow, type SpentSeries } from "../spent";
-  // The shared tooltip surface; `Tooltip` here is LayerChart's positioning layer.
-  import TooltipSurface from "./Tooltip.svelte";
+  import TooltipSurface from "./TooltipSurface.svelte";
   import DayPicker from "./DayPicker.svelte";
 
   interface Props {

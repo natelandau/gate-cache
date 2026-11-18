@@ -11,8 +11,7 @@
   import type { GateDetail } from "../api";
   import { durationTicks, formatAxisDuration, formatDuration, formatTimestamp } from "../format";
   import { trendStats } from "../gates";
-  // The shared tooltip surface; `Tooltip` here is LayerChart's positioning layer.
-  import TooltipSurface from "./Tooltip.svelte";
+  import TooltipSurface from "./TooltipSurface.svelte";
 
   interface Props {
     trend: GateDetail["trend"];
