@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dailyScale, FAIL_TOP, SAVED_BASE } from "./daily";
+import { bandIndexAt, bandInset, dailyScale, FAIL_TOP, SAVED_BASE } from "./daily";
 
 describe("dailyScale", () => {
   it("maps the most failures to the top of the failures band, whatever was saved", () => {
@@ -39,5 +39,29 @@ describe("dailyScale", () => {
     expect(scale.ticks[0]).toEqual({ value: 0, label: "0" });
     expect(scale.ticks[1]).toEqual({ value: FAIL_TOP, label: "4" });
     expect(scale.ticks.slice(2).map((t) => t.value)).toContain(SAVED_BASE);
+  });
+});
+
+describe("bandInset", () => {
+  it("returns the outer padding of a padded band scale as a percent of the width", () => {
+    // d3 scaleBand().padding(0.25) over 3 bands: step = width / 3.25, centered columns start at step / 8.
+    expect(bandInset(3, 0.25)).toBeCloseTo((0.125 / 3.25) * 100);
+    expect(bandInset(0, 0.25)).toBe(0);
+  });
+});
+
+describe("bandIndexAt", () => {
+  it("maps a position across the plot to the day under it", () => {
+    expect(bandIndexAt(0.01, 3, 0.25)).toBe(0);
+    expect(bandIndexAt(0.5, 3, 0.25)).toBe(1);
+    expect(bandIndexAt(0.99, 3, 0.25)).toBe(2);
+  });
+
+  it("clamps the outer padding to the nearest day and rejects positions off the plot", () => {
+    expect(bandIndexAt(0, 3, 0.25)).toBe(0);
+    expect(bandIndexAt(1, 3, 0.25)).toBe(2);
+    expect(bandIndexAt(-0.1, 3, 0.25)).toBeNull();
+    expect(bandIndexAt(1.1, 3, 0.25)).toBeNull();
+    expect(bandIndexAt(0.5, 0, 0.25)).toBeNull();
   });
 });

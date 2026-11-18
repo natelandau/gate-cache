@@ -1,0 +1,35 @@
+import { render } from "svelte/server";
+import { describe, expect, it } from "vitest";
+import DailyChart from "./DailyChart.svelte";
+
+const days = [
+  { day: "2026-11-03", saved: 0, failures: 0, runs: 0 },
+  { day: "2026-11-04", saved: 60, failures: 1, runs: 2 },
+  { day: "2026-11-05", saved: 120, failures: 0, runs: 10 },
+];
+
+describe("DailyChart", () => {
+  it("has no picking layer without a select handler", () => {
+    const { body } = render(DailyChart, { props: { days } });
+    expect(body).not.toContain('class="picker');
+  });
+
+  it("marks picked days with a ring and dims the rest", () => {
+    const { body } = render(DailyChart, {
+      props: { days, selected: { from: "2026-11-04", to: "2026-11-05" }, onselect: () => {} },
+    });
+    expect(body).toMatch(/role="listbox"/);
+    expect(body).toMatch(/tabindex="0"/);
+    expect(body.match(/class="column[^"]*selected/g)?.length).toBe(2);
+    expect(body.match(/class="column[^"]*dimmed/g)?.length).toBe(1);
+  });
+
+  it("names each day as an option with its values and picked state", () => {
+    const { body } = render(DailyChart, {
+      props: { days, selected: { from: "2026-11-04", to: "2026-11-04" }, onselect: () => {} },
+    });
+    expect(body.match(/role="option"/g)?.length).toBe(3);
+    expect(body.match(/aria-selected="true"/g)?.length).toBe(1);
+    expect(body).toMatch(/aria-label="[^"]*1m 0s saved, 1 failure"/);
+  });
+});

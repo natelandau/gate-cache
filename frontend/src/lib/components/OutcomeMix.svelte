@@ -5,6 +5,7 @@
 
   Props:
   - `counts`: runs per outcome; pass a nonzero total
+  - `href`: optional link for an outcome's runs; links each non-zero count and bar segment
 -->
 <script lang="ts">
   import type { Outcome } from "../api";
@@ -14,9 +15,10 @@
 
   interface Props {
     counts: Record<Outcome, number>;
+    href?: (outcome: Outcome) => string;
   }
 
-  let { counts }: Props = $props();
+  let { counts, href }: Props = $props();
 
   const COLORS: Record<Outcome, string> = {
     skip: "var(--chart-skip)",
@@ -32,6 +34,7 @@
       label: OUTCOMES[outcome].label,
       count: counts[outcome],
       color: COLORS[outcome],
+      href: href?.(outcome),
     })),
   );
 </script>

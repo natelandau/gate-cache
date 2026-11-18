@@ -48,7 +48,23 @@ export function weekdayName(weekday: number, style: "short" | "long"): string {
   return new Date(1970, 0, 4 + weekday).toLocaleString(undefined, { weekday: style });
 }
 
+/** Return an hour of the day as "09:00". */
+export function hourLabel(hour: number): string {
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
 /** Render a cell value for `metric`: a duration for time saved, a count otherwise. */
 export function formatHeatValue(metric: HeatMetric, value: number): string {
   return metric === "saved" ? formatDuration(value) : formatCount(value);
+}
+
+/**
+ * Return the first active position from `start` on, stepping by `step`, or null when none is
+ * left that way. Grids use it to move keyboard focus past cells that have nothing to open.
+ */
+export function nextActive(start: number, step: number, active: boolean[]): number | null {
+  for (let at = start; at >= 0 && at < active.length; at += step) {
+    if (active[at]) return at;
+  }
+  return null;
 }

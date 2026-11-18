@@ -58,7 +58,7 @@ function seconds(date: Date): number {
 }
 
 /** Return the local date of a `YYYY-MM-DD` string as [year, month index, day], or null. */
-function parseDay(text: string): [number, number, number] | null {
+export function parseDay(text: string): [number, number, number] | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
   if (!match) return null;
   const [year, month, day] = [Number(match[1]), Number(match[2]) - 1, Number(match[3])];

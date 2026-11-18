@@ -19,7 +19,14 @@ describe("OutcomeMix", () => {
     const { body } = render(OutcomeMix, { props: { counts } });
     expect(body.match(/<li/g)).toHaveLength(5);
     expect(body).toContain("Pass, not cached");
-    expect(body).toMatch(/Skip<\/span>\s*<span[^>]*>6<\/span>\s*<span[^>]*>60%</);
+    expect(body).toMatch(/Skip<\/span>(?:\s|<!--[^>]*-->)*<span[^>]*>6<\/span>(?:\s|<!--[^>]*-->)*<span[^>]*>60%</);
     expect(body).not.toMatch(/<ul[^>]*aria-hidden/);
+  });
+
+  it("links each non-zero count to its runs", () => {
+    const { body } = render(OutcomeMix, { props: { counts, href: (o: string) => `#/activity?outcome=${o}` } });
+    expect(body).toMatch(/<a[^>]*href="#\/activity\?outcome=skip"[^>]*>6<\/a>/);
+    expect(body).toMatch(/<a[^>]*href="#\/activity\?outcome=fail"/);
+    expect(body).not.toContain('href="#/activity?outcome=uncached"');
   });
 });

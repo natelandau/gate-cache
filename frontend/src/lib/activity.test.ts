@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ActivityPage, EventRow } from "./api";
-import { activityHint, activitySubject, addPage, feedView } from "./activity";
+import { activityHint, activitySubject, addPage, feedView, filterParts } from "./activity";
 import type { RangeSpec } from "./range";
 
 function ev(ts: number): EventRow {
@@ -87,6 +87,15 @@ describe("activitySubject", () => {
       '"Fail" runs in "Branch: main"',
     );
   });
+
+  it("names the day, hour, gate, and flaky filters", () => {
+    // Days are named by the empty-state title in place of the range, not by the subject.
+    expect(activitySubject({ span: { from: "2026-11-03", to: "2026-11-03" } })).toBe("runs");
+    expect(activitySubject({ slot: { weekday: 2, hour: 9 } })).toBe("runs on Tuesdays 09:00 to 10:00");
+    expect(activitySubject({ outcome: "fail", gate: { repo: null, name: "lint" }, flaky: true })).toBe(
+      '"Fail" runs of lint on flaky trees',
+    );
+  });
 });
 
 describe("activityHint", () => {
@@ -119,9 +128,32 @@ describe("activityHint", () => {
     );
   });
 
+  it("names every page filter to remove", () => {
+    expect(activityHint({ flaky: true }, scope)).toBe(
+      "Remove the flaky filter, or pick a longer range.",
+    );
+    expect(
+      activityHint({ outcome: "fail", span: { from: "2026-11-03", to: "2026-11-03" }, slot: { weekday: 1, hour: 2 } }, scope),
+    ).toBe("Pick All outcomes and remove the day and hour filters, or pick a longer range.");
+    expect(
+      activityHint({ reason: "x", gate: { repo: null, name: "a" }, flaky: true }, scope),
+    ).toBe("Remove the reason, gate, and flaky filters, or pick a longer range.");
+  });
+
   it("drops the range advice for all time", () => {
     expect(activityHint({ reason: "x" }, { ...scope, range: all })).toBe(
       "Remove the reason filter.",
     );
+  });
+});
+
+describe("filterParts", () => {
+  it("lists each removable filter with its chip text and the filter left without it", () => {
+    const filter = { outcome: "fail" as const, reason: "x", gate: { repo: "/a/.git", name: "lint" }, flaky: true as const };
+    const parts = filterParts(filter);
+    expect(parts.map((p) => p.label)).toEqual(["Reason: x", "Gate: lint", "Flaky trees only"]);
+    expect(parts[1]?.title).toBe("lint in /a/.git");
+    expect(parts[2]?.without).toEqual({ outcome: "fail", reason: "x", gate: { repo: "/a/.git", name: "lint" } });
+    expect(filterParts({ outcome: "fail" })).toEqual([]);
   });
 });

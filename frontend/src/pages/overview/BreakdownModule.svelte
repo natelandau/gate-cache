@@ -4,9 +4,13 @@
   picks the grouping and tabs pick what the bars measure. Repo rows cover every repo, dim the
   ones outside the repo filter, and filter to a repo on click. Other groupings follow the repo
   filter: a gate opens its panel, and any other row opens Activity filtered to its runs.
+
+  Props:
+  - `repoLabel`: the repo selection's display name, or null for all repos
+  - `span`: page-local days the overview is scoped to, if any; row links carry them
 -->
 <script lang="ts">
-  import { getBreakdown, type BreakdownRow } from "../../lib/api";
+  import { getBreakdown, spanScope, type BreakdownRow } from "../../lib/api";
   import { breakdownBars, drillDown, type Metric } from "../../lib/breakdown";
   import BarList, { type Bar } from "../../lib/components/BarList.svelte";
   import Button from "../../lib/components/Button.svelte";
@@ -19,13 +23,15 @@
   import { createQuery } from "../../lib/query.svelte";
   import { navigate } from "../../lib/router.svelte";
   import { emptyHint, emptyTitle } from "../../lib/scope";
+  import type { DaySpan } from "../../lib/selection";
   import { filters, freshness, setRepos } from "../../lib/state.svelte";
 
   interface Props {
     repoLabel: string | null;
+    span?: DaySpan;
   }
 
-  let { repoLabel }: Props = $props();
+  let { repoLabel, span }: Props = $props();
 
   /** Rows shown before "Show all", so a long branch list stays a panel. */
   const VISIBLE = 15;
@@ -38,8 +44,8 @@
 
   // A grouping that covers every repo ignores the repo filter, so only the others reload on it.
   const query = createQuery(
-    (signal) => getBreakdown(group, info.allRepos ? { signal, repos: [] } : { signal }),
-    () => [group, info.allRepos ? null : filters.repos],
+    (signal) => getBreakdown(group, { signal, scope: spanScope(span, info.allRepos ? [] : undefined) }),
+    () => [group, info.allRepos ? null : filters.repos, span],
     { repos: false },
   );
   // The previous grouping's rows stay in `query.data` until the new load lands, and they must
@@ -73,7 +79,7 @@
   const columns = $derived(info.oneGate ? allColumns.filter((c) => c.label !== "Gates") : allColumns);
   const bars = $derived(breakdownBars(rows ?? [], by, group, filters.repos));
   const shown = $derived(expanded ? bars : bars.slice(0, VISIBLE));
-  const scope = $derived({ range: filters.range, repoLabel: info.allRepos ? null : repoLabel });
+  const scope = $derived({ range: filters.range, span, repoLabel: info.allRepos ? null : repoLabel });
 
   function pickGroup(value: string): void {
     group = value as Dimension;
@@ -84,7 +90,7 @@
     const action = drillDown(group, bar.row);
     if (action.kind === "repo") setRepos([action.repo]);
     else if (action.kind === "gate") openGatePanel(action);
-    else navigate(action.route);
+    else navigate({ ...action.route, ...(span ? { span } : {}) });
   }
 </script>
 

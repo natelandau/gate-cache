@@ -6,6 +6,8 @@
   Props:
   - `query`: the shell's summary query, whose days are already gap-filled
   - `repoLabel`: the repo selection's display name, or null for all repos
+  - `span`: the picked days the overview is scoped to, if any
+  - `onselect`: called with newly picked days, or undefined to clear them
 -->
 <script lang="ts">
   import CalendarHeatmap from "../../lib/components/CalendarHeatmap.svelte";
@@ -13,6 +15,7 @@
   import Module from "../../lib/components/Module.svelte";
   import { HEAT_OPTIONS, type HeatMetric } from "../../lib/heat";
   import type { Query } from "../../lib/query.svelte";
+  import type { DaySpan } from "../../lib/selection";
   import { emptyHint, emptyTitle } from "../../lib/scope";
   import { filters, freshness } from "../../lib/state.svelte";
   import type { SummaryView } from "../../lib/summary";
@@ -20,9 +23,11 @@
   interface Props {
     query: Query<SummaryView>;
     repoLabel: string | null;
+    span?: DaySpan;
+    onselect: (span: DaySpan | undefined) => void;
   }
 
-  let { query, repoLabel }: Props = $props();
+  let { query, repoLabel, span, onselect }: Props = $props();
 
   let metric: HeatMetric = $state("runs");
 </script>
@@ -45,6 +50,6 @@
     />
   {/snippet}
   {#if query.data}
-    <CalendarHeatmap days={query.data.days} {metric} />
+    <CalendarHeatmap days={query.data.days} {metric} selected={span} {onselect} />
   {/if}
 </Module>

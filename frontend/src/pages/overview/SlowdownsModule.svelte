@@ -6,9 +6,10 @@
 
   Props:
   - `repoLabel`: the repo selection's display name, or null for all repos
+  - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import { getSlowdowns, type SlowdownRow } from "../../lib/api";
+  import { getSlowdowns, spanScope, type SlowdownRow } from "../../lib/api";
   import DataTable, { type Column } from "../../lib/components/DataTable.svelte";
   import Module from "../../lib/components/Module.svelte";
   import { formatDuration, formatPercent } from "../../lib/format";
@@ -16,18 +17,24 @@
   import { openGatePanel } from "../../lib/panel";
   import { createQuery } from "../../lib/query.svelte";
   import { emptyTitle } from "../../lib/scope";
+  import type { DaySpan } from "../../lib/selection";
   import { filters } from "../../lib/state.svelte";
 
   interface Props {
     repoLabel: string | null;
+    /** Page-local days the overview is scoped to. */
+    span?: DaySpan;
   }
 
-  let { repoLabel }: Props = $props();
+  let { repoLabel, span }: Props = $props();
 
   // Matches the server's `min_runs` for slowdowns.
   const MIN_RUNS = 5;
 
-  const query = createQuery((signal) => getSlowdowns({ signal }));
+  const query = createQuery(
+    (signal) => getSlowdowns({ signal, scope: spanScope(span) }),
+    () => span,
+  );
 
   const comparable = $derived(query.data?.comparable ?? true);
   const rows = $derived(query.data?.gates ?? []);
@@ -61,7 +68,7 @@
   error={query.error}
   empty={!query.data || !comparable || rows.length === 0}
   emptyTitle={comparable
-    ? emptyTitle("slower gates", { range: filters.range, repoLabel })
+    ? emptyTitle("slower gates", { range: filters.range, span, repoLabel })
     : "No previous period to compare against."}
   emptyDetail={comparable
     ? `Only gates with at least ${MIN_RUNS} passing runs in both periods are compared.`

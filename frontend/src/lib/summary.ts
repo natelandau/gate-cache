@@ -10,6 +10,7 @@ import {
   isNegativeDuration,
   plural,
 } from "./format";
+import { clampScope, type DaySpan } from "./selection";
 import { nowSeconds } from "./state.svelte";
 
 /** The summary with its daily series gap-filled across the selected range. */
@@ -18,19 +19,23 @@ export interface SummaryView {
   days: DayBucket[];
 }
 
-/** Fetch the summary for the global filters and fill the days without events. */
-export async function loadSummary(signal: AbortSignal): Promise<SummaryView> {
+/** Fetch the summary for the global filters, narrowed to `span` when given, and fill the days without events. */
+export async function loadSummary(signal: AbortSignal, span?: DaySpan): Promise<SummaryView> {
   const now = nowSeconds();
-  const scope = currentScope(now);
+  const scope = clampScope(currentScope(now), span);
   const summary = await getSummary({ signal, scope });
   return { summary, days: fillDays(summary.daily, scope.from, scope.to ?? now, scope.tz) };
 }
 
 /**
- * Return the headline numbers of a summary for a stat strip. `flakyHref` links a non-zero flaky
- * gate count. Each stat carries its change against the previous window when the summary has one.
+ * Return the headline numbers of a summary for a stat strip. The hrefs link the run, flaky
+ * gate, and failure counts when they are not zero. Each stat carries its change against the
+ * previous window when the summary has one.
  */
-export function summaryStats(s: Summary, options: { flakyHref?: string } = {}): Stat[] {
+export function summaryStats(
+  s: Summary,
+  options: { runsHref?: string; flakyHref?: string; failuresHref?: string } = {},
+): Stat[] {
   const deltas = s.previous ? statDeltas(s, s.previous) : undefined;
   return [
     { label: "Time saved", value: formatDuration(s.time_saved), delta: deltas?.time_saved },
@@ -49,6 +54,7 @@ export function summaryStats(s: Summary, options: { flakyHref?: string } = {}): 
       label: "Runs",
       value: formatCount(s.runs),
       hint: s.uncached ? `${formatCount(s.uncached)} uncached` : undefined,
+      href: s.runs ? options.runsHref : undefined,
       delta: deltas?.runs,
     },
     {
@@ -68,6 +74,7 @@ export function summaryStats(s: Summary, options: { flakyHref?: string } = {}): 
       label: "Failures",
       value: formatCount(s.failures),
       tone: s.failures ? "danger" : "default",
+      href: s.failures ? options.failuresHref : undefined,
       delta: deltas?.failures,
     },
   ];

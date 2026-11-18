@@ -7,6 +7,7 @@ import {
   formatSignedDuration,
   formatPercent,
   formatRelative,
+  plural,
 } from "./format";
 
 describe("formatSignedDuration", () => {
@@ -89,5 +90,13 @@ describe("formatAxisDuration", () => {
     expect(formatAxisDuration(600)).toBe("10m");
     expect(formatAxisDuration(3600)).toBe("1h");
     expect(formatAxisDuration(90)).toBe("1m 30s");
+  });
+});
+
+describe("plural", () => {
+  it("counts with the singular for one and the plural otherwise", () => {
+    expect(plural(1, "failure", "failures")).toBe("1 failure");
+    expect(plural(0, "failure", "failures")).toBe("0 failures");
+    expect(plural(1200, "run", "runs")).toBe("1,200 runs");
   });
 });

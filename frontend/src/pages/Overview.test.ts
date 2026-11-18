@@ -57,7 +57,7 @@ describe("Overview", () => {
     expect(body).toMatch(/<h2[^>]*id="top-gates-title"[^>]*>Top gates<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="outcome-title"[^>]*>Outcome mix<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="flaky-gates-title"[^>]*>Flaky gates<\/h2>/);
-    expect(body).toMatch(/Skip<\/span>\s*<span[^>]*>6<\/span>\s*<span[^>]*>50%</);
+    expect(body).toMatch(/Skip<\/span>(?:\s|<!--[^>]*-->)*<(?:span|a)[^>]*>6<\/(?:span|a)>(?:\s|<!--[^>]*-->)*<span[^>]*>50%</);
   });
 
   it("shows the reasons, recent failures, slowdowns, and breakdown modules", () => {
@@ -86,5 +86,27 @@ describe("Overview", () => {
       props: { query: query({ summary: empty, days }), repoLabel: "api-server" },
     });
     expect(body.match(/for api-server\./g)).toHaveLength(3);
+  });
+
+  it("links run sets to Activity and makes the charts pickable", () => {
+    const { body } = render(Overview, {
+      props: { query: query({ summary, days }), repoLabel: null },
+    });
+    expect(body).toContain('href="#/activity"');
+    expect(body).toContain('href="#/activity?outcome=skip"');
+    expect(body).toMatch(/aria-pressed="false"/);
+    expect(body).toMatch(/role="listbox"/);
+    expect(body).not.toContain("Show the whole range");
+  });
+
+  it("shows a chip for picked days and marks them on the calendar", () => {
+    const { body } = render(Overview, {
+      props: { query: query({ summary, days }), repoLabel: null, span: { from: "2026-11-17", to: "2026-11-17" } },
+    });
+    expect(body).toContain("Days: Nov 17");
+    expect(body).toContain('aria-label="Show the whole range"');
+    expect(body).toMatch(/aria-pressed="true"/);
+    // The scoped modules load their own data, so the shell summary's stats are not shown.
+    expect(body).not.toContain("vs prev 30d");
   });
 });

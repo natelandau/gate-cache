@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  activityHref,
   href,
   openerAfter,
   panelHost,
@@ -73,6 +74,25 @@ describe("parseHash", () => {
     expect(parseHash("#/flaky?outcome=fail")).toEqual({ page: "flaky" });
   });
 
+  it("drops malformed page-local filters", () => {
+    expect(parseHash("#/activity?from=2026-13-40&to=2026-11-05")).toEqual({ page: "activity" });
+    expect(parseHash("#/activity?from=2026-11-05")).toEqual({ page: "activity" });
+    expect(parseHash("#/activity?weekday=2")).toEqual({ page: "activity" });
+    expect(parseHash("#/activity?weekday=2&hour=24")).toEqual({ page: "activity" });
+    expect(parseHash("#/activity?weekday=7&hour=1")).toEqual({ page: "activity" });
+    expect(parseHash("#/activity?weekday=2&hour=1.5")).toEqual({ page: "activity" });
+    expect(parseHash("#/activity?gate=lint")).toEqual({ page: "activity" });
+    expect(parseHash("#/activity?flaky=0")).toEqual({ page: "activity" });
+    expect(parseHash("#/overview?from=2026-11-05")).toEqual({ page: "overview" });
+  });
+
+  it("orders a reversed span", () => {
+    expect(parseHash("#/overview?from=2026-11-05&to=2026-11-03")).toEqual({
+      page: "overview",
+      span: { from: "2026-11-03", to: "2026-11-05" },
+    });
+  });
+
   it("falls back on malformed encoding", () => {
     expect(parseHash("#/gates/%E0%A4%A/test")).toEqual({ page: "overview" });
     expect(parseHash("#/repos/%E0%A4%A")).toEqual({ page: "overview" });
@@ -88,6 +108,16 @@ describe("href", () => {
       { page: "gate", repo: null, name: "test" },
       { page: "activity" },
       { page: "activity", outcome: "uncached", reason: "GATE_CACHE_DISABLE is set & 50% #1+2" },
+      {
+        page: "activity",
+        outcome: "fail",
+        span: { from: "2026-11-03", to: "2026-11-05" },
+        slot: { weekday: 2, hour: 14 },
+        gate: { repo: "/a b/.git", name: "ruff #1" },
+        flaky: true,
+      },
+      { page: "activity", gate: { repo: null, name: "lint" } },
+      { page: "overview", span: { from: "2026-11-03", to: "2026-11-05" } },
     ];
     for (const route of routes) expect(parseHash(href(route))).toEqual(route);
   });
@@ -96,6 +126,30 @@ describe("href", () => {
     expect(href({ page: "activity", outcome: "fail" })).toBe("#/activity?outcome=fail");
     expect(href({ page: "activity", reason: "x y" })).toBe("#/activity?reason=x%20y");
     expect(href({ page: "activity" })).toBe("#/activity");
+  });
+
+  it("orders the activity filters and folds in a span", () => {
+    expect(
+      href({
+        page: "activity",
+        flaky: true,
+        slot: { weekday: 0, hour: 9 },
+        span: { from: "2026-11-03", to: "2026-11-03" },
+      }),
+    ).toBe("#/activity?weekday=0&hour=9&flaky=1&from=2026-11-03&to=2026-11-03");
+    expect(href({ page: "activity", gate: { repo: null, name: "a b" } })).toBe(
+      "#/activity?gate=a%20b&gate_repo=-",
+    );
+    expect(activityHref({ outcome: "fail" }, { from: "2026-11-03", to: "2026-11-04" })).toBe(
+      "#/activity?outcome=fail&from=2026-11-03&to=2026-11-04",
+    );
+    expect(activityHref({ outcome: "fail" })).toBe("#/activity?outcome=fail");
+  });
+
+  it("links the overview with its span", () => {
+    expect(href({ page: "overview", span: { from: "2026-11-03", to: "2026-11-03" } })).toBe(
+      "#/overview?from=2026-11-03&to=2026-11-03",
+    );
   });
 
   it("links the overview without a repo selection", () => {

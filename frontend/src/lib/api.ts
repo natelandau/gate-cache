@@ -9,7 +9,8 @@ import type { Dimension } from "./dimensions";
 import type { DayBucket } from "./fill";
 import type { FreshnessReading } from "./state.svelte";
 import { resolveRange } from "./range";
-import { UNKNOWN_REPO } from "./router.svelte";
+import { clampScope, type DaySpan } from "./selection";
+import { activityParams, UNKNOWN_REPO } from "./router.svelte";
 import { filters, nowSeconds, timeZone } from "./state.svelte";
 
 export type { DayBucket };
@@ -225,6 +226,14 @@ export interface ActivityFilter {
   outcome?: Outcome;
   reason?: string;
   group?: ActivityGroup;
+  /** Local days, in the hash as `from` and `to`. */
+  span?: DaySpan;
+  /** One local weekday (0 for Sunday) and hour (0 to 23), in the hash as `weekday` and `hour`. */
+  slot?: { weekday: number; hour: number };
+  /** One gate; a null repo is the unknown repo. */
+  gate?: { repo: string | null; name: string };
+  /** Only runs on trees that both failed and passed. */
+  flaky?: true;
 }
 
 export interface ActivityPage {
@@ -291,6 +300,14 @@ export function currentScope(now: number = nowSeconds(), repos?: string[]): Quer
     ...resolveRange(filters.range, new Date(now * 1000)),
     tz: timeZone(),
   };
+}
+
+/**
+ * Return the scope of the global filters narrowed to page-local days, with `repos` in place of
+ * the repo filter when given.
+ */
+export function spanScope(span?: DaySpan, repos?: string[]): QueryScope {
+  return clampScope(currentScope(undefined, repos), span);
 }
 
 type Params = Record<string, string | number | string[] | null | undefined>;
@@ -384,23 +401,16 @@ export function getBreakdown(
 }
 
 /**
- * Fetch one page of events, newest first. Pass the previous page's `next_before` to continue,
- * an `outcome` to keep only events with that outcome, a `reason` to keep only events recorded
- * with that reason, and a `group` to keep only the events of one Breakdown row.
+ * Fetch one page of events, newest first. Pass the previous page's `next_before` to continue.
+ * The filter narrows the feed; its weekday and hour are in the scope's zone. Days come from
+ * the scope, so the filter takes no span.
  */
 export function getActivity(
-  page: { limit?: number; before?: string | null } & ActivityFilter = {},
+  page: { limit?: number; before?: string | null } & Omit<ActivityFilter, "span"> = {},
   options: RequestOptions = {},
 ): Promise<ActivityPage> {
-  const params = {
-    ...scoped(options),
-    limit: page.limit,
-    before: page.before,
-    outcome: page.outcome,
-    reason: page.reason,
-    group: page.group?.by,
-    key: page.group?.key,
-  };
+  const { limit, before, ...filter } = page;
+  const params = { ...scoped(options), limit, before, ...activityParams(filter) };
   return request("activity", params, options.signal);
 }
 

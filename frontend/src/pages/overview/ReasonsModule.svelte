@@ -6,24 +6,31 @@
 
   Props:
   - `repoLabel`: the repo selection's display name, or null for all repos
+  - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import { getReasons, type ReasonRow } from "../../lib/api";
+  import { getReasons, spanScope, type ReasonRow } from "../../lib/api";
   import Module from "../../lib/components/Module.svelte";
   import { OUTCOMES } from "../../lib/events";
   import { formatCount } from "../../lib/format";
   import { createQuery } from "../../lib/query.svelte";
-  import { href } from "../../lib/router.svelte";
+  import { activityHref } from "../../lib/router.svelte";
   import { emptyHint, emptyTitle } from "../../lib/scope";
+  import type { DaySpan } from "../../lib/selection";
   import { filters, freshness } from "../../lib/state.svelte";
 
   interface Props {
     repoLabel: string | null;
+    /** Page-local days the overview is scoped to. */
+    span?: DaySpan;
   }
 
-  let { repoLabel }: Props = $props();
+  let { repoLabel, span }: Props = $props();
 
-  const query = createQuery((signal) => getReasons({ signal }));
+  const query = createQuery(
+    (signal) => getReasons({ signal, scope: spanScope(span) }),
+    () => span,
+  );
 
   const rows = $derived(query.data ?? []);
   const max = $derived(Math.max(0, ...rows.map((row) => row.count)));
@@ -40,15 +47,15 @@
   loading={query.loading && !query.data}
   error={query.error}
   empty={!query.data || query.data.length === 0}
-  emptyTitle={emptyTitle("uncached runs", { range: filters.range, repoLabel })}
-  emptyDetail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
+  emptyTitle={emptyTitle("uncached runs", { range: filters.range, span, repoLabel })}
+  emptyDetail={emptyHint({ range: filters.range, span, repoLabel, recording: freshness.recording })}
 >
   <ul class="reasons">
     {#each rows as row (`${row.outcome}:${row.reason}`)}
       <li>
         <a
           class="row"
-          href={href({ page: "activity", outcome: row.outcome, reason: row.reason })}
+          href={activityHref({ outcome: row.outcome, reason: row.reason }, span)}
           title={runsText(row)}
         >
           <span class="reason"

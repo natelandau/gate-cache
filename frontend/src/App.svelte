@@ -9,6 +9,7 @@
   import { loadSummary } from "./lib/summary";
   import { closeGatePanel } from "./lib/panel";
   import { panelHost, router, startRouter } from "./lib/router.svelte";
+  import type { DaySpan } from "./lib/selection";
   import {
     clock,
     filters,
@@ -60,6 +61,22 @@
     router.route.page === "gate" ? { repo: router.route.repo, name: router.route.name } : null,
   );
   const host = $derived(panelHost(router.route, router.opener));
+  // A gate panel over the overview keeps the days the overview was scoped to. Every hash
+  // change parses a new span object, so the span is rebuilt only when its days change, and
+  // the overview does not reload for the same days.
+  const spanKey = $derived.by(() => {
+    const span =
+      router.route.page === "overview"
+        ? router.route.span
+        : router.opener?.page === "overview"
+          ? router.opener.span
+          : undefined;
+    return span ? `${span.from}/${span.to}` : "";
+  });
+  const overviewSpan = $derived.by<DaySpan | undefined>(() => {
+    const [from, to] = spanKey.split("/");
+    return from && to ? { from, to } : undefined;
+  });
   // A gate opened from the overview stays over it, so the sidebar keeps Overview active.
   const navPage = $derived(host === "overview" ? "overview" : page);
   const pageTitle = $derived(
@@ -116,7 +133,7 @@
       <!-- One branch for the overview with or without its gate panel, so closing the panel
            keeps the page mounted with its tabs, scroll, and data. -->
       {#if page === "overview" || host === "overview"}
-        <Overview query={summary} repoLabel={selectedRepo} />
+        <Overview query={summary} repoLabel={selectedRepo} span={overviewSpan} />
         {#if host === "overview" && openGate}
           <GateDetail
             repo={openGate.repo}
@@ -127,10 +144,8 @@
       {:else if page === "gates" || page === "gate"}
         <Gates open={openGate} repoLabel={selectedRepo} />
       {:else if router.route.page === "activity"}
-        <Activity
-          repoLabel={selectedRepo}
-          filter={router.route}
-        />
+        {@const { page: _, ...filter } = router.route}
+        <Activity repoLabel={selectedRepo} {filter} />
       {:else}
         <Flaky repoLabel={selectedRepo} />
       {/if}

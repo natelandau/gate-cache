@@ -5,28 +5,36 @@
 
   Props:
   - `repoLabel`: the repo selection's display name, or null for all repos
+  - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import { getActivity, type EventRow } from "../../lib/api";
+  import { getActivity, spanScope, type EventRow } from "../../lib/api";
   import DataTable, { type Column } from "../../lib/components/DataTable.svelte";
   import Module from "../../lib/components/Module.svelte";
   import { eventKeys } from "../../lib/events";
   import { formatDuration, formatRelative, formatTimestamp } from "../../lib/format";
   import { openGatePanel } from "../../lib/panel";
   import { createQuery } from "../../lib/query.svelte";
-  import { href } from "../../lib/router.svelte";
+  import { activityHref } from "../../lib/router.svelte";
   import { emptyHint, emptyTitle } from "../../lib/scope";
+  import type { DaySpan } from "../../lib/selection";
   import { clock, filters, freshness } from "../../lib/state.svelte";
 
   interface Props {
     repoLabel: string | null;
+    /** Page-local days the overview is scoped to. */
+    span?: DaySpan;
   }
 
-  let { repoLabel }: Props = $props();
+  let { repoLabel, span }: Props = $props();
 
   const LIMIT = 5;
 
-  const query = createQuery((signal) => getActivity({ outcome: "fail", limit: LIMIT }, { signal }));
+  const query = createQuery(
+    (signal) =>
+      getActivity({ outcome: "fail", limit: LIMIT }, { signal, scope: spanScope(span) }),
+    () => span,
+  );
 
   type Failure = EventRow & { key: string };
   const rows = $derived.by<Failure[]>(() => {
@@ -69,8 +77,8 @@
   loading={query.loading && !query.data}
   error={query.error}
   empty={!query.data || query.data.events.length === 0}
-  emptyTitle={emptyTitle("failures", { range: filters.range, repoLabel })}
-  emptyDetail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
+  emptyTitle={emptyTitle("failures", { range: filters.range, span, repoLabel })}
+  emptyDetail={emptyHint({ range: filters.range, span, repoLabel, recording: freshness.recording })}
 >
   <DataTable
     label="Recent failures"
@@ -82,7 +90,7 @@
     rowLabel={(e) => `Open ${e.name}`}
     busy={query.loading}
   />
-  <a class="more-link" href={href({ page: "activity", outcome: "fail" })}>
+  <a class="more-link" href={activityHref({ outcome: "fail" }, span)}>
     All failures in Activity <span aria-hidden="true">→</span>
   </a>
 </Module>

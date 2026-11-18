@@ -6,6 +6,7 @@ import {
   heatColor,
   heatStep,
   heatValue,
+  nextActive,
   weekdayName,
 } from "./heat";
 
@@ -71,5 +72,23 @@ describe("weekdayName", () => {
     expect(weekdayName(3, "short")).toBe(
       new Date(2026, 10, 18).toLocaleString(undefined, { weekday: "short" }),
     );
+  });
+});
+
+describe("nextActive", () => {
+  const active = [false, true, false, false, true];
+
+  it("returns the position when it is active", () => {
+    expect(nextActive(1, 1, active)).toBe(1);
+  });
+
+  it("steps on past inactive positions in the same direction", () => {
+    expect(nextActive(2, 1, active)).toBe(4);
+    expect(nextActive(3, -1, active)).toBe(1);
+  });
+
+  it("returns null when no active position lies that way", () => {
+    expect(nextActive(0, -1, active)).toBeNull();
+    expect(nextActive(5, 1, active)).toBeNull();
   });
 });

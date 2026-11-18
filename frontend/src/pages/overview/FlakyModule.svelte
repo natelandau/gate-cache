@@ -1,13 +1,14 @@
 <!--
   @component
   Flaky gates: the gates with the most flaky trees, each with a badge of its tree count. A
-  row opens the gate's detail panel.
+  row opens the gate's detail panel, and the badge opens the runs on those trees in Activity.
 
   Props:
   - `repoLabel`: the repo selection's display name, or null for all repos
+  - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import { getFlaky, type FlakyGate } from "../../lib/api";
+  import { getFlaky, spanScope, type FlakyGate } from "../../lib/api";
   import Badge from "../../lib/components/Badge.svelte";
   import DataTable from "../../lib/components/DataTable.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -16,17 +17,23 @@
   import { openGatePanel } from "../../lib/panel";
   import { createQuery } from "../../lib/query.svelte";
   import { topFlaky } from "../../lib/rank";
-  import { href } from "../../lib/router.svelte";
+  import { activityHref, href } from "../../lib/router.svelte";
   import { emptyHint, emptyTitle } from "../../lib/scope";
+  import type { DaySpan } from "../../lib/selection";
   import { filters, freshness } from "../../lib/state.svelte";
 
   interface Props {
     repoLabel: string | null;
+    /** Page-local days the overview is scoped to. */
+    span?: DaySpan;
   }
 
-  let { repoLabel }: Props = $props();
+  let { repoLabel, span }: Props = $props();
 
-  const query = createQuery((signal) => getFlaky({ signal }));
+  const query = createQuery(
+    (signal) => getFlaky({ signal, scope: spanScope(span) }),
+    () => span,
+  );
 
   const rows = $derived(topFlaky(query.data ?? []));
 
@@ -36,7 +43,13 @@
 </script>
 
 {#snippet trees(gate: FlakyGate)}
-  <Badge tone="flaky" title={treeText(gate.tree_count)}>{formatCount(gate.tree_count)}</Badge>
+  <a
+    class="trees"
+    href={activityHref({ gate: { repo: gate.repo, name: gate.name }, flaky: true }, span)}
+    aria-label="{treeText(gate.tree_count)} for {gate.name}. Open their runs in Activity"
+  >
+    <Badge tone="flaky" title={treeText(gate.tree_count)}>{formatCount(gate.tree_count)}</Badge>
+  </a>
 {/snippet}
 
 <Module
@@ -45,8 +58,8 @@
   loading={query.loading && !query.data}
   error={query.error}
   empty={!query.data || query.data.length === 0}
-  emptyTitle={emptyTitle("flaky gates", { range: filters.range, repoLabel })}
-  emptyDetail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
+  emptyTitle={emptyTitle("flaky gates", { range: filters.range, span, repoLabel })}
+  emptyDetail={emptyHint({ range: filters.range, span, repoLabel, recording: freshness.recording })}
 >
   <DataTable
     label="Flaky gates"
@@ -64,3 +77,13 @@
   />
   <a class="more-link" href={href({ page: "flaky" })}>All flaky gates <span aria-hidden="true">→</span></a>
 </Module>
+
+<style>
+  .trees {
+    text-decoration: none;
+  }
+
+  .trees:hover :global(.badge) {
+    text-decoration: underline;
+  }
+</style>
