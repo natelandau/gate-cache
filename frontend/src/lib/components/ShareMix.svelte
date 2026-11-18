@@ -7,6 +7,8 @@
   Props:
   - `parts`: the parts in display order, each `{ key, label, count, color, title?, href? }`;
     pass a nonzero total. A part with `href` and a count links its count and bar segment.
+  - `format`: how a count reads in the legend and bar titles; defaults to a plain number
+  - `noun`: what a linked count counts, for its accessible name; defaults to "runs"
 -->
 <script lang="ts">
   import { formatCount } from "../format";
@@ -14,9 +16,11 @@
 
   interface Props {
     parts: MixPart[];
+    format?: (count: number) => string;
+    noun?: string;
   }
 
-  let { parts }: Props = $props();
+  let { parts, format = formatCount, noun = "runs" }: Props = $props();
 
   const shares = $derived(partShares(parts, (part) => part.count));
 </script>
@@ -33,7 +37,7 @@
           tabindex={item.part.href ? -1 : undefined}
           style:background={item.part.color}
           style:width="{item.share * 100}%"
-          title="{item.part.label}: {formatCount(item.count)} ({item.percent})"
+          title="{item.part.label}: {format(item.count)} ({item.percent})"
         ></svelte:element>
       {/if}
     {/each}
@@ -47,11 +51,11 @@
           <a
             class="mono num"
             href={item.part.href}
-            aria-label="{formatCount(item.count)} {item.part.label} runs. Open in Activity"
-            >{formatCount(item.count)}</a
+            aria-label="{format(item.count)} {item.part.label} {noun}. Open in Activity"
+            >{format(item.count)}</a
           >
         {:else}
-          <span class="mono num">{formatCount(item.count)}</span>
+          <span class="mono num">{format(item.count)}</span>
         {/if}
         <span class="mono num percent">{item.percent}</span>
       </li>

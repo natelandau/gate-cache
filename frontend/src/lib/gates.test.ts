@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EventRow, GateRow } from "./api";
-import { findGate, gateKey, tally, trendStats } from "./gates";
+import { findGate, gateKey, histogramBars, sourceParts, tally, trendStats } from "./gates";
 
 describe("gateKey", () => {
   it("separates gates of the same name in different repos", () => {
@@ -43,5 +43,34 @@ describe("tally", () => {
       (outcome) => ({ outcome }) as EventRow,
     );
     expect(tally(runs)).toEqual({ fails: 2, passes: 2 });
+  });
+});
+
+describe("histogramBars", () => {
+  const edges = Array.from({ length: 13 }, (_, i) => 2 + i);
+  const counts = Array.from({ length: 12 }, (_, i) => i);
+
+  it("returns one labeled bar per bin, carrying the counts", () => {
+    const bars = histogramBars({ edges, counts, median: 5, p90: 9 });
+    expect(bars).toHaveLength(12);
+    expect(bars[0]).toEqual({ from: 2, to: 3, count: 0, label: "2s–3s" });
+    expect(bars.map((b) => b.count)).toEqual(counts);
+  });
+});
+
+describe("sourceParts", () => {
+  it("rounds seconds, colors the first five, and folds the rest into Other", () => {
+    const rows = Array.from({ length: 7 }, (_, i) => ({
+      key: `k${i}`,
+      label: `L${i}`,
+      title: i === 0 ? "T" : null,
+      runs: 1,
+      time_spent: 10.6 + i,
+    }));
+    const parts = sourceParts(rows);
+    expect(parts[0]).toMatchObject({ key: "k0", label: "L0", count: 11, color: "var(--chart-runs-1)", title: "T" });
+    expect(parts[4]!.color).toBe("var(--chart-runs-5)");
+    expect(parts).toHaveLength(6);
+    expect(parts[5]).toMatchObject({ key: "other", label: "Other", count: 32, color: "var(--chart-neutral)", title: "L5, L6" });
   });
 });

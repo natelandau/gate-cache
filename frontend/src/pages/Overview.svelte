@@ -14,6 +14,7 @@
   import OutcomeModule from "./overview/OutcomeModule.svelte";
   import ReasonsModule from "./overview/ReasonsModule.svelte";
   import SlowdownsModule from "./overview/SlowdownsModule.svelte";
+  import SpentModule from "./overview/SpentModule.svelte";
   import StatsModule from "./overview/StatsModule.svelte";
   import TopGatesModule from "./overview/TopGatesModule.svelte";
 
@@ -27,7 +28,7 @@
 
   let { query, repoLabel, span }: Props = $props();
 
-  // The calendar and daily chart keep the whole range so other days stay pickable; the
+  // The calendar and the daily charts keep the whole range so other days stay pickable; the
   // stats and outcome mix follow the picked days through their own summary.
   const scoped = createQuery(
     (signal) => (span ? loadSummary(signal, span) : Promise.resolve(undefined)),
@@ -59,6 +60,7 @@
   <StatsModule query={scopedQuery} {span} />
   <CalendarModule {query} {repoLabel} {span} onselect={pick} />
   <DailyModule {query} {repoLabel} {span} onselect={pick} />
+  <SpentModule {repoLabel} {span} onselect={pick} />
 
   <div class="row halves">
     <HourlyModule {repoLabel} {span} />

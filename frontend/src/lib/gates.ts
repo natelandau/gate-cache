@@ -1,6 +1,9 @@
 /** Helpers for gate rows, the gate detail, and flaky trees. */
 
 import type { EventRow, GateDetail, GateRow } from "./api";
+import { formatDuration } from "./format";
+import type { MixPart } from "./rank";
+import { OTHER_COLOR, SPENT_COLORS } from "./spent";
 
 /** Return a key unique per (repo, gate name); null is its own repo. */
 export function gateKey(gate: { repo: string | null; name: string }): string {
@@ -37,4 +40,37 @@ export function tally(runs: Pick<EventRow, "outcome">[]): { fails: number; passe
     else if (run.outcome === "pass" || run.outcome === "pass_unrecorded") passes += 1;
   }
   return { fails, passes };
+}
+
+/** Return one bar per histogram bin, labeled with its time range, such as "2s\u20133s". */
+export function histogramBars(
+  h: NonNullable<GateDetail["histogram"]>,
+): { from: number; to: number; count: number; label: string }[] {
+  return h.counts.map((count, i) => {
+    const from = h.edges[i]!;
+    const to = h.edges[i + 1]!;
+    return { from, to, count, label: `${formatDuration(from)}\u2013${formatDuration(to)}` };
+  });
+}
+
+/** Return the gate's time per source as share parts, sized by whole seconds, with sources past the palette in Other. */
+export function sourceParts(rows: GateDetail["by_source"]): MixPart[] {
+  const parts: MixPart[] = rows.slice(0, SPENT_COLORS.length).map((row, i) => ({
+    key: row.key,
+    label: row.label,
+    count: Math.round(row.time_spent),
+    color: SPENT_COLORS[i]!,
+    title: row.title ?? undefined,
+  }));
+  const rest = rows.slice(SPENT_COLORS.length);
+  if (rest.length > 0) {
+    parts.push({
+      key: "other",
+      label: "Other",
+      count: Math.round(rest.reduce((sum, row) => sum + row.time_spent, 0)),
+      color: OTHER_COLOR,
+      title: rest.map((row) => row.label).join(", "),
+    });
+  }
+  return parts;
 }

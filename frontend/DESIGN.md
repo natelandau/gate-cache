@@ -28,6 +28,8 @@ The app uses six palette colors, defined once as `--palette-100` to `--palette-6
 
 Each role token except `--focus` and the chart tokens has a `-soft` partner, such as `--danger-soft`, for the background behind its text. Gray text, surfaces, and borders use the neutral tokens (`--text`, `--text-muted`, `--surface`, `--border`, and the others in `src/app.css`). Gray chart marks, such as bars for counts that are neither good nor bad, use `--chart-neutral`. Charts that split runs by outcome color each outcome with `--chart-skip`, `--chart-pass`, `--chart-pass-unrecorded`, `--chart-fail`, and `--chart-uncached`, which follow the outcome badge roles and use gray for uncached runs.
 
+A chart that splits runs into ranked parts, such as time spent per gate, colors the parts with `--chart-runs-1` to `--chart-runs-5` in rank order, the most prominent step for the largest part, and uses `--chart-neutral` gray for the rest.
+
 ### Heatmap ramps
 
 The heatmaps use one six-step ramp per measure. Step 0 is `--heat-empty` and means no activity. Steps 1 to 5 go from a faint tint to the strongest color, so step 5 always stands out most, in both themes.
@@ -61,6 +63,7 @@ Use an existing component before you write markup of your own. If a page needs a
 | The table of gates on the Gates page                  | `GateTable`                       |
 | A row of headline numbers                             | `StatStrip`                       |
 | Time saved and failures per day                       | `DailyChart`                      |
+| Time spent per day, stacked by gate                   | `SpentChart`                      |
 | Run time of one gate over time                        | `TrendChart`                      |
 | The outcome of one run                                | `OutcomeBadge`                    |
 | Any other short label, such as "flaky"                | `Badge` (pick the tone by role)   |

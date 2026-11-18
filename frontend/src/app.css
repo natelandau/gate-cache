@@ -12,6 +12,9 @@
   Heatmap ramps are marks, not text, so they need no contrast target. Each runs from a faint tint
   (step 1) to a deep shade (step 5) of its slot's hue: runs on 100, saved on 500, fail on 300.
   In dark mode the order flips toward light, so step 5 is always the most prominent cell.
+  The ranked runs steps (chart-runs-1 to 5) color the parts of one stacked chart, the most
+  prominent first: darkest in light mode, lightest in dark mode. Each step is at least 0.06
+  OKLCH L from its neighbor and at least 2:1 against the surface.
 */
 :root {
   color-scheme: light;
@@ -75,6 +78,11 @@
 
   --chart-saved: var(--palette-500);
   --chart-runs: var(--palette-100);
+  --chart-runs-1: #0f4677;
+  --chart-runs-2: #1a5f9f;
+  --chart-runs-3: #2a7ccb;
+  --chart-runs-4: #4d9be3;
+  --chart-runs-5: #7ab5ec;
   --chart-failures: var(--palette-300);
   --chart-neutral: #b5b6b1;
   --chart-grid: #ebebe7;
@@ -134,6 +142,11 @@
   --flaky-soft: #32253c;
 
   --chart-neutral: #55585e;
+  --chart-runs-1: #b3dbff;
+  --chart-runs-2: #7fbdf7;
+  --chart-runs-3: #4f9be3;
+  --chart-runs-4: #2f78bd;
+  --chart-runs-5: #235c94;
   --chart-grid: #26282c;
 
   --heat-empty: #202125;

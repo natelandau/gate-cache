@@ -5,12 +5,14 @@ import type { Bar } from "./components/BarList.svelte";
 import { dimension, type Dimension } from "./dimensions";
 import { UNKNOWN_REPO, type Route } from "./router.svelte";
 
-export type Metric = "saved" | "runs" | "skip" | "fails";
+export type Metric = "saved" | "spent" | "runs" | "skip" | "fails";
 
 function metricValue(row: BreakdownRow, by: Metric): number {
   switch (by) {
     case "saved":
       return row.time_saved;
+    case "spent":
+      return row.time_spent;
     case "runs":
       return row.runs;
     case "skip":
