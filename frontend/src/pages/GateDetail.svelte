@@ -9,6 +9,7 @@
   - `onclose`: close the panel
 -->
 <script lang="ts">
+  import { TERMS } from "../lib/terms";
   import {
     getGate,
     getGates,
@@ -27,7 +28,9 @@
   import ShareMix from "../lib/components/ShareMix.svelte";
   import StatStrip, { type Stat } from "../lib/components/StatStrip.svelte";
   import TrendChart from "../lib/components/TrendChart.svelte";
-  import { eventKeys, eventTitle, shortTree, timeText } from "../lib/events";
+  import Icon from "../lib/components/Icon.svelte";
+  import { eventKeys, eventTitle, ranText, savedText, shortTree } from "../lib/events";
+  import TimeValue from "../lib/components/TimeValue.svelte";
   import {
     formatBytes,
     formatCount,
@@ -110,22 +113,21 @@
   const stats = $derived.by((): Stat[] => {
     if (!row) return [];
     return [
-      {
-        label: "Runs",
-        value: formatCount(row.runs),
-        hint: `${formatCount(row.failures)} ${row.failures === 1 ? "failure" : "failures"}`,
-      },
-      { label: "Skip rate", value: formatPercent(row.skip_rate) },
+      { label: TERMS.calls.label, value: formatCount(row.runs) },
       {
         label: "Avg run",
         value: formatDuration(row.avg_run),
         hint: runHint(row),
       },
-      { label: "Saved", value: formatDuration(row.time_saved) },
       {
-        label: "Time spent",
+        label: TERMS.ran.column,
         value: formatDuration(row.time_spent),
         hint: row.fail_time ? `${formatDuration(row.fail_time)} lost to failures` : undefined,
+      },
+      {
+        label: "Failures",
+        value: formatCount(row.failures),
+        tone: row.failures ? "danger" : "default",
       },
       { label: "CPU/wall", value: formatRatio(row.cpu_ratio) },
       {
@@ -133,6 +135,8 @@
         value: formatBytes(row.peak_rss),
         hint: row.median_rss === null ? undefined : `median ${formatBytes(row.median_rss)}`,
       },
+      { label: TERMS.skipRate.label, value: formatPercent(row.skip_rate) },
+      { label: TERMS.saved.column, value: formatDuration(row.time_saved) },
     ];
   });
 
@@ -187,7 +191,8 @@
       title: (e) => formatTimestamp(e.ts),
     },
     { key: "outcome", label: "Outcome", cell: outcome },
-    { key: "time", label: "Time", sortable: false, text: timeText },
+    { key: "ran", label: "Ran for", sortable: false, align: "right", cell: ranCell },
+    { key: "saved", label: TERMS.saved.column, sortable: false, align: "right", cell: savedCell },
     {
       key: "tree",
       label: "Tree",
@@ -210,10 +215,13 @@
   ];
 </script>
 
+{#snippet ranCell(e: EventRow)}<TimeValue value={ranText(e)} />{/snippet}
+{#snippet savedCell(e: EventRow)}<TimeValue value={savedText(e)} />{/snippet}
+
 {#snippet when(e: Recent)}{formatRelative(e.ts, clock.now)}{/snippet}
 {#snippet outcome(e: Recent)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} />{/snippet}
-{#snippet tree(e: Recent)}<span class="mono">{shortTree(e.tree)}</span>{/snippet}
-{#snippet flakyTree(t: FlakyTree)}<span class="mono">{shortTree(t.tree)}</span>{/snippet}
+{#snippet tree(e: Recent)}{shortTree(e.tree)}{/snippet}
+{#snippet flakyTree(t: FlakyTree)}{shortTree(t.tree)}{/snippet}
 
 <svelte:window onkeydown={onWindowKeydown} />
 
@@ -234,7 +242,7 @@
       <p class="repo" title={repo ?? undefined}>{detail?.repo_name ?? ""}</p>
     </div>
     <Button square label="Close gate details" onclick={onclose}>
-      <span aria-hidden="true">✕</span>
+      <Icon name="x" />
     </Button>
   </header>
 
@@ -250,12 +258,12 @@
     {#if detail}
       {#if detail.recent.length === 0}
         <EmptyState
-          title={emptyTitle(`runs of ${name}`, { range: filters.range, repoLabel: null })}
+          title={emptyTitle(`calls of ${name}`, { range: filters.range, repoLabel: null })}
           detail="Pick a longer range to see older runs."
         />
       {:else}
         <section>
-          <h3 class="section-title">Pass duration</h3>
+          <h3 class="section-title">Passing run time</h3>
           {#if detail.trend.length}
             <TrendChart trend={detail.trend} />
           {:else}
@@ -264,7 +272,7 @@
         </section>
 
         <section>
-          <h3 class="section-title">Run times</h3>
+          <h3 class="section-title">Run time spread</h3>
           {#if detail.histogram}
             <RunHistogram histogram={detail.histogram} />
           {:else}
@@ -279,8 +287,8 @@
               {#each failureClasses as c (c.key)}
                 <li title={c.title}>
                   <span>{c.label}</span>
-                  <span class="mono num">{formatCount(c.runs)} {c.runs === 1 ? "run" : "runs"}</span>
-                  <span class="mono num muted">{formatDuration(c.time)}</span>
+                  <span class="num">{formatCount(c.runs)} {c.runs === 1 ? "run" : "runs"}</span>
+                  <span class="num muted">{formatDuration(c.time)}</span>
                 </li>
               {/each}
             </ul>
@@ -289,7 +297,7 @@
 
         {#if sources.length}
           <section>
-            <h3 class="section-title">Time spent by source</h3>
+            <h3 class="section-title">Time ran by source</h3>
             <ShareMix parts={sources} format={formatDuration} />
           </section>
         {/if}
@@ -310,10 +318,10 @@
         <section>
           <h3 class="section-title">
             Latest {formatCount(recent.length)}
-            {recent.length === 1 ? "run" : "runs"}
+            {recent.length === 1 ? "call" : "calls"}
           </h3>
           <DataTable
-            label="Latest runs of {name}"
+            label="Latest calls of {name}"
             rows={recent}
             columns={recentColumns}
             rowKey={(e) => e.key}
@@ -339,8 +347,20 @@
     display: flex;
     flex-direction: column;
     background: var(--bg);
-    border-left: 1px solid var(--border-strong);
+    border-left: 1px solid var(--border);
     box-shadow: var(--shadow-panel);
+    animation: panel-in var(--dur-slow) var(--ease);
+  }
+
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 
   .panel:focus {
@@ -357,9 +377,9 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: var(--space-3);
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-4) var(--space-5);
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    background: var(--bg);
   }
 
   .titles {
@@ -371,6 +391,8 @@
     align-items: center;
     gap: var(--space-2);
     font-size: var(--text-lg);
+    font-weight: 600;
+    letter-spacing: var(--track-lg);
     overflow-wrap: anywhere;
   }
 
@@ -385,8 +407,8 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
-    padding: var(--space-4);
+    gap: var(--space-5);
+    padding: var(--space-5);
   }
 
   .muted {

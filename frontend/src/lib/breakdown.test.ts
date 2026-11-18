@@ -34,33 +34,41 @@ const labels = (bars: ReturnType<typeof breakdownBars>) => bars.map((bar) => bar
 
 describe("breakdownBars", () => {
   it("sorts by each metric, with no skip rate as zero", () => {
-    expect(labels(breakdownBars(repos, "saved", "repo", []))).toEqual(["api", "web", "unknown repo"]);
-    expect(labels(breakdownBars(repos, "runs", "repo", []))).toEqual(["web", "unknown repo", "api"]);
-    expect(labels(breakdownBars(repos, "fails", "repo", []))).toEqual(["web", "unknown repo", "api"]);
-    const skip = breakdownBars(repos, "skip", "repo", []);
+    expect(labels(breakdownBars(repos, { key: "saved", direction: "desc" }, "repo", []))).toEqual(["api", "web", "unknown repo"]);
+    expect(labels(breakdownBars(repos, { key: "runs", direction: "desc" }, "repo", []))).toEqual(["web", "unknown repo", "api"]);
+    expect(labels(breakdownBars(repos, { key: "fails", direction: "desc" }, "repo", []))).toEqual(["web", "unknown repo", "api"]);
+    const skip = breakdownBars(repos, { key: "skip", direction: "desc" }, "repo", []);
     expect(labels(skip)).toEqual(["web", "api", "unknown repo"]);
     expect(skip.at(-1)?.value).toBe(0);
   });
 
   it("sorts by time spent", () => {
     const spent = [row("a", { time_spent: 5 }), row("b", { time_spent: 50 })];
-    expect(labels(breakdownBars(spent, "spent", "gate", []))).toEqual(["b", "a"]);
+    expect(labels(breakdownBars(spent, { key: "spent", direction: "desc" }, "gate", []))).toEqual(["b", "a"]);
+  });
+
+  it("sorts by name or ascending, measuring bars by time ran when sorted by name", () => {
+    const byName = breakdownBars(repos, { key: "name", direction: "asc" }, "repo", []);
+    expect(labels(byName)).toEqual([...labels(byName)].sort((a, b) => a.localeCompare(b)));
+    expect(byName.map((bar) => bar.value)).toEqual(byName.map((bar) => bar.row.time_spent));
+    const fewestRuns = breakdownBars(repos, { key: "runs", direction: "asc" }, "repo", []);
+    expect(labels(fewestRuns)).toEqual([...labels(breakdownBars(repos, { key: "runs", direction: "desc" }, "repo", []))].reverse());
   });
 
   it("keys repo rows by the repo filter value and dims repos outside the filter", () => {
-    const bars = breakdownBars(repos, "saved", "repo", ["-"]);
+    const bars = breakdownBars(repos, { key: "saved", direction: "desc" }, "repo", ["-"]);
     expect(bars.map((bar) => [bar.key, bar.dimmed])).toEqual([
       ["/w/api/.git", true],
       ["/w/web/.git", true],
       ["-", false],
     ]);
     expect(bars[0]?.row).toBe(repos[0]);
-    expect(breakdownBars(repos, "saved", "repo", []).some((bar) => bar.dimmed)).toBe(false);
+    expect(breakdownBars(repos, { key: "saved", direction: "desc" }, "repo", []).some((bar) => bar.dimmed)).toBe(false);
   });
 
   it("keys other rows by their opaque key and never dims them", () => {
     const branches = [row("main"), row("No branch recorded", { key: '[null, null]', missing: true })];
-    const bars = breakdownBars(branches, "saved", "branch", ["-"]);
+    const bars = breakdownBars(branches, { key: "saved", direction: "desc" }, "branch", ["-"]);
     expect(bars.map((bar) => [bar.key, bar.dimmed])).toEqual([
       ['["main"]', false],
       ["[null, null]", false],
@@ -68,7 +76,7 @@ describe("breakdownBars", () => {
   });
 
   it("passes the server's hover text through", () => {
-    const bars = breakdownBars([row("main", { title: "x" }), row("dev")], "saved", "branch", []);
+    const bars = breakdownBars([row("main", { title: "x" }), row("dev")], { key: "saved", direction: "desc" }, "branch", []);
     expect(Object.fromEntries(bars.map((bar) => [bar.label, bar.title]))).toEqual({ main: "x", dev: undefined });
   });
 });

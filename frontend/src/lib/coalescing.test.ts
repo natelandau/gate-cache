@@ -28,7 +28,7 @@ describe("waitEndings", () => {
 describe("waitFacts", () => {
   it("shows the count with its share of runs, then the wait totals", () => {
     expect(waitFacts(base).map((f) => [f.label, f.value])).toEqual([
-      ["Runs that waited", "4 (10%)"],
+      ["Calls that waited", "4 (10%)"],
       ["Total wait", "15m 16s"],
       ["Typical wait", "7s"],
       ["Saved by skips after a wait", "1m 30s"],
@@ -49,10 +49,10 @@ describe("coalescingNote", () => {
 
   it("names waits that timed out and runs from an older gate-cache", () => {
     expect(coalescingNote({ ...base, timed_out: 1, unknown_runs: 1 })).toBe(
-      "1 wait reached the timeout. 1 run in this range came from an older gate-cache that did not record waits, so it is not counted here.",
+      "1 wait reached the timeout. 1 call in this range came from an older gate-cache that did not record waits, so it is not counted here.",
     );
     expect(coalescingNote({ ...base, unknown_runs: 5 })).toBe(
-      "5 runs in this range came from an older gate-cache that did not record waits, so they are not counted here.",
+      "5 calls in this range came from an older gate-cache that did not record waits, so they are not counted here.",
     );
   });
 });

@@ -4,7 +4,7 @@
 
   Props:
   - `rows`: the data
-  - `columns`: column definitions, see `Column` below
+  - `columns`: column definitions, see `Column` below; `info` explains a column from its header label
   - `rowKey`: a stable unique key per row
   - `label`: accessible name of the table (rendered as a hidden caption)
   - `sort`: initial sort `{ key, direction }`; bindable to read or drive it from outside
@@ -44,7 +44,9 @@
 
 <script lang="ts" generics="T">
   import type { Snippet } from "svelte";
-  import { raw, sortRows, type Column, type SortState } from "../table";
+  import { ariaSort, nextSort, raw, sortRows, type Column, type SortState } from "../table";
+  import InfoTip from "./InfoTip.svelte";
+  import SortHeader from "./SortHeader.svelte";
 
   interface Props {
     rows: T[];
@@ -76,20 +78,13 @@
     bare = false,
   }: Props = $props();
 
+  // True once the table scrolls sideways, which shows the pinned first column's edge.
+  let scrolled = $state(false);
+
   const sorted = $derived(sortRows(rows, columns, sort));
 
   function toggle(column: Column<T>): void {
-    if (sort?.key === column.key) {
-      sort = { key: column.key, direction: sort.direction === "asc" ? "desc" : "asc" };
-    } else {
-      const first = column.firstDirection ?? (column.align === "right" ? "desc" : "asc");
-      sort = { key: column.key, direction: first };
-    }
-  }
-
-  function ariaSort(column: Column<T>): "ascending" | "descending" | undefined {
-    if (sort?.key !== column.key) return undefined;
-    return sort.direction === "asc" ? "ascending" : "descending";
+    sort = nextSort(sort, column.key, column.firstDirection ?? (column.align === "right" ? "desc" : "asc"));
   }
 
   function cellText(row: T, column: Column<T>): string {
@@ -112,7 +107,13 @@
   }
 </script>
 
-<div class="table-wrap" class:bare aria-busy={busy}>
+<div
+  class="table-wrap"
+  class:bare
+  class:scrolled
+  aria-busy={busy}
+  onscroll={(event) => (scrolled = event.currentTarget.scrollLeft > 0)}
+>
   <table class:busy>
     <caption class="visually-hidden">{label}</caption>
     <colgroup>
@@ -123,17 +124,35 @@
     <thead>
       <tr>
         {#each columns as column (column.key)}
-          <th scope="col" class={column.align ?? "left"} aria-sort={ariaSort(column)}>
-            {#if column.sortable ?? true}
-              <button type="button" onclick={() => toggle(column)}>
-                <span>{column.label}</span>
-                <span class="arrow" aria-hidden="true">
-                  {#if sort?.key === column.key}{sort.direction === "asc" ? "↑" : "↓"}{/if}
-                </span>
-              </button>
-            {:else}
-              {column.label}
-            {/if}
+          <th scope="col" class="col-head {column.align ?? 'left'}" aria-sort={ariaSort(sort, column.key)}>
+            {#snippet heading(describedby?: string)}
+              {#if column.sortable ?? true}
+                <SortHeader
+                  label={column.label}
+                  direction={sort?.key === column.key ? sort.direction : null}
+                  align={column.align}
+                  onclick={() => toggle(column)}
+                  {describedby}
+                />
+              {:else}
+                <!-- A focusable label, so keyboard focus can open its explanation. -->
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                <span class:explained={!!describedby} aria-describedby={describedby} tabindex={describedby ? 0 : undefined}
+                  >{column.label}</span
+                >
+              {/if}
+            {/snippet}
+            <!-- One centered row, so a header with an explanation lines up with one without. Its
+                 label opens the explanation on hover or focus; a dotted underline marks it. -->
+            <span class="head">
+              {#if column.info}
+                <InfoTip text={column.info} label="About {column.label}">
+                  {#snippet trigger(id)}{@render heading(id)}{/snippet}
+                </InfoTip>
+              {:else}
+                {@render heading()}
+              {/if}
+            </span>
           </th>
         {/each}
       </tr>
@@ -152,11 +171,17 @@
             onkeydown={(event) => activate(event, row)}
           >
             {#each columns as column (column.key)}
-              <td class={column.align ?? "left"} title={column.title?.(row)}>
+              {@const text = column.cell ? undefined : cellText(row, column)}
+              <!-- A text cell can be cut by its ellipsis, so its title carries the full text. -->
+              <td
+                class={column.align === "right" ? "right num" : "left"}
+                class:wrap={column.wrap}
+                title={column.title ? column.title(row) : column.wrap ? undefined : text}
+              >
                 {#if column.cell}
                   {@render column.cell(row)}
                 {:else}
-                  {cellText(row, column)}
+                  {text}
                 {/if}
               </td>
             {/each}
@@ -172,16 +197,38 @@
 
 <style>
   .table-wrap {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-card);
     background: var(--surface);
+    box-shadow: var(--ring);
     overflow-x: auto;
   }
 
+  /* In a carded table, the first column stays in view while the rest scrolls under it. Its cells
+     need an opaque background, and row hover and the active row repaint it like any cell. A bare
+     table sits in a narrow module and never scrolls sideways. */
+  .table-wrap:not(.bare) :is(th, td):first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+  }
+
+  /* At the lowest specificity, so the row hover and active rules below override it. */
+  :where(.table-wrap:not(.bare)) :where(th, td):first-child {
+    background: var(--surface);
+  }
+
+  .table-wrap:not(.bare) th:first-child {
+    z-index: 2;
+  }
+
+  .scrolled :is(th, td):first-child {
+    box-shadow: inset -1px 0 0 var(--border);
+  }
+
   .table-wrap.bare {
-    border: 0;
     border-radius: 0;
     background: none;
+    box-shadow: none;
   }
 
   table {
@@ -194,57 +241,51 @@
   th,
   td {
     height: var(--row-height);
-    padding: 0 var(--space-3);
+    padding: 0 10px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 420px;
   }
 
+  .head {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+  }
+
+  /* Headers never cut their text, and a header's explanation must show past the cell. */
   th {
-    background: var(--surface-sunken);
+    overflow: visible;
+    height: 34px;
     border-bottom: 1px solid var(--border);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--text-muted);
     text-align: left;
+  }
+
+  .bare th:first-child,
+  .bare td:first-child {
+    padding-left: var(--space-1);
+  }
+
+  .bare th:last-child,
+  .bare td:last-child {
+    padding-right: var(--space-1);
   }
 
   .right {
     text-align: right;
   }
 
-  th button {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    height: 22px;
-    margin: 0 -4px;
-    padding: 0 4px;
-    border: 0;
-    border-radius: 3px;
-    background: none;
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
-  }
-
-  th.right button {
-    flex-direction: row-reverse;
-  }
-
-  th button:hover {
-    color: var(--text);
-  }
-
-  .arrow {
-    display: inline-block;
-    width: 1ch;
-    color: var(--accent);
-  }
-
   td {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-row);
+    font-size: var(--text-sm);
+    transition: background-color var(--dur-fast) var(--ease);
+  }
+
+  /* A column that wraps long text shows all of it, so it needs no ellipsis or title. */
+  td.wrap {
+    white-space: normal;
+    max-width: none;
   }
 
   tbody tr:first-child td {
@@ -255,15 +296,24 @@
     cursor: pointer;
   }
 
-  tr.live:hover,
-  tr.live:focus-visible {
+  tr.live:hover td,
+  tr.live:focus-visible td {
     background: var(--surface-hover);
   }
 
-  tr.active,
-  tr.active:hover {
+  tr.active td,
+  tr.active:hover td {
     background: var(--accent-soft);
+  }
+
+  tr.active td:first-child {
     box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  .scrolled tr.active td:first-child {
+    box-shadow:
+      inset 2px 0 0 var(--accent),
+      inset -1px 0 0 var(--border);
   }
 
   tbody tr:focus-visible {

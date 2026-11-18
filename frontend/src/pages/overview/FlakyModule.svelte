@@ -53,6 +53,7 @@
 {/snippet}
 
 <Module
+  more={{ href: href({ page: "flaky" }), label: "All flaky gates" }}
   title="Flaky gates"
   titleId="flaky-gates-title"
   loading={query.loading && !query.data}
@@ -75,7 +76,6 @@
     rowLabel={(g) => `Open ${g.name}`}
     busy={query.loading}
   />
-  <a class="more-link" href={href({ page: "flaky" })}>All flaky gates <span aria-hidden="true">→</span></a>
 </Module>
 
 <style>

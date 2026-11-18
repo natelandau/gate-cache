@@ -20,6 +20,21 @@ describe("Module", () => {
     expect(body).not.toContain("module body");
   });
 
+  it("shows skeleton blocks while loading, with the loading text for screen readers", () => {
+    const { body } = render(Module, { props: { ...base, loading: true, empty: false } });
+    expect(body).toMatch(/class="skeleton[^"]*"/);
+    expect(body).toMatch(/class="visually-hidden[^"]*"[^>]*>Loading activity</);
+  });
+
+  it("shows the subtitle and the footer", () => {
+    const footer = createRawSnippet(() => ({ render: () => "<a href='#/gates'>All gates</a>" }));
+    const { body } = render(Module, {
+      props: { ...base, loading: false, empty: false, subtitle: "by time saved", footer },
+    });
+    expect(body).toContain("by time saved");
+    expect(body).toMatch(/<footer[^>]*>[\s\S]*All gates/);
+  });
+
   it("shows the empty state when there is nothing to show", () => {
     const { body } = render(Module, {
       props: { ...base, loading: false, empty: true, emptyDetail: "Widen the range" },

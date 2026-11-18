@@ -113,6 +113,18 @@ export function durationTicks(max: number, count = 3): number[] {
   return Array.from({ length: intervals + 1 }, (_, index) => index * step);
 }
 
+/**
+ * Return axis ticks for counts from 0 up to at least `max`, on a step of 1, 2, or 5 times a
+ * power of ten with at most `count` intervals. Always at least [0, 1], so an empty axis has a top.
+ */
+export function countTicks(max: number, count = 4): number[] {
+  const target = Math.max(1, max);
+  const magnitude = 10 ** Math.floor(Math.log10(target / count));
+  const step = Math.max(1, [1, 2, 5, 10].map((m) => m * magnitude).find((s) => target / s <= count)!);
+  const intervals = Math.ceil(target / step);
+  return Array.from({ length: intervals + 1 }, (_, index) => index * step);
+}
+
 const BYTE_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
 
 /** Render a byte count in binary units, such as `512 B`, `1.5 KiB`, `50.0 MiB`. Returns `n/a` for null. */
@@ -131,4 +143,19 @@ export function formatBytes(bytes: number | null): string {
 export function formatRatio(ratio: number | null): string {
   if (ratio === null || !Number.isFinite(ratio)) return "n/a";
   return `${ratio.toFixed(1)}×`;
+}
+
+/**
+ * Split a formatted value into digits and units, so units can be set smaller: "6h 38m" gives
+ * 6, h, space, 38, m. A leading sign stays with its number, and a value with no unit letters
+ * comes back whole.
+ */
+export function valueParts(value: string): { text: string; unit: boolean }[] {
+  if (!/\d/.test(value)) return [{ text: value, unit: false }];
+  const parts: { text: string; unit: boolean }[] = [];
+  for (const match of value.matchAll(/([−+-]?[\d.,]+)|([a-zA-Z%]+)|(\s+)|(.)/g)) {
+    const [text, digits, unit] = match;
+    parts.push({ text, unit: !digits && !!unit });
+  }
+  return parts;
 }

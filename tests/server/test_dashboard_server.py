@@ -247,6 +247,14 @@ def test_csp_allows_no_inline_script() -> None:
     assert "frame-ancestors 'none'" in policy
 
 
+def test_csp_allows_fonts_only_from_jsdelivr() -> None:
+    """The page may load fonts from itself and jsDelivr, and nothing else from outside."""
+    assert server_module.CONTENT_SECURITY_POLICY == (
+        "default-src 'self'; font-src 'self' https://cdn.jsdelivr.net; base-uri 'none'; "
+        "frame-ancestors 'none'; form-action 'none'; object-src 'none'"
+    )
+
+
 @pytest.mark.parametrize("path", ["/api/v1/summary", "/api/v1/nope"], ids=["ok", "not-found"])
 def test_api_headers(server: DashboardServer, path: str) -> None:
     """API responses carry nosniff but no page policy."""

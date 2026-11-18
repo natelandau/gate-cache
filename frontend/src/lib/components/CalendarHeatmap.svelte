@@ -1,12 +1,14 @@
 <!--
   @component
-  A GitHub-style activity calendar: one cell per day, weeks as columns, Sunday through
-  Saturday as rows. Cells are colored on the metric's ramp, scaled to the busiest visible day.
-  Each cell's tooltip names the date and value, and a hidden table lists the same data.
+  An activity calendar: one cell per day, colored on the metric's ramp and scaled to the
+  busiest visible day. Up to six weeks show as a wall calendar, Monday-first weeks as rows with
+  large cells; longer ranges show weeks as columns and Sunday through Saturday as rows. Cells
+  grow to fill the width. Each cell's tooltip names the date and value, and a hidden table
+  lists the same data.
 
   With `onselect`, each day is a toggle button with one tab stop for the grid. Click picks a
   day, Shift+click extends from the last picked day, and clicking the only picked day clears
-  it. Arrow keys move by day (up and down) and week (left and right), Enter or Space picks,
+  it. Arrow keys move by day and by week along the grid's axes, Enter or Space picks,
   Shift+Arrow extends, and Escape clears. Picked days get an inset ring and the others dim.
 
   Props:
@@ -28,6 +30,8 @@
     weekdayName,
     type HeatMetric,
   } from "../heat";
+  import { calendarLayout, chunkWeeks } from "../calendar";
+  import { formatShortDay } from "../format";
   import { createDayCursor } from "../daycursor.svelte";
   import { inSpan, spanOf, toggleDay, type DaySpan } from "../selection";
   import HeatLegend from "./HeatLegend.svelte";
@@ -47,8 +51,23 @@
     index: number;
   }
 
-  // Rows are weekdays and columns are weeks, so Left and Right move a week.
-  const STEPS = { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -7, ArrowRight: 7 };
+  const layout = $derived(calendarLayout(days.map((d) => d.day)));
+  // Arrows follow the grid: in week rows Up and Down move a week, in week columns Left and
+  // Right do. Getters, so the cursor reads the current layout on each key.
+  const STEPS = {
+    get ArrowUp() {
+      return layout === "month" ? -7 : -1;
+    },
+    get ArrowDown() {
+      return layout === "month" ? 7 : 1;
+    },
+    get ArrowLeft() {
+      return layout === "month" ? -1 : -7;
+    },
+    get ArrowRight() {
+      return layout === "month" ? 1 : 7;
+    },
+  };
 
   // Until the user moves it, the tab stop is the first picked day, else the latest day.
   const nav = createDayCursor(() => ({ days, selected, onselect }), STEPS);
@@ -102,74 +121,94 @@
 
   const max = $derived(Math.max(0, ...days.map((bucket) => heatValue(bucket, metric))));
 
+  const cells = $derived(days.map((bucket, index): Cell => ({ bucket, date: localDate(bucket.day), index })));
+  // The wall calendar starts weeks on Monday; week columns keep Sunday at the top.
+  const lead = $derived.by(() => {
+    const weekday = cells[0]?.date.getDay() ?? 0;
+    return layout === "month" ? (weekday + 6) % 7 : weekday;
+  });
+  const weekGrid = $derived(chunkWeeks(cells, lead));
+
   const weeks = $derived.by(() => {
-    const cells: (Cell | null)[] = days.map((bucket, index) => ({ bucket, date: localDate(bucket.day), index }));
-    const lead = cells[0]?.date.getDay() ?? 0;
-    const padded = [...Array<null>(lead).fill(null), ...cells];
-    while (padded.length % 7 !== 0) padded.push(null);
-    const result: Week[] = [];
+    if (layout !== "weeks") return [];
     let lastMonth = -1;
-    for (let start = 0; start < padded.length; start += 7) {
-      const week = padded.slice(start, start + 7);
+    return weekGrid.map((week, index): Week => {
       const first = week.find((cell) => cell !== null);
       const month = first ? first.date.getMonth() : -1;
       const label =
         first && month !== lastMonth ? first.date.toLocaleString(undefined, { month: "short" }) : "";
       lastMonth = month;
-      result.push({ key: start, month: label, cells: week });
-    }
-    return result;
+      return { key: index, month: label, cells: week };
+    });
   });
 
   const active = $derived(days.filter((bucket) => heatValue(bucket, metric) > 0));
+
+  const MONDAY_FIRST = [1, 2, 3, 4, 5, 6, 0].map((weekday) => weekdayName(weekday, "short").slice(0, 1));
+  const rowsOfWeeks = $derived(
+    layout === "month"
+      ? weekGrid.map((week, index) => {
+          const first = week.find((cell) => cell !== null);
+          return { key: index, label: first ? formatShortDay(first.bucket.day) : "", cells: week };
+        })
+      : [],
+  );
 </script>
 
-<figure class="calendar">
-  <div class="scroll" aria-hidden={onselect ? undefined : "true"}>
-    <div class="weekdays" aria-hidden="true">
-      <span></span>
-      {#each dayLabels as label, index (index)}<span>{label}</span>{/each}
-    </div>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="grid"
-      role={onselect ? "group" : undefined}
-      aria-label={onselect ? "Pick days to scope the page" : undefined}
-      onkeydown={onselect ? onkeydown : undefined}
-      bind:this={grid}
-    >
+{#snippet dayCell(cell: Cell | null)}
+  {#if cell}
+    {@const value = heatValue(cell.bucket, metric)}
+    {@const date = dateLong.format(cell.date)}
+    {@const text = `${HEAT_LABELS[metric]}: ${formatHeatValue(metric, value)}`}
+    {@const title = `${date}\n${text}`}
+    {#if onselect}
+      {@const on = inSpan(selected, cell.bucket.day)}
+      <button
+        type="button"
+        class="cell"
+        class:selected={on}
+        class:dimmed={nav.picked !== null && !on}
+        style:background={heatColor(metric, heatStep(value, max))}
+        {title}
+        aria-label="{date}, {text}"
+        aria-pressed={on}
+        tabindex={cell.index === nav.cursor.at ? 0 : -1}
+        data-index={cell.index}
+        onclick={(event) => pick(cell.index, event.shiftKey)}
+      ></button>
+    {:else}
+      <span class="cell" style:background={heatColor(metric, heatStep(value, max))} {title}></span>
+    {/if}
+  {:else}
+    <span class="cell pad" aria-hidden="true"></span>
+  {/if}
+{/snippet}
+
+<figure class="calendar layout-{layout}">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="grid"
+    aria-hidden={onselect ? undefined : "true"}
+    role={onselect ? "group" : undefined}
+    aria-label={onselect ? "Pick days to scope the page" : undefined}
+    onkeydown={onselect ? onkeydown : undefined}
+    bind:this={grid}
+  >
+    {#if layout === "month"}
+      <span aria-hidden="true"></span>
+      {#each MONDAY_FIRST as letter, index (index)}<span class="weekday" aria-hidden="true">{letter}</span>{/each}
+      {#each rowsOfWeeks as week (week.key)}
+        <span class="week-label" aria-hidden="true">{week.label}</span>
+        {#each week.cells as cell, index (index)}{@render dayCell(cell)}{/each}
+      {/each}
+    {:else}
+      <span aria-hidden="true"></span>
+      {#each dayLabels as label, index (index)}<span class="weekday" aria-hidden="true">{label}</span>{/each}
       {#each weeks as week (week.key)}
         <span class="month" aria-hidden="true">{week.month}</span>
-        {#each week.cells as cell, index (index)}
-          {#if cell}
-            {@const value = heatValue(cell.bucket, metric)}
-            {@const date = dateLong.format(cell.date)}
-            {@const text = `${HEAT_LABELS[metric]}: ${formatHeatValue(metric, value)}`}
-            {@const title = `${date}\n${text}`}
-            {#if onselect}
-              {@const on = inSpan(selected, cell.bucket.day)}
-              <button
-                type="button"
-                class="cell"
-                class:selected={on}
-                class:dimmed={nav.picked !== null && !on}
-                style:background={heatColor(metric, heatStep(value, max))}
-                {title}
-                aria-label="{date}, {text}"
-                aria-pressed={on}
-                tabindex={cell.index === nav.cursor.at ? 0 : -1}
-                data-index={cell.index}
-                onclick={(event) => pick(cell.index, event.shiftKey)}
-              ></button>
-            {:else}
-              <span class="cell" style:background={heatColor(metric, heatStep(value, max))} {title}></span>
-            {/if}
-          {:else}
-            <span class="cell pad" aria-hidden="true"></span>
-          {/if}
-        {/each}
+        {#each week.cells as cell, index (index)}{@render dayCell(cell)}{/each}
       {/each}
-    </div>
+    {/if}
   </div>
   <HeatLegend {metric} />
   <!-- A table caption renders outside the table box, so the wrapper does the hiding. -->
@@ -201,32 +240,46 @@
     margin: 0;
   }
 
-  .scroll {
-    display: flex;
-    gap: 6px;
+  .grid {
+    display: grid;
+    gap: 5px;
+    color: var(--text-faint);
+    font-size: 11px;
+  }
+
+  /* Wall calendar: a label column, then seven weekday columns that share the width. */
+  .layout-month .grid {
+    grid-template-columns: max-content repeat(7, minmax(0, 1fr));
+    align-items: center;
+    max-width: 480px;
+  }
+
+  .layout-month .weekday {
+    text-align: center;
+  }
+
+  .week-label {
+    padding-right: var(--space-1);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* Week columns: weekday labels first, then one column per week, filling the width. */
+  .layout-weeks .grid {
+    grid-template-rows: 14px repeat(7, auto);
+    grid-auto-flow: column;
+    grid-template-columns: max-content;
+    grid-auto-columns: minmax(10px, 1fr);
+    gap: 3px;
     overflow-x: auto;
   }
 
-  .weekdays,
-  .grid {
-    display: grid;
-    grid-template-rows: 14px repeat(7, 12px);
-    gap: 3px;
-    font-size: var(--text-xs);
-    color: var(--text-faint);
-  }
-
-  .weekdays span {
-    line-height: 12px;
-  }
-
-  .grid {
-    grid-auto-flow: column;
-    grid-auto-columns: 12px;
+  .layout-weeks .weekday {
+    padding-right: var(--space-1);
+    line-height: 1;
   }
 
   .month {
-    width: 12px;
     height: 14px;
     overflow: visible;
     white-space: nowrap;
@@ -234,20 +287,37 @@
   }
 
   .cell {
-    width: 12px;
-    height: 12px;
-    border-radius: 2px;
+    display: block;
+    aspect-ratio: 1;
+    width: 100%;
+    border-radius: 5px;
+    transition: background-color var(--dur-slow) var(--ease);
+  }
+
+  .layout-weeks .cell {
+    border-radius: 3px;
   }
 
   button.cell {
     padding: 0;
     border: 0;
     cursor: pointer;
+    transition:
+      background-color var(--dur-slow) var(--ease),
+      opacity var(--dur-fast) var(--ease);
+  }
+
+  button.cell:hover {
+    box-shadow: inset 0 0 0 1.5px var(--text);
   }
 
   button.cell:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 1px;
+  }
+
+  .cell.pad {
+    visibility: hidden;
   }
 
   /* A ring, not a color, marks a picked day, so the ramp color stays readable. */
@@ -257,11 +327,5 @@
 
   .cell.dimmed {
     opacity: 0.35;
-  }
-
-  @media (prefers-reduced-motion: no-preference) {
-    .cell.dimmed {
-      transition: opacity 120ms ease-out;
-    }
   }
 </style>

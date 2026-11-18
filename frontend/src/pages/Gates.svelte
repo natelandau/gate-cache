@@ -3,10 +3,11 @@
   import EmptyState from "../lib/components/EmptyState.svelte";
   import GateTable from "../lib/components/GateTable.svelte";
   import Notice from "../lib/components/Notice.svelte";
+  import PageHeader from "../lib/components/PageHeader.svelte";
   import { gateKey } from "../lib/gates";
   import { closeGatePanel, openGatePanel } from "../lib/panel";
   import { createQuery } from "../lib/query.svelte";
-  import { emptyHint, emptyTitle } from "../lib/scope";
+  import { emptyHint, emptyTitle, scopeSubtitle } from "../lib/scope";
   import { filters, freshness } from "../lib/state.svelte";
   import GateDetail from "./GateDetail.svelte";
 
@@ -21,10 +22,11 @@
   const query = createQuery((signal) => getGates({ signal }));
 
   const openKey = $derived(open ? gateKey(open) : null);
+  const subtitle = $derived(scopeSubtitle(repoLabel, filters.range));
 </script>
 
 <section class="page" aria-labelledby="gates-title">
-  <h1 id="gates-title" class="page-title">Gates</h1>
+  <PageHeader title="Gates" headingId="gates-title" {subtitle} />
 
   {#if query.error}
     <Notice tone="error">Could not load gates: {query.error.message}</Notice>
@@ -40,7 +42,7 @@
     >
       {#snippet empty()}
         <EmptyState
-          title={emptyTitle("runs", { range: filters.range, repoLabel })}
+          title={emptyTitle("gate calls", { range: filters.range, repoLabel })}
           detail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
         />
       {/snippet}

@@ -1,5 +1,5 @@
-import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
+import { html } from "../render.test-utils";
 import type { BreakdownRow } from "../api";
 import { breakdownBars } from "../breakdown";
 import BarList from "./BarList.svelte";
@@ -27,13 +27,13 @@ const rows = [repo("/w/api/.git", "api", 200), repo(null, "unknown repo", 50)];
 
 describe("BarList", () => {
   it("scales bars to the largest value and shows the heading, columns, and titles", () => {
-    const { body } = render(BarList<BreakdownRow>, {
+    const body = html(BarList<BreakdownRow, string>, {
       props: {
         label: "Repos",
         heading: "Branch",
-        rows: breakdownBars(rows, "saved", "repo", []),
-        color: "saved",
-        columns: [{ label: "Gates", text: (row: BreakdownRow) => `${row.gates} gates` }],
+        rows: breakdownBars(rows, { key: "saved", direction: "desc" }, "repo", []),
+        color: "var(--chart-saved)",
+        columns: [{ key: "x", label: "Gates", text: (row: BreakdownRow) => `${row.gates} gates` }],
         onpick: () => {},
       },
     });
@@ -45,19 +45,19 @@ describe("BarList", () => {
   });
 
   it("mutes dimmed rows, marks them not selected, and draws their bar in the neutral color", () => {
-    const { body } = render(BarList<BreakdownRow>, {
+    const body = html(BarList<BreakdownRow, string>, {
       props: {
         label: "Repos",
         heading: "Repo",
-        rows: breakdownBars(rows, "saved", "repo", ["-"]),
-        color: "fails",
+        rows: breakdownBars(rows, { key: "saved", direction: "desc" }, "repo", ["-"]),
+        color: "var(--chart-failures)",
         columns: [],
         onpick: () => {},
       },
     });
     expect(body.match(/class="[^"]*\bdimmed\b/g)).toHaveLength(1);
     expect(body.match(/\(not selected\)/g)).toHaveLength(1);
-    expect(body).toMatch(/api(<!--[^>]*-->)*<span[^>]*class="visually-hidden[^"]*"[^>]*> \(not selected\)/);
+    expect(body).toMatch(/api<span[^>]*class="visually-hidden[^"]*"[^>]*> \(not selected\)/);
     expect(body).toMatch(/width: 100%;[^"]*background: var\(--chart-neutral\)/);
     expect(body).toMatch(/width: 25%;[^"]*background: var\(--chart-failures\)/);
   });

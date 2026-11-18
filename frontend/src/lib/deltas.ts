@@ -28,10 +28,9 @@ const RULES: Record<DeltaKey, { kind: Kind; upIsGood: boolean; duration?: boolea
 };
 
 function delta(now: number, before: number, rule: (typeof RULES)[DeltaKey]): Delta {
-  if (now === before) return { text: "No change", tone: "neutral" };
+  if (now === before) return { text: "No change", tone: "neutral", dir: null };
   const up = now > before;
   const tone = up === rule.upIsGood ? "good" : "bad";
-  const arrow = up ? "▲" : "▼";
   let amount: string;
   if (rule.kind === "points") {
     const points = Math.round(Math.abs(now - before) * 100);
@@ -43,7 +42,7 @@ function delta(now: number, before: number, rule: (typeof RULES)[DeltaKey]): Del
     const size = Math.abs(now - before);
     amount = rule.duration ? formatDuration(size) : formatCount(size);
   }
-  return { text: `${arrow} ${amount}`, tone };
+  return { text: amount, tone, dir: up ? "up" : "down" };
 }
 
 /**

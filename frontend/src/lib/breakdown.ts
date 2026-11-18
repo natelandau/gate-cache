@@ -4,50 +4,79 @@ import type { BreakdownRow } from "./api";
 import type { Bar } from "./components/BarList.svelte";
 import { dimension, type Dimension } from "./dimensions";
 import { UNKNOWN_REPO, type Route } from "./router.svelte";
+import type { SortState } from "./table";
 
-export type Metric = "saved" | "spent" | "runs" | "skip" | "fails";
+export type Metric = "saved" | "spent" | "avg" | "median" | "runs" | "skip" | "fails" | "gates";
 
-function metricValue(row: BreakdownRow, by: Metric): number {
+/** A sort on the Breakdown table: a numeric column, or the row name. */
+export type BreakdownSort = SortState<Metric | "name">;
+
+/** The Breakdown table's sort until the user picks a column: most run time first. */
+export const DEFAULT_SORT: BreakdownSort = { key: "spent", direction: "desc" };
+
+/** Return what the bars measure under `sort`: the sorted column, or run time for a name sort. */
+export function barMetric(sort: BreakdownSort): Metric {
+  return sort.key === "name" ? "spent" : sort.key;
+}
+
+function metricValue(row: BreakdownRow, by: Metric): number | null {
   switch (by) {
     case "saved":
       return row.time_saved;
     case "spent":
       return row.time_spent;
+    case "avg":
+      return row.avg_run;
+    case "median":
+      return row.median_run;
     case "runs":
       return row.runs;
     case "skip":
-      return row.skip_rate ?? 0;
+      return row.skip_rate;
     case "fails":
       return row.failures;
+    case "gates":
+      return row.gates;
   }
 }
 
 /**
- * Return one bar per row, largest `by` first and ties by label. Rows of a dimension that covers
- * every repo are keyed by the repo filter value, and with a non-empty `selected`, repos outside
- * it are dimmed. Other dimensions already follow the repo filter, so nothing is dimmed.
+ * Return one bar per row in `sort` order, ties by label; each bar's length is the sorted
+ * column, or time spent when sorted by name. Rows of a dimension that covers every repo are
+ * keyed by the repo filter value, and with a non-empty `selected`, repos outside it are
+ * dimmed. Other dimensions already follow the repo filter, so nothing is dimmed.
  */
 export function breakdownBars(
   rows: BreakdownRow[],
-  by: Metric,
+  sort: BreakdownSort,
   group: Dimension,
   selected: string[],
 ): Bar<BreakdownRow>[] {
+  const by = barMetric(sort);
+  const sign = sort.direction === "asc" ? 1 : -1;
   const chosen = new Set(selected);
   const allRepos = dimension(group).allRepos ?? false;
   return rows
     .map((row) => {
       const key = allRepos ? (row.repo ?? UNKNOWN_REPO) : row.key;
+      const value = metricValue(row, by);
       return {
         key,
         label: row.label,
         title: row.title ?? undefined,
-        value: metricValue(row, by),
+        value: value ?? 0,
+        missing: value === null,
         dimmed: allRepos && chosen.size > 0 && !chosen.has(key),
         row,
       };
     })
-    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+    // Rows with no value for the sorted column go last in either direction, as in DataTable.
+    .sort((a, b) => {
+      if (sort.key === "name") return sign * a.label.localeCompare(b.label);
+      if (a.missing !== b.missing) return a.missing ? 1 : -1;
+      return sign * (a.value - b.value) || a.label.localeCompare(b.label);
+    })
+    .map(({ missing: _, ...bar }) => bar);
 }
 
 /** What clicking a Breakdown row does. */

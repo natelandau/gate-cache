@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Spent } from "./api";
-import { emptySpentDay, OTHER_COLOR, SPENT_COLORS, spentRows, spentSeries } from "./spent";
+import { OTHER_COLOR, SPENT_COLORS, emptySpentDay, seriesColor, spentRows, spentSeries, spentTotals } from "./spent";
 
 const gate = (name: string, total: number) => ({
   repo: "/r",
@@ -75,5 +75,37 @@ describe("spentRows", () => {
 describe("emptySpentDay", () => {
   it("returns a zero day with one slot per gate", () => {
     expect(emptySpentDay(2)("2026-01-01")).toEqual({ day: "2026-01-01", gates: [0, 0], other: 0 });
+  });
+});
+
+describe("seriesColor", () => {
+  it("gives each ranked gate its own hue and Other the neutral gray", () => {
+    expect(seriesColor(0)).toBe("var(--chart-series-1)");
+    expect(seriesColor(4)).toBe("var(--chart-series-5)");
+    expect(seriesColor(5)).toBe("var(--chart-neutral)");
+  });
+});
+
+describe("spentTotals", () => {
+  it("sums each series over the range and the grand total", () => {
+    const body = {
+      status: "all" as const,
+      gates: [
+        { repo: "/a", repo_name: "api", name: "e2e", label: "e2e · api", total: 70 },
+        { repo: "/b", repo_name: "web", name: "test", label: "test · web", total: 20 },
+      ],
+      daily: [
+        { day: "2026-11-03", gates: [30, 10], other: 5 },
+        { day: "2026-11-04", gates: [40, 10], other: 0 },
+      ],
+    };
+    const series = spentSeries(body);
+    const { items, total } = spentTotals(series, spentRows(body.daily, series));
+    expect(items.map((i) => [i.name, i.repo, i.total])).toEqual([
+      ["e2e", "api", 70],
+      ["test", "web", 20],
+      ["Other", "", 5],
+    ]);
+    expect(total).toBe(95);
   });
 });

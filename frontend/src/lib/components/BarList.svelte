@@ -14,6 +14,7 @@
   - `onpick`: called with a row's bar when its name is clicked
 -->
 <script lang="ts" module>
+  import Meter from "./Meter.svelte";
   /** One row of a `BarList`. */
   export interface Bar<T> {
     /** Unique among the rows. */
@@ -28,41 +29,56 @@
   }
 </script>
 
-<script lang="ts" generics="T">
+<script lang="ts" generics="T, K extends string">
+  import { ariaSort, type SortState } from "../table";
+  import SortHeader from "./SortHeader.svelte";
 
   interface Props {
     label: string;
     heading: string;
     rows: Bar<T>[];
-    color: "saved" | "runs" | "fails";
-    columns: { label: string; text: (row: T) => string }[];
+    /** CSS color of the bars, such as "var(--chart-runs)". */
+    color: string;
+    columns: { key: K; label: string; text: (row: T) => string }[];
     onpick: (bar: Bar<T>) => void;
+    /** The sorted column, "name" for the first column; with `onsort`, headers sort. */
+    sort?: SortState<K | "name">;
+    onsort?: (key: K | "name") => void;
+    /** CSS widths of the name and bar columns; by default the bar takes the space the number columns leave. */
+    widths?: { name?: string; bar?: string };
   }
 
-  let { label, heading, rows, color, columns, onpick }: Props = $props();
-
-  const FILLS = {
-    saved: "var(--chart-saved)",
-    runs: "var(--chart-runs)",
-    fails: "var(--chart-failures)",
-  };
+  let { label, heading, rows, color, columns, onpick, sort, onsort, widths = {} }: Props = $props();
 
   const max = $derived(Math.max(0, ...rows.map((row) => row.value)));
 
-  function width(value: number): string {
-    return max > 0 ? `${(value / max) * 100}%` : "0%";
+  function share(value: number): number {
+    return max > 0 ? value / max : 0;
   }
 </script>
+
+{#snippet header(key: K | "name", text: string, align: "left" | "right")}
+  {#if onsort}
+    <SortHeader label={text} direction={sort?.key === key ? sort.direction : null} {align} onclick={() => onsort(key)} />
+  {:else}
+    {text}
+  {/if}
+{/snippet}
 
 <div class="wrap">
   <table class="bars">
     <caption class="visually-hidden">{label}</caption>
+    <colgroup>
+      <col style:width={widths.name} />
+      <col style:width={widths.bar ?? "100%"} />
+      {#each columns as column (column.key)}<col />{/each}
+    </colgroup>
     <thead>
       <tr>
-        <th scope="col">{heading}</th>
+        <th scope="col" class="col-head" aria-sort={ariaSort(sort, "name")}>{@render header("name", heading, "left")}</th>
         <th class="bar-cell" aria-hidden="true"></th>
-        {#each columns as column (column.label)}
-          <th scope="col" class="num">{column.label}</th>
+        {#each columns as column (column.key)}
+          <th scope="col" class="col-head num" aria-sort={ariaSort(sort, column.key)}>{@render header(column.key, column.label, "right")}</th>
         {/each}
       </tr>
     </thead>
@@ -75,16 +91,10 @@
             </button>
           </th>
           <td class="bar-cell" aria-hidden="true">
-            <div class="track">
-              <div
-                class="fill"
-                style:width={width(bar.value)}
-                style:background={bar.dimmed ? "var(--chart-neutral)" : FILLS[color]}
-              ></div>
-            </div>
+            <Meter share={share(bar.value)} color={bar.dimmed ? "var(--chart-neutral)" : color} />
           </td>
-          {#each columns as column (column.label)}
-            <td class="num mono">{column.text(bar.row)}</td>
+          {#each columns as column (column.key)}
+            <td class="num" class:sorted={sort?.key === column.key}>{column.text(bar.row)}</td>
           {/each}
         </tr>
       {/each}
@@ -106,16 +116,26 @@
   th,
   td {
     height: var(--row-height);
-    padding: 0 var(--space-2);
-    border-bottom: 1px solid var(--border);
+    padding: 0 10px;
+    border-bottom: 1px solid var(--border-row);
     white-space: nowrap;
     text-align: left;
   }
 
   thead th {
-    font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--text-muted);
+    height: auto;
+    vertical-align: bottom;
+    border-bottom-color: var(--border);
+  }
+
+  th:first-child,
+  td:first-child {
+    padding-left: var(--space-1);
+  }
+
+  th:last-child,
+  td:last-child {
+    padding-right: var(--space-1);
   }
 
   tbody tr:last-child > * {
@@ -127,11 +147,10 @@
   }
 
   .name {
-    width: 180px;
-    max-width: 180px;
+    max-width: 240px;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-weight: 400;
+    font-weight: 500;
   }
 
   .name button {
@@ -153,24 +172,19 @@
   }
 
   .bar-cell {
-    width: 100%;
-    min-width: 80px;
-  }
-
-  .track {
-    height: 12px;
-    border-radius: 2px;
-    background: var(--surface-sunken);
-    overflow: hidden;
-  }
-
-  .fill {
-    height: 100%;
-    border-radius: 2px;
+    min-width: 48px;
   }
 
   .dimmed .name button,
   .dimmed td {
     color: var(--text-muted);
+  }
+
+  td.sorted {
+    font-weight: 500;
+  }
+  td,
+  tbody th {
+    font-size: var(--text-sm);
   }
 </style>

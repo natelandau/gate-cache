@@ -1,18 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  durationTicks,
-  formatAxisDuration,
-  formatBytes,
-  formatCount,
-  formatDuration,
-  formatLongDay,
-  formatShortDay,
-  formatSignedDuration,
-  formatPercent,
-  formatRatio,
-  formatRelative,
-  plural,
-} from "./format";
+import { durationTicks, formatAxisDuration, formatBytes, formatCount, formatDuration, formatLongDay, formatPercent, formatRatio, formatRelative, formatShortDay, formatSignedDuration, plural, valueParts } from "./format";
 
 describe("formatSignedDuration", () => {
   it("prefixes a negative duration with a minus sign", () => {
@@ -140,5 +127,29 @@ describe("day formatters", () => {
     expect(text).toContain("Tue");
     expect(text).toContain("2026");
     expect(text).toContain("10");
+  });
+});
+
+describe("valueParts", () => {
+  it("splits units from the digits of a duration", () => {
+    expect(valueParts("6h 38m")).toEqual([
+      { text: "6", unit: false },
+      { text: "h", unit: true },
+      { text: " ", unit: false },
+      { text: "38", unit: false },
+      { text: "m", unit: true },
+    ]);
+  });
+
+  it("treats a percent sign as a unit and leaves a plain count whole", () => {
+    expect(valueParts("61%")).toEqual([
+      { text: "61", unit: false },
+      { text: "%", unit: true },
+    ]);
+    expect(valueParts("1,705")).toEqual([{ text: "1,705", unit: false }]);
+  });
+
+  it("keeps a sign with its number", () => {
+    expect(valueParts("−2m")[0]).toEqual({ text: "−2", unit: false });
   });
 });

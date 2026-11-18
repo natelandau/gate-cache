@@ -1,6 +1,7 @@
 import { createRawSnippet } from "svelte";
 import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
+import { html } from "../render.test-utils";
 import DataTable from "./DataTable.svelte";
 
 interface Row {
@@ -15,7 +16,7 @@ const columns = [
 
 describe("DataTable", () => {
   it("renders rows in the initial sort with aria-sort on the sorted header", () => {
-    const { body } = render(DataTable<Row>, {
+    const body = html(DataTable<Row>, {
       props: {
         label: "Gates",
         rows: [
@@ -33,8 +34,60 @@ describe("DataTable", () => {
     expect(body).toContain('class="right');
   });
 
+  it("sets numbers in right-aligned cells and draws the sort arrow as an icon", () => {
+    const body = html(DataTable<Row>, {
+      props: {
+        label: "Gates",
+        rows: [{ name: "lint", runs: 2 }],
+        columns,
+        rowKey: (r: Row) => r.name,
+        sort: { key: "runs", direction: "desc" },
+      },
+    });
+    expect(body).toMatch(/<td class="right num[^"]*"[^>]*>2 runs/);
+    expect(body).toMatch(/aria-sort="descending"[\s\S]*?lucide-arrow-down/);
+  });
+
+  it("gives a text cell its full text as a title, so a cut name can still be read", () => {
+    const long = "a-very-long-gate-name-that-will-not-fit-in-its-column-at-all";
+    const body = html(DataTable<Row>, {
+      props: { label: "Gates", rows: [{ name: long, runs: 1 }], columns, rowKey: (r: Row) => r.name },
+    });
+    expect(body).toContain(`title="${long}"`);
+  });
+
+  it("titles a snippet cell through its column, so a cut gate name can still be read", () => {
+    const long = "a-very-long-gate-name-drawn-by-a-snippet-that-will-not-fit-at-all";
+    const cell = createRawSnippet(() => ({ render: () => "<b>gate</b>" }));
+    const body = html(DataTable<Row>, {
+      props: {
+        label: "Gates",
+        rows: [{ name: long, runs: 1 }],
+        columns: [{ key: "name", label: "Gate", cell, title: (r: Row) => r.name }, columns[1]!],
+        rowKey: (r: Row) => r.name,
+      },
+    });
+    expect(body).toContain(`title="${long}"`);
+  });
+
+  it("explains a column from its header label, with no info icon", () => {
+    const body = html(DataTable<Row>, {
+      props: {
+        label: "Gates",
+        rows: [{ name: "lint", runs: 2 }],
+        columns: [columns[0]!, { ...columns[1]!, info: "Every call of the gate." }],
+        rowKey: (r: Row) => r.name,
+      },
+    });
+    const id = /<button[^>]*aria-describedby="([^"]+)"[^>]*>[\s\S]*?Runs/.exec(body)?.[1];
+    expect(id).toBeTruthy();
+    expect(body).toMatch(new RegExp(`id="${id}"[^>]*>[\\s\\S]*?Every call of the gate\\.`));
+    expect(body).not.toContain("lucide-info");
+    expect(body.match(/role="tooltip"/g)).toHaveLength(1);
+  });
+
   it("renders the empty snippet when there are no rows", () => {
-    const { body } = render(DataTable<Row>, {
+    const body = html(DataTable<Row>, {
       props: {
         label: "Gates",
         rows: [],
@@ -60,7 +113,7 @@ describe("DataTable", () => {
       { name: "lint", runs: 1 },
       { name: "test", runs: 2 },
     ];
-    const { body } = render(DataTable<Row>, {
+    const body = html(DataTable<Row>, {
       props: {
         label: "Gates",
         rows,

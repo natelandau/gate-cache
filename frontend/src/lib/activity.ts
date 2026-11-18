@@ -8,6 +8,7 @@
  */
 
 import type { ActivityFilter, ActivityPage, EventRow } from "./api";
+import { TERMS } from "./terms";
 import { OUTCOMES } from "./events";
 import { hourLabel, weekdayName } from "./heat";
 import { spanLabel } from "./selection";
@@ -113,11 +114,11 @@ export function filterParts(filter: ActivityFilter): FilterPart[] {
 
 /**
  * Return what the feed lists under the page-local filters, for empty-state copy, such as
- * '"Fail" runs of lint on flaky trees'. Picked days are left to `emptyTitle`, which names
+ * '"Ran and failed" gate calls of lint on flaky trees'. Picked days are left to `emptyTitle`, which names
  * them in place of the range.
  */
 export function activitySubject(filter: ActivityFilter): string {
-  let text = filter.outcome ? `"${OUTCOMES[filter.outcome].label}" runs` : "runs";
+  let text = filter.outcome ? `"${OUTCOMES[filter.outcome].long}" ${TERMS.calls.many}` : TERMS.calls.many;
   if (filter.group) text += ` in "${filter.group.label}"`;
   if (filter.gate) text += ` of ${filter.gate.name}`;
   if (filter.flaky) text += " on flaky trees";

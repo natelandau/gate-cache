@@ -27,7 +27,26 @@ describe("SpentChart", () => {
     });
     expect(html.match(/role="option"/g)?.length).toBe(2);
     expect(html.match(/aria-selected="true"/g)?.length).toBe(1);
-    expect(html).toMatch(/aria-label="[^"]*1m 30s spent"/);
+    expect(html).toMatch(/aria-label="[^"]*1m 30s of run time"/);
+  });
+
+  it("lists each gate with its total beside the chart, then the grand total", () => {
+    const { body: html } = render(SpentChart, { props: { rows, series } });
+    expect(html).toMatch(/class="entry[\s\S]*?test[\s\S]*?1m 0s/);
+    expect(html).toMatch(/class="grand[^"]*"[\s\S]*?Total[\s\S]*?1m 30s/);
+  });
+
+  it("uses the gate series colors and draws no stroke between segments", () => {
+    const { body: html } = render(SpentChart, { props: { rows, series } });
+    expect(html).not.toContain("--chart-runs-");
+    expect(html).toContain("var(--chart-series-1)");
+  });
+
+  it("cuts a long gate name with its full text as a title", () => {
+    const long = "a-gate-name-long-enough-to-overflow-the-legend-column-of-the-chart";
+    const wide = spentSeries({ ...body, gates: [{ ...body.gates[0]!, name: long, label: long }] });
+    const { body: html } = render(SpentChart, { props: { rows: spentRows(body.daily, wide), series: wide } });
+    expect(html).toContain(`title="${long}`);
   });
 
   it("has no picking layer without a select handler", () => {

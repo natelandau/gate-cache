@@ -1,6 +1,6 @@
 <!--
   @component
-  Daily time spent as one bar per day, stacked by gate with the largest gate at the bottom.
+  Daily run time as one bar per day, stacked by gate with the largest gate at the bottom.
   Hovering a segment or a legend entry highlights that gate and dims the rest, since
   neighboring shades are close. A legend entry for a gate is a button that opens it.
 
@@ -14,13 +14,15 @@
   - `onpickgate`: called with a gate whose legend entry was clicked
 -->
 <script lang="ts">
+  import { barMotion } from "../motion";
   import type { ChartState } from "layerchart";
   import { BarChart, Bars, Tooltip } from "layerchart/svg";
   import type { SpentGate } from "../api";
   import { createDayPick } from "../daypick.svelte";
   import { durationTicks, formatAxisDuration, formatDuration, formatLongDay, formatShortDay } from "../format";
-  import type { DaySpan } from "../selection";
-  import type { SpentRow, SpentSeries } from "../spent";
+  import { PICK_DAY_HINT, type DaySpan } from "../selection";
+  import { spentTotals, type SpentRow, type SpentSeries } from "../spent";
+  import TooltipSurface from "./TooltipSurface.svelte";
   import DayPicker from "./DayPicker.svelte";
 
   interface Props {
@@ -35,10 +37,10 @@
 
   const ticks = $derived(durationTicks(Math.max(0, ...rows.map((r) => r.total))));
   const top = $derived(Math.max(1, ticks.at(-1) ?? 0));
-  const total = $derived(rows.reduce((sum, r) => sum + r.total, 0));
   const activeRows = $derived(rows.filter((r) => r.total > 0));
   const colorOf = $derived(new Map(series.map((s) => [s.key, s.color])));
   const labelOf = $derived(new Map(series.map((s) => [s.key, s.label])));
+  const totals = $derived(spentTotals(series, rows));
 
   const padding = { top: 8, right: 4, bottom: 20, left: 52 };
   const BAND_PADDING = 0.25;
@@ -85,58 +87,66 @@
   }
 
   function dayText(row: SpentRow): string {
-    return `${formatLongDay(row.day)}: ${formatDuration(row.total)} spent`;
+    return `${formatLongDay(row.day)}: ${formatDuration(row.total)} of run time`;
   }
 </script>
 
 {#snippet dayTooltip(context: ChartState<SpentRow>)}
-  <Tooltip.Root {context}>
+  <Tooltip.Root {context} variant="none" motion="none">
     {#snippet children({ data }: { data: SpentRow })}
-      <Tooltip.Header value={formatLongDay(data.day)} />
-      <Tooltip.List>
-        <Tooltip.Item label="Total" value={formatDuration(data.total)} valueAlign="right" />
-        {#each parts(data) as part (part.key)}
-          <Tooltip.Item
-            label={labelOf.get(part.key) ?? ""}
-            value={formatDuration(part.seconds)}
-            color={colorOf.get(part.key)}
-            valueAlign="right"
-          />
-        {/each}
-      </Tooltip.List>
+      <TooltipSurface
+        title={formatLongDay(data.day)}
+        rows={[
+          ...parts(data).map((part) => ({
+            color: colorOf.get(part.key),
+            label: labelOf.get(part.key) ?? "",
+            value: formatDuration(part.seconds),
+          })),
+          { label: "Total", value: formatDuration(data.total) },
+        ]}
+        hint={onselect ? PICK_DAY_HINT : undefined}
+      />
     {/snippet}
   </Tooltip.Root>
 {/snippet}
 
 <figure class="spent">
   <figcaption class="legend">
-    {#each series as s (s.key)}
-      {#if s.gate && onpickgate}
-        {@const gate = s.gate}
+    {#each totals.items as item (item.key)}
+      {#snippet entry()}
+        <i style:background={item.color}></i>
+        <span class="name" title="{item.name}{item.repo ? ` · ${item.repo}` : ''}"
+          >{item.name}{#if item.repo}<span class="repo">{item.repo}</span>{/if}</span
+        >
+        <span class="total">{formatDuration(item.total)}</span>
+      {/snippet}
+      {#if item.gate && onpickgate}
+        {@const gate = item.gate}
         <button
           type="button"
           class="entry"
-          class:faded={opacity(s.key) < 1}
+          class:faded={opacity(item.key) < 1}
           onclick={() => onpickgate(gate)}
-          onpointerenter={() => (highlight = s.key)}
+          onpointerenter={() => (highlight = item.key)}
           onpointerleave={() => (highlight = null)}
-          onfocus={() => (highlight = s.key)}
+          onfocus={() => (highlight = item.key)}
           onblur={() => (highlight = null)}
         >
-          <i style:background={s.color}></i>{s.label}
+          {@render entry()}
         </button>
       {:else}
         <span
           class="entry"
-          class:faded={opacity(s.key) < 1}
+          class:faded={opacity(item.key) < 1}
           role="presentation"
-          onpointerenter={() => (highlight = s.key)}
+          onpointerenter={() => (highlight = item.key)}
           onpointerleave={() => (highlight = null)}
         >
-          <i style:background={s.color}></i>{s.label}
+          {@render entry()}
         </span>
       {/if}
     {/each}
+    <span class="grand"><span>Total</span><span class="total">{formatDuration(totals.total)}</span></span>
   </figcaption>
   <!-- Pointer events bubble up from the chart, so its tooltip keeps working under the picker. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -173,6 +183,7 @@
               opacity={opacity(s.key)}
               radius={0}
               strokeWidth={0}
+              motion={barMotion()}
             />
           {/each}
         {/snippet}
@@ -187,8 +198,8 @@
   <div class="visually-hidden">
     <table>
       <caption>
-        Time spent per day for {rows.length} days: {formatDuration(total)} in all. Days without
-        time spent are left out.
+        Run time per day for {rows.length} days: {formatDuration(totals.total)} in all. Days without
+        run time are left out.
       </caption>
       <thead>
         <tr>
@@ -216,59 +227,98 @@
 
 <style>
   .spent {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 240px;
+    grid-template-areas: "chart legend";
+    gap: var(--space-5);
     margin: 0;
   }
 
   .legend {
+    grid-area: legend;
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1) var(--space-4);
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    margin-bottom: var(--space-1);
+    flex-direction: column;
+    min-width: 0;
+    font-size: var(--text-sm);
   }
 
   .entry {
-    display: inline-flex;
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    gap: var(--space-2);
     align-items: center;
-    gap: 6px;
-    min-width: 0;
-    overflow-wrap: anywhere;
+    height: 32px;
+    padding: 0 var(--space-1);
+    border-bottom: 1px solid var(--border-row);
+    border-radius: var(--radius-chip);
+    color: var(--text);
+    text-align: left;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      opacity var(--dur-fast) var(--ease);
   }
 
   button.entry {
-    padding: 0;
-    border: 0;
+    width: 100%;
+    border-top: 0;
+    border-right: 0;
+    border-left: 0;
     background: none;
     font: inherit;
-    color: inherit;
     cursor: pointer;
-    border-radius: 2px;
   }
 
   button.entry:hover {
-    color: var(--text);
-    text-decoration: underline;
+    background: var(--surface-hover);
   }
 
   button.entry:focus-visible {
     outline: 2px solid var(--focus);
-    outline-offset: 2px;
+    outline-offset: -2px;
   }
 
   .entry.faded {
-    opacity: 0.6;
+    opacity: 0.5;
   }
 
   .legend i {
-    flex: none;
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
     border-radius: 2px;
   }
 
+  .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .repo {
+    margin-left: 5px;
+    color: var(--text-muted);
+  }
+
+  .total {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .grand {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px var(--space-1) 0;
+    color: var(--text-muted);
+  }
+
+  .grand .total {
+    color: var(--text);
+    font-weight: 600;
+  }
+
   .frame {
+    grid-area: chart;
     position: relative;
+    min-width: 0;
   }
 
   .pickable {
@@ -278,17 +328,15 @@
   }
 
   .plot {
-    height: 220px;
+    height: 300px;
   }
 
-  .spent :global(.lc-axis-tick-label),
-  .spent :global(text) {
-    font-size: var(--text-xs);
-    fill: var(--text-muted);
-  }
 
-  .spent :global(.lc-grid-line),
-  .spent :global(.lc-grid line) {
-    stroke: var(--chart-grid);
+
+  @media (max-width: 900px) {
+    .spent {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "chart" "legend";
+    }
   }
 </style>

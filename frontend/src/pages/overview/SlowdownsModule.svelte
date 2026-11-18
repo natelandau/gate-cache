@@ -9,6 +9,8 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
+  import GateName from "../../lib/components/GateName.svelte";
+  import TrendBadge from "../../lib/components/TrendBadge.svelte";
   import { getSlowdowns, spanScope, type SlowdownRow } from "../../lib/api";
   import DataTable, { type Column } from "../../lib/components/DataTable.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -40,24 +42,24 @@
   const rows = $derived(query.data?.gates ?? []);
 
   const columns: Column<SlowdownRow>[] = [
-    { key: "name", label: "Gate", sortable: false, cell: gate },
+    { key: "name", label: "Gate", sortable: false, cell: gate, title: (g) => g.name },
     {
       key: "before",
-      label: "Median before",
+      label: "Median run before",
       align: "right",
       sortable: false,
       text: (g) => formatDuration(g.before),
     },
-    { key: "now", label: "Now", align: "right", sortable: false, text: (g) => formatDuration(g.now) },
+    { key: "now", label: "Median run now", align: "right", sortable: false, text: (g) => formatDuration(g.now) },
     { key: "change", label: "Change", align: "right", sortable: false, cell: change },
   ];
 </script>
 
 {#snippet gate(g: SlowdownRow)}
-  {g.name} <span class="repo" title={g.repo ?? undefined}>{g.repo_name}</span>
+  <GateName name={g.name} /> <span class="repo" title={g.repo ?? undefined}>{g.repo_name}</span>
 {/snippet}
 {#snippet change(g: SlowdownRow)}
-  <span class="up mono"><span aria-hidden="true">▲</span> {formatPercent(g.change)}</span>
+  <TrendBadge dir="up" text={formatPercent(g.change)} tone="bad" />
 {/snippet}
 
 <Module
@@ -84,7 +86,9 @@
     rowLabel={(g) => `Open ${g.name}`}
     busy={query.loading}
   />
-  <p class="caption">Gates with at least {MIN_RUNS} passing runs in both periods.</p>
+  {#snippet footer()}
+    <span>Gates with at least {MIN_RUNS} passing runs in both periods.</span>
+  {/snippet}
 </Module>
 
 <style>
@@ -93,13 +97,5 @@
     font-size: var(--text-xs);
   }
 
-  .up {
-    color: var(--danger);
-  }
 
-  .caption {
-    margin: var(--space-2) 0 0;
-    color: var(--text-faint);
-    font-size: var(--text-xs);
-  }
 </style>

@@ -11,6 +11,7 @@
   import type { GateDetail } from "../api";
   import { durationTicks, formatAxisDuration, formatDuration, formatTimestamp } from "../format";
   import { trendStats } from "../gates";
+  import TooltipSurface from "./TooltipSurface.svelte";
 
   interface Props {
     trend: GateDetail["trend"];
@@ -41,12 +42,12 @@
 </script>
 
 {#snippet pointTooltip(context: ChartState<Point>)}
-  <Tooltip.Root {context}>
+  <Tooltip.Root {context} variant="none" motion="none">
     {#snippet children({ data }: { data: Point })}
-      <Tooltip.Header value={formatTimestamp(data.date.getTime() / 1000)} />
-      <Tooltip.List>
-        <Tooltip.Item label="Ran" value={formatDuration(data.duration)} {color} valueAlign="right" />
-      </Tooltip.List>
+      <TooltipSurface
+        title={formatTimestamp(data.date.getTime() / 1000)}
+        rows={[{ color, label: "Ran for", value: formatDuration(data.duration) }]}
+      />
     {/snippet}
   </Tooltip.Root>
 {/snippet}
@@ -95,14 +96,5 @@
     height: 140px;
   }
 
-  .trend :global(.lc-axis-tick-label),
-  .trend :global(text) {
-    font-size: var(--text-xs);
-    fill: var(--text-muted);
-  }
 
-  .trend :global(.lc-grid-line),
-  .trend :global(.lc-grid line) {
-    stroke: var(--chart-grid);
-  }
 </style>

@@ -1,3 +1,4 @@
+import { counted, TERMS } from "./terms";
 import { formatCount, formatDuration } from "./format";
 
 /** Which heatmap ramp a grid uses: runs (blue), time saved (green), or failures (red). */
@@ -32,9 +33,16 @@ export function heatValue(
 
 /** The label for `metric`, matching the tabs that pick it. */
 export const HEAT_LABELS: Record<HeatMetric, string> = {
-  runs: "Runs",
-  saved: "Time saved",
-  fail: "Failures",
+  runs: TERMS.calls.label,
+  saved: TERMS.saved.column,
+  fail: TERMS.failures.column,
+};
+
+/** The chart color of each measure: runs are blue, time saved green, and failures red. */
+export const METRIC_COLORS: Record<HeatMetric, string> = {
+  runs: "var(--chart-runs)",
+  saved: "var(--chart-saved)",
+  fail: "var(--chart-failures)",
 };
 
 /** The metric tabs of a heatmap module, in display order. */
@@ -56,6 +64,12 @@ export function hourLabel(hour: number): string {
 /** Render a cell value for `metric`: a duration for time saved, a count otherwise. */
 export function formatHeatValue(metric: HeatMetric, value: number): string {
   return metric === "saved" ? formatDuration(value) : formatCount(value);
+}
+
+/** Render a cell value for `metric` with its unit, such as "1 gate call" or "5m saved by cache". */
+export function formatHeatAmount(metric: HeatMetric, value: number): string {
+  if (metric === "saved") return `${formatDuration(value)} ${TERMS.saved.column.toLowerCase()}`;
+  return counted(value, metric === "runs" ? TERMS.calls : TERMS.failures, formatCount);
 }
 
 /**

@@ -17,16 +17,19 @@
   import { tick } from "svelte";
   import type { HourCell } from "../api";
   import {
+    formatHeatAmount,
     formatHeatValue,
     HEAT_LABELS,
     heatColor,
     heatStep,
     heatValue,
     hourLabel,
+    METRIC_COLORS,
     nextActive,
     weekdayName,
     type HeatMetric,
   } from "../heat";
+  import { hourTotals, peakCell, weekdayTotals } from "../hourly";
   import HeatLegend from "./HeatLegend.svelte";
 
   interface Props {
@@ -55,6 +58,12 @@
   });
 
   const max = $derived(Math.max(0, ...rows.flatMap((row) => row.values)));
+
+  const byHour = $derived(hourTotals(cells, metric));
+  const byWeekday = $derived(weekdayTotals(cells, metric));
+  const hourMax = $derived(Math.max(0, ...byHour));
+  const weekdayMax = $derived(Math.max(0, ...byWeekday));
+  const peak = $derived(peakCell(cells, metric));
 
   // Cells are numbered weekday * 24 + hour, so Up and Down move a day.
   const STEPS = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -24, ArrowDown: 24 };
@@ -91,12 +100,20 @@
     class="grid"
     aria-hidden={href ? undefined : "true"}
     role={href ? "group" : undefined}
-    aria-label={href ? "Open the runs of a weekday and hour" : undefined}
+    aria-label={href ? "Open the gate calls of a weekday and hour" : undefined}
     onkeydown={href ? onkeydown : undefined}
     bind:this={grid}
   >
     <span aria-hidden="true"></span>
+    {#each byHour as total, hour (hour)}
+      <span class="hour-total" aria-hidden="true" title="{hourLabel(hour)}: {formatHeatValue(metric, total)}"
+        ><i style:height="{hourMax ? (total / hourMax) * 100 : 0}%" style:background={METRIC_COLORS[metric]}></i></span
+      >
+    {/each}
+    <span aria-hidden="true"></span>
+    <span aria-hidden="true"></span>
     {#each HOURS as hour (hour)}<span class="hour" aria-hidden="true">{hour % 3 === 0 ? hour : ""}</span>{/each}
+    <span aria-hidden="true"></span>
     {#each rows as row, weekday (row.long)}
       <span class="weekday" aria-hidden="true">{row.short}</span>
       {#each row.values as value, hour (hour)}
@@ -118,9 +135,21 @@
           <span class="cell" style:background={heatColor(metric, heatStep(value, max))} {title}></span>
         {/if}
       {/each}
+      <span class="day-total" aria-hidden="true"
+        ><i style:width="{weekdayMax ? (byWeekday[weekday]! / weekdayMax) * 28 : 0}px" style:background={METRIC_COLORS[metric]}
+        ></i><span class="day-value">{formatHeatValue(metric, byWeekday[weekday]!)}</span></span
+      >
     {/each}
   </div>
-  <HeatLegend {metric} />
+  <div class="foot">
+    <span class="peak">
+      {#if peak}Peak: {weekdayName(peak.weekday, "short")} {hourLabel(peak.hour)} · {formatHeatAmount(
+          metric,
+          heatValue(peak, metric),
+        )}{/if}
+    </span>
+    <HeatLegend {metric} />
+  </div>
   <div class="visually-hidden">
     <table>
       <caption>{HEAT_LABELS[metric]} by weekday and hour of day.</caption>
@@ -149,9 +178,10 @@
 
   .grid {
     display: grid;
-    grid-template-columns: 28px repeat(24, minmax(0, 1fr));
-    gap: 2px;
-    font-size: var(--text-xs);
+    grid-template-columns: 30px repeat(24, minmax(0, 1fr)) 84px;
+    gap: 3px;
+    align-items: center;
+    font-size: 11px;
     color: var(--text-faint);
   }
 
@@ -161,17 +191,86 @@
   }
 
   .weekday {
-    line-height: 18px;
+    line-height: 1;
   }
 
   .cell {
     display: block;
-    height: 18px;
-    border-radius: 2px;
+    aspect-ratio: 1;
+    border-radius: 3px;
+    transition: background-color var(--dur-slow) var(--ease);
+  }
+
+  a.cell {
+    transition:
+      background-color var(--dur-slow) var(--ease),
+      box-shadow var(--dur-fast) var(--ease);
+  }
+
+  a.cell:hover {
+    box-shadow: inset 0 0 0 1.5px var(--text);
   }
 
   a.cell:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 1px;
+  }
+
+  .hour-total {
+    display: flex;
+    align-items: flex-end;
+    align-self: end;
+    height: 40px;
+  }
+
+  .hour-total i,
+  .day-total i {
+    display: block;
+    opacity: 0.8;
+    transition:
+      height var(--dur-slow) var(--ease),
+      width var(--dur-slow) var(--ease);
+  }
+
+  .hour-total i {
+    width: 100%;
+    border-radius: 2px 2px 0 0;
+  }
+
+  .day-total {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+    padding-left: 6px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .day-total i {
+    flex: none;
+    height: 8px;
+    border-radius: 0 2px 2px 0;
+  }
+
+  .day-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+  }
+
+  .peak {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
   }
 </style>

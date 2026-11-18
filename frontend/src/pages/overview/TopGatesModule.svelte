@@ -8,12 +8,14 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
+  import { TERMS } from "../../lib/terms";
   import { getGates, spanScope } from "../../lib/api";
   import MetricTabs from "../../lib/components/MetricTabs.svelte";
   import Module from "../../lib/components/Module.svelte";
   import RankedList from "../../lib/components/RankedList.svelte";
   import { formatCount, formatDuration } from "../../lib/format";
   import { gateKey } from "../../lib/gates";
+  import { METRIC_COLORS } from "../../lib/heat";
   import { openGatePanel } from "../../lib/panel";
   import { createQuery } from "../../lib/query.svelte";
   import { gateRunText, rankGates, rankValue, type GateRank } from "../../lib/rank";
@@ -35,21 +37,21 @@
     () => span,
   );
 
-  let by: GateRank = $state("saved");
+  let by: GateRank = $state("spent");
 
   const options: { value: GateRank; label: string }[] = [
-    { value: "saved", label: "Time saved" },
-    { value: "spent", label: "Time spent" },
-    { value: "runs", label: "Runs" },
+    { value: "spent", label: TERMS.ran.column },
+    { value: "saved", label: TERMS.saved.column },
+    { value: "runs", label: TERMS.calls.column },
     { value: "fails", label: "Failures" },
     { value: "slow", label: "Slowest" },
   ];
 
   // What an empty tab lacks, for its empty state.
   const SUBJECT: Record<GateRank, string> = {
-    saved: "time saved",
-    spent: "time spent",
-    runs: "runs",
+    saved: TERMS.saved.noun,
+    spent: TERMS.ran.noun,
+    runs: TERMS.calls.many,
     fails: "failures",
     slow: "passing runs",
   };
@@ -59,8 +61,19 @@
     rankGates((query.data ?? []).filter((row) => (rankValue(row, by) ?? 0) > 0), by),
   );
 
+  const BAR_COLORS: Record<GateRank, string> = {
+    saved: METRIC_COLORS.saved,
+    spent: METRIC_COLORS.runs,
+    runs: METRIC_COLORS.runs,
+    fails: METRIC_COLORS.fail,
+    slow: METRIC_COLORS.runs,
+  };
+  const top = $derived(Math.max(0, ...ranked.map((row) => rankValue(row, by) ?? 0)));
+
   const items = $derived(
     ranked.map((row) => ({
+      share: top > 0 ? (rankValue(row, by) ?? 0) / top : 0,
+      barColor: BAR_COLORS[by],
       key: gateKey(row),
       title: row.name,
       subtitle: [row.repo_name, gateRunText(row)].filter(Boolean).join(" \u00b7 "),
@@ -68,7 +81,7 @@
         by === "saved" || by === "spent" || by === "slow"
           ? formatDuration(rankValue(row, by))
           : formatCount(rankValue(row, by) ?? 0),
-      tone: by === "fails" ? ("danger" as const) : ("accent" as const),
+      tone: by === "fails" ? ("danger" as const) : undefined,
       onselect: () => openGatePanel(row),
     })),
   );
@@ -77,6 +90,7 @@
 </script>
 
 <Module
+  more={{ href: href({ page: "gates" }), label: "All gates" }}
   title="Top gates"
   titleId="top-gates-title"
   loading={query.loading && !query.data}
@@ -94,5 +108,4 @@
     />
   {/snippet}
   <RankedList {items} />
-  <a class="more-link" href={href({ page: "gates" })}>All gates <span aria-hidden="true">→</span></a>
 </Module>

@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import Icon from "./Icon.svelte";
 
   interface Props {
     tone?: "info" | "warning" | "error";
@@ -19,7 +20,9 @@
 </script>
 
 <div class="notice {tone}" role={tone === "error" ? "alert" : "status"}>
-  <span class="mark" aria-hidden="true"></span>
+  <span class="mark"
+    ><Icon name={tone === "error" ? "circle-alert" : tone === "warning" ? "triangle-alert" : "info"} /></span
+  >
   <p>{@render children()}</p>
 </div>
 
@@ -27,12 +30,12 @@
   .notice {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: 6px var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    font-size: var(--text-md);
+    gap: 10px;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-popover);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--text-sm);
   }
 
   p {
@@ -41,25 +44,16 @@
 
   .mark {
     flex: none;
-    width: 3px;
-    align-self: stretch;
-    border-radius: 2px;
-    background: var(--accent);
+    display: grid;
   }
 
   .warning {
     background: var(--warn-soft);
-  }
-
-  .warning .mark {
-    background: var(--warn);
+    color: var(--warn);
   }
 
   .error {
     background: var(--danger-soft);
-  }
-
-  .error .mark {
-    background: var(--danger);
+    color: var(--danger);
   }
 </style>

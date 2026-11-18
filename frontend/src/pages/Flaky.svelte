@@ -1,14 +1,16 @@
 <script lang="ts">
+  import GateName from "../lib/components/GateName.svelte";
   import { getFlaky } from "../lib/api";
   import EmptyState from "../lib/components/EmptyState.svelte";
   import Notice from "../lib/components/Notice.svelte";
   import OutcomeBadge from "../lib/components/OutcomeBadge.svelte";
+  import PageHeader from "../lib/components/PageHeader.svelte";
   import { eventTitle, shortTree, timeText } from "../lib/events";
   import { formatRelative, formatTimestamp, plural } from "../lib/format";
   import { gateKey, tally } from "../lib/gates";
   import { createQuery } from "../lib/query.svelte";
   import { href } from "../lib/router.svelte";
-  import { emptyHint, emptyTitle } from "../lib/scope";
+  import { emptyHint, emptyTitle, scopeSubtitle } from "../lib/scope";
   import { clock, filters, freshness } from "../lib/state.svelte";
 
   interface Props {
@@ -18,12 +20,13 @@
   let { repoLabel }: Props = $props();
 
   const query = createQuery((signal) => getFlaky({ signal }));
+  const subtitle = $derived(scopeSubtitle(repoLabel, filters.range));
 
 </script>
 
 <section class="page" aria-labelledby="flaky-title">
   <div>
-    <h1 id="flaky-title" class="page-title">Flaky</h1>
+    <PageHeader title="Flaky" headingId="flaky-title" {subtitle} />
     <p class="lede">Gates where the same tree both failed and passed. Runs are oldest first.</p>
   </div>
 
@@ -47,7 +50,7 @@
           <li class="panel">
             <header class="gate-head">
               <h2 class="gate-name">
-                <a href={href({ page: "gate", repo: gate.repo, name: gate.name })}>{gate.name}</a>
+                <a href={href({ page: "gate", repo: gate.repo, name: gate.name })}><GateName name={gate.name} /></a>
               </h2>
               <span class="muted" title={gate.repo ?? undefined}>{gate.repo_name}</span>
               <span class="meta">
@@ -62,7 +65,7 @@
                 {@const counts = tally(tree.runs)}
                 <li class="tree">
                   <div class="tree-head">
-                    <span class="mono" title={tree.tree}>{shortTree(tree.tree)}</span>
+                    <span title={tree.tree}>{shortTree(tree.tree)}</span>
                     <span class="muted">
                       {plural(counts.fails, "fail", "fails")}, {plural(counts.passes, "pass", "passes")}
                     </span>
@@ -94,21 +97,21 @@
     gap: var(--space-4);
   }
 
+  .lede {
+    margin: var(--space-2) 0 0;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+
   .definition {
     margin: 0;
     font-size: var(--text-sm);
     color: var(--text-muted);
   }
 
-  .lede {
-    margin: 2px 0 0;
-    font-size: var(--text-sm);
-    color: var(--text-muted);
-  }
-
   .panel {
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-control);
     background: var(--surface);
   }
 
@@ -137,7 +140,7 @@
     padding: var(--space-2) var(--space-3);
     background: var(--surface-sunken);
     border-bottom: 1px solid var(--border);
-    border-radius: var(--radius) var(--radius) 0 0;
+    border-radius: var(--radius-control) var(--radius-control) 0 0;
   }
 
   .gate-name {

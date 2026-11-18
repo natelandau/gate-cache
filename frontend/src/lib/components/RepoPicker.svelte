@@ -31,6 +31,7 @@
 <script lang="ts">
   import { repoLabel, repoSelectionLabel } from "../repos";
   import Dropdown from "./Dropdown.svelte";
+  import Icon from "./Icon.svelte";
 
   interface Props {
     options: RepoOption[];
@@ -61,9 +62,7 @@
 
 <Dropdown caption="Repos" {label} {title} width="240px">
   {#snippet icon()}
-    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
-      <path d="M1.75 4.25v8a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1v-6.5a1 1 0 0 0-1-1H8L6.5 3H2.75a1 1 0 0 0-1 1.25z" />
-    </svg>
+    <Icon name="folder-git-2" />
   {/snippet}
   {#snippet children()}
     <fieldset class="list">

@@ -77,23 +77,23 @@ describe("feedView inputs", () => {
 
 describe("activitySubject", () => {
   it("names the active outcome and reason", () => {
-    expect(activitySubject({})).toBe("runs");
-    expect(activitySubject({ outcome: "fail" })).toBe('"Fail" runs');
-    expect(activitySubject({ reason: "x y" })).toBe('runs with reason "x y"');
+    expect(activitySubject({})).toBe("gate calls");
+    expect(activitySubject({ outcome: "fail" })).toBe('"Ran and failed" gate calls');
+    expect(activitySubject({ reason: "x y" })).toBe('gate calls with reason "x y"');
     expect(activitySubject({ outcome: "uncached", reason: "x y" })).toBe(
-      '"Uncached" runs with reason "x y"',
+      '"Ran with cache off" gate calls with reason "x y"',
     );
     expect(activitySubject({ outcome: "fail", group: { by: "branch", key: "[]", label: "Branch: main" } })).toBe(
-      '"Fail" runs in "Branch: main"',
+      '"Ran and failed" gate calls in "Branch: main"',
     );
   });
 
   it("names the day, hour, gate, and flaky filters", () => {
     // Days are named by the empty-state title in place of the range, not by the subject.
-    expect(activitySubject({ span: { from: "2026-11-03", to: "2026-11-03" } })).toBe("runs");
-    expect(activitySubject({ slot: { weekday: 2, hour: 9 } })).toBe("runs on Tuesdays 09:00 to 10:00");
+    expect(activitySubject({ span: { from: "2026-11-03", to: "2026-11-03" } })).toBe("gate calls");
+    expect(activitySubject({ slot: { weekday: 2, hour: 9 } })).toBe("gate calls on Tuesdays 09:00 to 10:00");
     expect(activitySubject({ outcome: "fail", gate: { repo: null, name: "lint" }, flaky: true })).toBe(
-      '"Fail" runs of lint on flaky trees',
+      '"Ran and failed" gate calls of lint on flaky trees',
     );
   });
 });

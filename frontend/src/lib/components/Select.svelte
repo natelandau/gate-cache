@@ -40,17 +40,18 @@
   select {
     height: var(--control-height);
     padding: 0 var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border: 0;
+    border-radius: var(--radius-control);
     background: var(--surface);
+    box-shadow: var(--ring);
     color: var(--text);
     font: inherit;
     font-size: var(--text-sm);
     cursor: pointer;
+    transition: box-shadow var(--dur-fast) var(--ease);
   }
 
   select:hover {
-    border-color: var(--border-strong);
-    background: var(--surface-hover);
+    box-shadow: var(--ring-hover);
   }
 </style>

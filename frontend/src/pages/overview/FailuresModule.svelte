@@ -62,7 +62,7 @@
     },
     {
       key: "duration",
-      label: "Ran",
+      label: "Ran for",
       align: "right",
       sortable: false,
       text: (e) => formatDuration(e.duration),
@@ -71,6 +71,7 @@
 </script>
 
 <Module
+  more={{ href: activityHref({ outcome: "fail" }, span), label: "All failures in Activity" }}
   title="Recent failures"
   titleId="failures-title"
   noun="failures"
@@ -90,7 +91,4 @@
     rowLabel={(e) => `Open ${e.name}`}
     busy={query.loading}
   />
-  <a class="more-link" href={activityHref({ outcome: "fail" }, span)}>
-    All failures in Activity <span aria-hidden="true">→</span>
-  </a>
 </Module>

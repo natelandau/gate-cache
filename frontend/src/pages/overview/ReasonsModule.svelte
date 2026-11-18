@@ -36,7 +36,7 @@
   const max = $derived(Math.max(0, ...rows.map((row) => row.count)));
 
   function runsText(row: ReasonRow): string {
-    return `${OUTCOMES[row.outcome].label}: ${formatCount(row.count)} ${row.count === 1 ? "run" : "runs"}`;
+    return `${OUTCOMES[row.outcome].long}: ${formatCount(row.count)} ${row.count === 1 ? "run" : "runs"}`;
   }
 </script>
 
@@ -59,12 +59,12 @@
           title={runsText(row)}
         >
           <span class="reason"
-            >{row.reason}<span class="visually-hidden"> ({OUTCOMES[row.outcome].label})</span></span
+            >{row.reason}<span class="visually-hidden"> ({OUTCOMES[row.outcome].long})</span></span
           >
           <span class="track" aria-hidden="true">
             <span class="fill" style:width="{max > 0 ? (row.count / max) * 100 : 0}%"></span>
           </span>
-          <span class="count mono">{formatCount(row.count)}</span>
+          <span class="count">{formatCount(row.count)}</span>
         </a>
       </li>
     {/each}

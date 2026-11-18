@@ -1,6 +1,7 @@
 <!--
   @component
-  Daily time saved as tall bars over a short panel of daily failures. Both panels share one day
+  Daily runs as tall bars over a short panel of daily failures, with time saved in the headline
+  and the tooltip. Both panels share one day
   axis, so hovering a day highlights it in both and shows one tooltip with both values. The two
   measures have different units, so each panel has its own y scale.
 
@@ -15,14 +16,18 @@
   - `onselect`: called with the new span, or undefined to clear; omit for a static chart
 -->
 <script lang="ts">
+  import { counted, TERMS } from "../terms";
+  import { barMotion } from "../motion";
   import type { ChartState } from "layerchart";
-  import { BarChart, Bars, Text, Tooltip } from "layerchart/svg";
-  import { dailyScale, FAIL_TOP } from "../daily";
+  import { BarChart, Bars, Tooltip } from "layerchart/svg";
+  import { dailyScale } from "../daily";
+  import { METRIC_COLORS } from "../heat";
   import type { DayBucket } from "../fill";
-  import { formatCount, formatDuration, formatLongDay, formatShortDay, plural } from "../format";
+  import { formatCount, formatDuration, formatLongDay, formatShortDay } from "../format";
   import { createDayPick } from "../daypick.svelte";
+  import TooltipSurface from "./TooltipSurface.svelte";
   import DayPicker from "./DayPicker.svelte";
-  import type { DaySpan } from "../selection";
+  import { PICK_DAY_HINT, type DaySpan } from "../selection";
 
   interface Props {
     days: DayBucket[];
@@ -33,7 +38,7 @@
   let { days, selected, onselect }: Props = $props();
 
   interface Row extends DayBucket {
-    savedSpan: [number, number];
+    runsSpan: [number, number];
     failSpan: [number, number];
   }
 
@@ -41,13 +46,14 @@
   const scale = $derived(dailyScale(days));
   const totalFailures = $derived(days.reduce((sum, d) => sum + d.failures, 0));
   const totalSaved = $derived(days.reduce((sum, d) => sum + d.saved, 0));
+  const totalRuns = $derived(days.reduce((sum, d) => sum + d.runs, 0));
   const activeDays = $derived(days.filter((d) => d.runs > 0));
 
   const rows = $derived(
     days.map(
       (d): Row => ({
         ...d,
-        savedSpan: [scale.savedY(0), scale.savedY(d.saved)],
+        runsSpan: [scale.runsY(0), scale.runsY(d.runs)],
         failSpan: [0, scale.failY(d.failures)],
       }),
     ),
@@ -55,45 +61,47 @@
 
   const tickLabels = $derived(new Map(scale.ticks.map((t) => [t.value, t.label])));
 
-  // The top padding holds the time-saved label, clear of the bars below it.
-  const padding = { top: 18, right: 4, bottom: 20, left: 52 };
+  const padding = { top: 8, right: 4, bottom: 20, left: 44 };
   const BAND_PADDING = 0.25;
 
   const pick = createDayPick(() => ({ days, selected, onselect }), padding, BAND_PADDING);
 
   function dayText(day: DayBucket): string {
-    return `${formatLongDay(day.day)}: ${formatDuration(day.saved)} saved, ${plural(day.failures, "failure", "failures")}`;
+    return `${formatLongDay(day.day)}: ${counted(day.runs, TERMS.calls, formatCount)}, ${counted(day.failures, TERMS.failures, formatCount)}, ${formatDuration(day.saved)} saved by cache`;
   }
-  const savedColor = "var(--chart-saved)";
-  const failColor = "var(--chart-failures)";
+  const runsColor = METRIC_COLORS.runs;
+  const failColor = METRIC_COLORS.fail;
 </script>
 
 {#snippet dayTooltip(context: ChartState<Row>)}
-  <Tooltip.Root {context}>
+  <Tooltip.Root {context} variant="none" motion="none">
     {#snippet children({ data }: { data: Row })}
-      <Tooltip.Header value={formatLongDay(data.day)} />
-      <Tooltip.List>
-        <Tooltip.Item
-          label="Time saved"
-          value={formatDuration(data.saved)}
-          color={savedColor}
-          valueAlign="right"
-        />
-        <Tooltip.Item
-          label="Failures"
-          value={formatCount(data.failures)}
-          color={failColor}
-          valueAlign="right"
-        />
-      </Tooltip.List>
+      <TooltipSurface
+        title={formatLongDay(data.day)}
+        rows={[
+          { color: runsColor, label: TERMS.calls.label, value: formatCount(data.runs) },
+          { color: failColor, label: "Failures", value: formatCount(data.failures) },
+          { label: TERMS.saved.column, value: formatDuration(data.saved) },
+        ]}
+        hint={onselect ? PICK_DAY_HINT : undefined}
+      />
     {/snippet}
   </Tooltip.Root>
 {/snippet}
 
 <figure class="daily">
-  <figcaption class="legend">
-    <span><i style:background={savedColor}></i>Time saved per day</span>
-    <span><i style:background={failColor}></i>Failures per day</span>
+  <figcaption class="top">
+    <span class="headline">
+      <span class="big">{formatCount(totalRuns)}</span>
+      <span class="second"
+        >{totalRuns === 1 ? TERMS.calls.one : TERMS.calls.many} · <span class="fails">{formatCount(totalFailures)}</span>
+        {totalFailures === 1 ? TERMS.failures.one : TERMS.failures.many} · {formatDuration(totalSaved)} saved by cache</span
+      >
+    </span>
+    <span class="legend">
+      <span><i style:background={runsColor}></i>{TERMS.calls.label}</span>
+      <span><i style:background={failColor}></i>Failures</span>
+    </span>
   </figcaption>
   <!-- Pointer events bubble up from the chart, so its tooltip keeps working under the picker. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -110,7 +118,7 @@
     <BarChart
       data={rows}
       x="day"
-      y={(d: Row) => d.savedSpan}
+      y={(d: Row) => d.runsSpan}
       yDomain={[0, 1]}
       bandPadding={BAND_PADDING}
       {padding}
@@ -125,25 +133,9 @@
         },
       }}
     >
-      {#snippet marks({ context }: { context: ChartState<Row> })}
-        <Bars y={(d: Row) => d.savedSpan} fill={savedColor} radius={2} strokeWidth={0} />
-        <Bars y={(d: Row) => d.failSpan} fill={failColor} radius={2} strokeWidth={0} />
-        <!-- Each label sits just above its band: in the top padding and in the gap between bands,
-             where no bars or tick labels reach. -->
-        <Text
-          class="panel-label"
-          x={0}
-          y={context.yScale(1) - 4}
-          value="Time saved"
-          verticalAnchor="end"
-        />
-        <Text
-          class="panel-label"
-          x={0}
-          y={context.yScale(FAIL_TOP) - 4}
-          value="Failures"
-          verticalAnchor="end"
-        />
+      {#snippet marks()}
+        <Bars y={(d: Row) => d.runsSpan} fill={runsColor} radius={3} strokeWidth={0} motion={barMotion()} />
+        <Bars y={(d: Row) => d.failSpan} fill={failColor} radius={3} strokeWidth={0} motion={barMotion()} />
       {/snippet}
       {#snippet tooltip({ context })}{@render dayTooltip(context)}{/snippet}
     </BarChart>
@@ -156,22 +148,25 @@
   <div class="visually-hidden">
     <table>
       <caption>
-        Daily totals for {days.length} days: {formatDuration(totalSaved)} saved,
-        {formatCount(totalFailures)} failures. Days without runs are left out.
+        Daily totals for {days.length} days: {formatCount(totalRuns)} gate calls,
+        {formatCount(totalFailures)} failures, {formatDuration(totalSaved)} saved by cache. Days
+        without calls are left out.
       </caption>
       <thead>
         <tr>
           <th scope="col">Day</th>
-          <th scope="col">Time saved</th>
+          <th scope="col">Gate calls</th>
           <th scope="col">Failures</th>
+          <th scope="col">Saved by cache</th>
         </tr>
       </thead>
       <tbody>
         {#each activeDays as day (day.day)}
           <tr>
             <th scope="row">{formatLongDay(day.day)}</th>
-            <td>{formatDuration(day.saved)}</td>
+            <td>{formatCount(day.runs)}</td>
             <td>{formatCount(day.failures)}</td>
+            <td>{formatDuration(day.saved)}</td>
           </tr>
         {/each}
       </tbody>
@@ -184,13 +179,47 @@
     margin: 0;
   }
 
+  .top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-4);
+    margin-bottom: var(--space-3);
+  }
+
+  .headline {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+
+  .big {
+    font-size: var(--text-headline);
+    font-weight: 600;
+    line-height: 32px;
+    letter-spacing: var(--track-kpi);
+  }
+
+
+  .second {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+
+  .fails {
+    color: var(--danger);
+    font-size: var(--text-lg);
+    font-weight: 600;
+  }
+
   .legend {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-4);
+    gap: 14px;
     font-size: var(--text-xs);
     color: var(--text-muted);
-    margin-bottom: var(--space-1);
   }
 
   .legend span {
@@ -219,19 +248,5 @@
     height: 260px;
   }
 
-  .daily :global(.lc-axis-tick-label),
-  .daily :global(text) {
-    font-size: var(--text-xs);
-    fill: var(--text-muted);
-  }
 
-  .daily :global(.panel-label) {
-    fill: var(--text-muted);
-    font-weight: 600;
-  }
-
-  .daily :global(.lc-grid-line),
-  .daily :global(.lc-grid line) {
-    stroke: var(--chart-grid);
-  }
 </style>

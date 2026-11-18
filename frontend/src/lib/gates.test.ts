@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EventRow, GateRow } from "./api";
-import { findGate, gateKey, histogramBars, sourceParts, tally, trendStats } from "./gates";
+import { findGate, gateKey, histogramBars, sourceParts, splitGateName, tally, trendStats } from "./gates";
 
 describe("gateKey", () => {
   it("separates gates of the same name in different repos", () => {
@@ -68,9 +68,21 @@ describe("sourceParts", () => {
       time_spent: 10.6 + i,
     }));
     const parts = sourceParts(rows);
-    expect(parts[0]).toMatchObject({ key: "k0", label: "L0", count: 11, color: "var(--chart-runs-1)", title: "T" });
-    expect(parts[4]!.color).toBe("var(--chart-runs-5)");
+    expect(parts[0]).toMatchObject({ key: "k0", label: "L0", count: 11, color: "var(--chart-series-1)", title: "T" });
+    expect(parts[4]!.color).toBe("var(--chart-series-5)");
     expect(parts).toHaveLength(6);
     expect(parts[5]).toMatchObject({ key: "other", label: "Other", count: 32, color: "var(--chart-neutral)", title: "L5, L6" });
+  });
+});
+
+describe("splitGateName", () => {
+  it("splits off a trailing @ and hex suffix", () => {
+    expect(splitGateName("apple-test@c350b4abb3f3")).toEqual({ base: "apple-test", suffix: "@c350b4abb3f3" });
+  });
+
+  it("leaves other names whole", () => {
+    expect(splitGateName("ruff format --check")).toEqual({ base: "ruff format --check", suffix: "" });
+    expect(splitGateName("deploy@prod")).toEqual({ base: "deploy@prod", suffix: "" });
+    expect(splitGateName("deploy@20241118")).toEqual({ base: "deploy@20241118", suffix: "" });
   });
 });

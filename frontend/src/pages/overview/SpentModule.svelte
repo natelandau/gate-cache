@@ -1,6 +1,6 @@
 <!--
   @component
-  Time spent: one bar per day of the whole range, stacked by the gates that spent the most time.
+  Time gates ran: one bar per day of the whole range, stacked by the gates that ran longest.
   Days are pickable like the Daily chart, and a gate in the legend opens its detail panel.
 
   Props:
@@ -9,6 +9,7 @@
   - `onselect`: called with newly picked days, or undefined to clear them
 -->
 <script lang="ts">
+  import { TERMS } from "../../lib/terms";
   import type { SpentStatus } from "../../lib/api";
   import MetricTabs from "../../lib/components/MetricTabs.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -43,13 +44,14 @@
 </script>
 
 <Module
-  title="Time spent"
+  subtitle="Run time per day, by gate"
+  title={TERMS.ran.label}
   titleId="spent-title"
-  noun="time spent"
+  noun="run time"
   loading={query.loading && !query.data}
   error={query.error}
   empty={query.data?.series.length === 0}
-  emptyTitle={emptyTitle("time spent", { range: filters.range, repoLabel })}
+  emptyTitle={emptyTitle(TERMS.ran.noun, { range: filters.range, repoLabel })}
   emptyDetail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
 >
   {#snippet actions()}

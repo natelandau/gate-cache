@@ -27,21 +27,21 @@
   .badge {
     display: inline-flex;
     align-items: center;
-    height: 18px;
+    height: 20px;
     padding: 0 6px;
-    border-radius: 3px;
+    border-radius: var(--radius-chip);
     font-size: var(--text-xs);
-    font-weight: 600;
+    font-weight: 500;
     line-height: 1;
+    letter-spacing: 0;
     white-space: nowrap;
     /* As tall as a line of text, so top alignment centers it in table rows. */
     vertical-align: top;
   }
 
   .neutral {
-    background: var(--surface-sunken);
+    background: var(--neutral-soft);
     color: var(--text-muted);
-    box-shadow: inset 0 0 0 1px var(--border);
   }
 
   .accent {

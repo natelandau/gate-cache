@@ -18,6 +18,18 @@ describe("HourHeatmap", () => {
     expect(styles[1 * 24 + 9]).toBe("var(--heat-empty)");
   });
 
+  it("shows a total bar per hour and a total per weekday", () => {
+    const { body } = render(HourHeatmap, { props: { cells, metric: "runs" } });
+    expect(body.match(/class="hour-total[^"]*"/g)).toHaveLength(24);
+    expect(body.match(/class="day-total[^"]*"/g)).toHaveLength(7);
+    expect(body).toMatch(/class="day-total[^"]*"[\s\S]*?>8</);
+  });
+
+  it("names the peak hour", () => {
+    const { body } = render(HourHeatmap, { props: { cells, metric: "runs" } });
+    expect(body).toMatch(/Peak:[\s\S]*?09:00[\s\S]*?8/);
+  });
+
   it("labels every third hour", () => {
     const { body } = render(HourHeatmap, { props: { cells, metric: "runs" } });
     const labels = [...body.matchAll(/class="hour[^"]*"[^>]*>(\d*)</g)].map((m) => m[1]).filter(Boolean);
@@ -43,7 +55,7 @@ describe("HourHeatmap", () => {
     expect(body.match(/tabindex="0"/g)?.length).toBe(1);
     expect(body).toContain('href="#/activity?weekday=1&amp;hour=9"');
     const monday = new Date(1970, 0, 5).toLocaleString(undefined, { weekday: "long" });
-    expect(body).toContain(`aria-label="${monday} 09:00, Runs: 8. Open in Activity"`);
+    expect(body).toContain(`aria-label="${monday} 09:00, Gate calls: 8. Open in Activity"`);
   });
 
   it("links only the cells whose shown value is not zero", () => {

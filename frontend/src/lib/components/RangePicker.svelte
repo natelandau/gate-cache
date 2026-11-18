@@ -21,6 +21,7 @@
 <script lang="ts">
   import { isValidCustom, localDay, PERIODS, PRESETS, rangeLabel, resolveRange } from "../range";
   import Dropdown from "./Dropdown.svelte";
+  import Icon from "./Icon.svelte";
 
   interface Props {
     value: RangeSpec;
@@ -64,10 +65,7 @@
     opens += 1;
   }}>
   {#snippet icon()}
-    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="2" y="3" width="12" height="11" rx="1.5" />
-      <path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3" />
-    </svg>
+    <Icon name="calendar" />
   {/snippet}
   {#snippet children(close)}
     <fieldset class="tabs">
@@ -174,7 +172,7 @@
     display: flex;
     padding: 2px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-control);
     background: var(--surface-sunken);
   }
 
@@ -221,7 +219,7 @@
     flex: 1;
     padding: 5px var(--space-2);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-control);
     background: var(--surface-sunken);
     color: var(--text);
     font-size: var(--text-sm);
@@ -254,7 +252,7 @@
   .custom input,
   .custom button {
     height: var(--control-height);
-    border-radius: var(--radius);
+    border-radius: var(--radius-control);
     font: inherit;
     font-size: var(--text-sm);
   }

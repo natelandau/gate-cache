@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@lucide/svelte": "1.67.0",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tsconfig/svelte": "5.0.9",
     "d3-array": "3.2.5",

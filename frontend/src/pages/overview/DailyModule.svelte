@@ -1,6 +1,7 @@
 <!--
   @component
-  The homepage daily chart: time saved over failures for each day of the range.
+  The homepage daily chart: runs over failures for each day of the range, with time saved in
+  its headline and tooltip.
 
   Props:
   - `query`: the shell's summary query, whose days are already gap-filled
@@ -28,16 +29,20 @@
 </script>
 
 <Module
+  subtitle="Gate calls and failures per day"
   title="Daily"
   titleId="daily-title"
   noun="daily totals"
   loading={query.loading && !query.data}
   error={query.error}
   empty={query.data?.summary.runs === 0}
-  emptyTitle={emptyTitle("runs", { range: filters.range, repoLabel })}
+  emptyTitle={emptyTitle("gate calls", { range: filters.range, repoLabel })}
   emptyDetail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
 >
   {#if query.data}
     <DailyChart days={query.data.days} selected={span} {onselect} />
   {/if}
+  {#snippet footer()}
+    <span>Click a day to scope the page. Drag across days to pick a range.</span>
+  {/snippet}
 </Module>

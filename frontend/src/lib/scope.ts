@@ -1,4 +1,4 @@
-/** Copy that names the active filters, for empty states. */
+/** Copy that names the active filters, for page subtitles and empty states. */
 
 import { type RangeSpec, rangeLabel } from "./range";
 import { spanRange, type DaySpan } from "./selection";
@@ -51,4 +51,9 @@ export function emptyHint(scope: ScopeText & { recording: boolean | null }): str
   if (scope.repoLabel) return "Pick All repos or a longer range.";
   if (!isAllTime(scope.range)) return "Run a gate through gate-cache, or pick a longer range.";
   return "Run a gate through gate-cache.";
+}
+
+/** Return a page subtitle that names the repo filter and the range, such as "api-server · Last 30 days". */
+export function scopeSubtitle(repoLabel: string | null, range: RangeSpec): string {
+  return `${repoLabel ?? "All repos"} · ${rangeLabel(range)}`;
 }

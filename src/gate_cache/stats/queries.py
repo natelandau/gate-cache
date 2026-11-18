@@ -8,7 +8,7 @@ import re
 import statistics
 import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
@@ -322,17 +322,24 @@ def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
 
 @dataclass
 class _Tally:
-    """Runs, seconds saved by skips, and failures, summed over some events."""
+    """Run counts and seconds summed over some events.
+
+    `ran` counts the runs that checked the cache, the skip rate's denominator, and `cost` is
+    gate-cache overhead plus time spent waiting for a concurrent run.
+    """
 
     runs: int = 0
     saved: float = 0.0
     failures: int = 0
+    spent: float = 0.0
+    skips: int = 0
+    ran: int = 0
+    cost: float = 0.0
 
     def add(self, other: _Tally) -> None:
         """Add another tally's counts to this one."""
-        self.runs += other.runs
-        self.saved += other.saved
-        self.failures += other.failures
+        for f in fields(self):
+            setattr(self, f.name, getattr(self, f.name) + getattr(other, f.name))
 
 
 def _bucket_start(bucket_id: int, zone: ZoneInfo) -> datetime:
@@ -350,15 +357,31 @@ def _local_buckets(
     """
     zone = _zone(filters.tz)
     where, params = _where(filters)
-    for bucket_id, saved, failures, runs in conn.execute(
+    for bucket_id, saved, failures, runs, spent, skips, ran, cost in conn.execute(
         "SELECT " + _BUCKET + ","  # noqa: S608
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
-        " SUM(outcome = 'fail'), COUNT(*)"
+        " SUM(outcome = 'fail'), COUNT(*),"
+        " COALESCE(SUM(duration), 0.0),"
+        " SUM(outcome = 'skip'),"
+        " SUM(outcome IN " + _RAN + "),"
+        " COALESCE(SUM(overhead), 0.0) + COALESCE(SUM(waited), 0.0)"
         " FROM events" + where + " GROUP BY 1",
         params,
     ):
         start = _bucket_start(bucket_id, zone)
-        yield bucket_id, start, _Tally(runs=int(runs), saved=float(saved), failures=int(failures))
+        yield (
+            bucket_id,
+            start,
+            _Tally(
+                runs=int(runs),
+                saved=float(saved),
+                failures=int(failures),
+                spent=float(spent),
+                skips=int(skips),
+                ran=int(ran),
+                cost=float(cost),
+            ),
+        )
 
 
 def previous_window(conn: sqlite3.Connection, filters: Filters, *, now: float) -> Filters | None:
@@ -428,10 +451,7 @@ def summary(
     return {
         **result,
         "previous": previous,
-        "daily": [
-            {"day": day, "saved": t.saved, "failures": t.failures, "runs": t.runs}
-            for day, t in sorted(days.items())
-        ],
+        "daily": [{"day": day, **asdict(t)} for day, t in sorted(days.items())],
     }
 
 

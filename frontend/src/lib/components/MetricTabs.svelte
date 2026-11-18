@@ -42,10 +42,12 @@
   .tabs {
     display: inline-flex;
     margin: 0;
+    gap: 2px;
     padding: 2px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border: 0;
+    border-radius: var(--radius-control);
     background: var(--surface-sunken);
+    box-shadow: inset 0 0 0 1px var(--border);
     min-inline-size: auto;
   }
 
@@ -63,11 +65,18 @@
   }
 
   span {
-    padding: 1px var(--space-2);
-    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 9px;
+    border-radius: 4px;
     color: var(--text-muted);
-    font-size: var(--text-sm);
+    font-size: var(--text-xs);
     white-space: nowrap;
+    transition:
+      background-color var(--dur-fast) var(--ease),
+      color var(--dur-fast) var(--ease),
+      box-shadow var(--dur-fast) var(--ease);
   }
 
   label:hover span {
@@ -83,6 +92,6 @@
     background: var(--surface);
     color: var(--text);
     font-weight: 500;
-    box-shadow: 0 0 0 1px var(--border);
+    box-shadow: var(--ring);
   }
 </style>

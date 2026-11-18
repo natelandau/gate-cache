@@ -48,14 +48,14 @@
   loading={query.loading && !query.data}
   error={query.error}
   {empty}
-  emptyTitle={emptyTitle("runs that waited for another run", { range: filters.range, span, repoLabel })}
+  emptyTitle={emptyTitle("calls that waited for another run", { range: filters.range, span, repoLabel })}
   {emptyDetail}
 >
   <dl class="facts">
     {#each facts as fact (fact.label)}
       <div class="fact">
         <dt>{fact.label}</dt>
-        <dd class="mono">{fact.value}</dd>
+        <dd class="value">{fact.value}</dd>
       </div>
     {/each}
   </dl>

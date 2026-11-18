@@ -37,17 +37,17 @@ const previous: PreviousTotals = {
 describe("statDeltas", () => {
   it("shows time saved as a percentage, up is good", () => {
     const deltas = statDeltas({ ...current, time_saved: 118 }, previous);
-    expect(deltas.time_saved).toEqual({ text: "▲ 18%", tone: "good" });
+    expect(deltas.time_saved).toEqual({ text: "18%", tone: "good", dir: "up" });
   });
 
   it("marks more time spent as bad", () => {
     const deltas = statDeltas({ ...current, time_spent: 150 }, previous);
-    expect(deltas.time_spent).toEqual({ text: "▲ 50%", tone: "bad" });
+    expect(deltas.time_spent).toEqual({ text: "50%", tone: "bad", dir: "up" });
   });
 
   it("shows net saved as an absolute duration, even across zero", () => {
     const deltas = statDeltas({ ...current, net_saved: -20 }, previous);
-    expect(deltas.net_saved).toEqual({ text: "▼ 2m 0s", tone: "bad" });
+    expect(deltas.net_saved).toEqual({ text: "2m 0s", tone: "bad", dir: "down" });
   });
 
   it("leaves net saved out when the previous window has no comparable value", () => {
@@ -56,7 +56,7 @@ describe("statDeltas", () => {
 
   it("shows failures as a percentage, up is bad", () => {
     const deltas = statDeltas({ ...current, failures: 56 }, previous);
-    expect(deltas.failures).toEqual({ text: "▲ 12%", tone: "bad" });
+    expect(deltas.failures).toEqual({ text: "12%", tone: "bad", dir: "up" });
   });
 
   it("shows skip rate in percentage points", () => {
@@ -64,46 +64,46 @@ describe("statDeltas", () => {
       { ...current, skip_rate: 0.71 },
       { ...previous, skip_rate: 0.67 },
     );
-    expect(deltas.skip_rate).toEqual({ text: "▲ 4 pts", tone: "good" });
+    expect(deltas.skip_rate).toEqual({ text: "4 pts", tone: "good", dir: "up" });
   });
 
   it("shows flaky gates as an absolute count, down is good", () => {
     const deltas = statDeltas({ ...current, flaky_gates: 3 }, { ...previous, flaky_gates: 4 });
-    expect(deltas.flaky_gates).toEqual({ text: "▼ 1", tone: "good" });
+    expect(deltas.flaky_gates).toEqual({ text: "1", tone: "good", dir: "down" });
   });
 
   it("shows an absolute change when the previous value is zero", () => {
     const deltas = statDeltas({ ...current, runs: 5 }, { ...previous, runs: 0 });
-    expect(deltas.runs).toEqual({ text: "▲ 5", tone: "good" });
+    expect(deltas.runs).toEqual({ text: "5", tone: "good", dir: "up" });
   });
 
   it("shows a drop in runs as bad", () => {
     const deltas = statDeltas({ ...current, runs: 8 }, previous);
-    expect(deltas.runs).toEqual({ text: "▼ 20%", tone: "bad" });
+    expect(deltas.runs).toEqual({ text: "20%", tone: "bad", dir: "down" });
   });
 
   it("says no change when the values are equal", () => {
     const deltas = statDeltas(current, previous);
     for (const delta of Object.values(deltas)) {
-      expect(delta).toEqual({ text: "No change", tone: "neutral" });
+      expect(delta).toEqual({ text: "No change", tone: "neutral", dir: null });
     }
   });
 
   it("shows a real change that rounds to zero as under one percent", () => {
     const up = statDeltas({ ...current, time_saved: 100.4 }, previous);
-    expect(up.time_saved).toEqual({ text: "▲ <1%", tone: "good" });
+    expect(up.time_saved).toEqual({ text: "<1%", tone: "good", dir: "up" });
     const down = statDeltas({ ...current, failures: 49.9 }, previous);
-    expect(down.failures).toEqual({ text: "▼ <1%", tone: "good" });
+    expect(down.failures).toEqual({ text: "<1%", tone: "good", dir: "down" });
   });
 
   it("shows a one point skip rate change in the singular", () => {
     const deltas = statDeltas({ ...current, skip_rate: 0.51 }, previous);
-    expect(deltas.skip_rate).toEqual({ text: "▲ 1 pt", tone: "good" });
+    expect(deltas.skip_rate).toEqual({ text: "1 pt", tone: "good", dir: "up" });
   });
 
   it("shows a real skip rate change that rounds to zero as under one point", () => {
     const deltas = statDeltas({ ...current, skip_rate: 0.498 }, previous);
-    expect(deltas.skip_rate).toEqual({ text: "▼ <1 pt", tone: "bad" });
+    expect(deltas.skip_rate).toEqual({ text: "<1 pt", tone: "bad", dir: "down" });
   });
 
   it("leaves skip rate out when either period has no rate", () => {

@@ -112,8 +112,32 @@ def test_summary_values(conn: sqlite3.Connection) -> None:
     assert s["unknown_saved_skips"] == 1
     assert s["flaky_gates"] == 1
     assert [d["day"] for d in s["daily"]] == ["2023-11-14", "2023-11-15"]
-    assert s["daily"][0] == {"day": "2023-11-14", "saved": 150.0, "failures": 1, "runs": 5}
+    assert s["daily"][0] == {
+        "day": "2023-11-14",
+        "saved": 150.0,
+        "failures": 1,
+        "runs": 5,
+        "spent": 35.0,
+        "skips": 3,
+        "ran": 5,
+        "cost": 0.0,
+    }
     json.dumps(s)
+
+
+def test_summary_daily_sums_match_totals(empty_conn: sqlite3.Connection) -> None:
+    """Per-day run time, skips, and cost add up to the headline totals."""
+    insert(empty_conn, BASE + 100, "skip", saved=40.0, overhead=0.5, waited=2.0, wait_known=True)
+    insert(empty_conn, BASE + 200, "pass", duration=12.0, overhead=0.25, wait_known=True)
+    insert(empty_conn, BASE + DAY + 100, "fail", duration=8.0, overhead=0.25, waited=1.0)
+    insert(empty_conn, BASE + DAY + 200, "uncached", tree=None, duration=20.0)
+    s = summary(empty_conn, Filters())
+    daily = s["daily"]
+    assert len(daily) == 2
+    assert sum(d["spent"] for d in daily) == s["time_spent"]
+    assert sum(d["skips"] for d in daily) == s["skips"]
+    assert sum(d["cost"] for d in daily) == pytest.approx(s["overhead"] + s["waited"])
+    assert [d["ran"] for d in daily] == [2, 1]
 
 
 def test_empty_archive(empty_conn: sqlite3.Connection) -> None:

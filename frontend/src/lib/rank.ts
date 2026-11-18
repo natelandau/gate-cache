@@ -19,10 +19,10 @@ export function rankValue(row: GateRow, by: GateRank): number | null {
   return RANK_VALUE[by](row);
 }
 
-/** Return "avg 12s · median 9s" for a gate, or "" when it has no median passing run time. */
+/** Return "avg run 12s · median 9s" for a gate, or "" when it has no median passing run time. */
 export function gateRunText(row: GateRow): string {
   if (row.median_run === null) return "";
-  return `avg ${formatDuration(row.avg_run)} \u00b7 median ${formatDuration(row.median_run)}`;
+  return `avg run ${formatDuration(row.avg_run)} \u00b7 median ${formatDuration(row.median_run)}`;
 }
 
 type Named = { name: string; repo_name: string };
