@@ -170,21 +170,23 @@ An absolute path in the command, such as `{{ justfile_directory() }}/tests`, put
 
 ### Inputs that git does not track
 
-A marker does not cover ignored files, environment variables, or tool versions. To make a gate depend on one of these inputs, put its value in the name. When the value changes, the name changes, so no marker matches and the command runs again:
+A marker does not cover ignored files, environment variables, or tool versions. To make a gate depend on one of these inputs, put its value in the name, after an `@`. When the value changes, the name changes, so no marker matches and the command runs again:
 
 ```just
 # Run again when the uv version changes
 test:
-    gate-cache --name "test-uv$(uv --version | cut -d' ' -f2)" -- uv run pytest
+    gate-cache --name "test@uv$(uv --version | cut -d' ' -f2)" -- uv run pytest
 
 # Run again when the ignored .env file changes
 integration:
-    gate-cache --name "integration-$(git hash-object .env)" -- uv run pytest tests/integration
+    gate-cache --name "integration@$(git hash-object .env)" -- uv run pytest tests/integration
 ```
+
+The text before the first `@` is the gate, and the text after it is the key. The stats dashboard counts the runs of every key toward the gate, so `test@uv0.13.0` and `test@uv0.14.0` show as one gate, `test`. This rule applies only to a name with no spaces and with text on both sides of the `@`. A name with a space, such as a command line, is one gate. To key on more than one input, join the values after one `@`, such as `test@node22-3f2a9c`.
 
 `git hash-object` prints a hash of the file, so the name does not hold the secrets in `.env`. Do not put a secret value in a name, because the marker and `gate-cache status` record the name as plain text. Without `--name`, the command line is the name, so give `--name` to a command that takes a secret as an argument.
 
-The shell of the recipe expands `$(...)` before gate-cache starts. A hook `entry` or `args` list does not go through a shell, so put the command in a recipe and call the recipe from the hook. To look up the gate with `gate-cache status --name`, give the expanded name, such as `test-uv0.13.0`.
+The shell of the recipe expands `$(...)` before gate-cache starts. A hook `entry` or `args` list does not go through a shell, so put the command in a recipe and call the recipe from the hook. To look up the gate with `gate-cache status --name`, give the expanded name, such as `test@uv0.13.0`.
 
 ### Makefile
 
@@ -349,7 +351,7 @@ gate-cache dashboard
 
 The dashboard listens on `127.0.0.1` and opens in your browser. It listens on port 7878, or on a free port when 7878 is taken. With `--port N`, it listens on that port only, and the command fails when the port is in use. With `--no-browser`, it does not open a browser. Only one dashboard runs at a time. A second `gate-cache dashboard` prints the address of the running one and opens it, unless you give `--no-browser`. Press Ctrl-C to stop it.
 
-The dashboard has pages for an overview, gates, recent activity, and flaky gates. The range picker at the top sets the time range. You can pick a relative range such as 7 days, a calendar period such as This week, or custom dates. The repo filter at the top accepts several repositories at once. On the overview, the Breakdown panel groups the runs by repo, gate, source (such as a git hook, CI, or a coding agent), branch, or machine. Click a repo to filter the dashboard to it, a gate to open its details, or any other row to see its runs. To scope the overview to some days, click a day on the calendar or the daily chart, or drag across days on the daily chart. Click the same day again or remove the chip to see the whole range again. A count on the overview, such as failures or an outcome, opens the Activity page with the runs that the count stands for. The dashboard updates while it runs, so new runs appear within seconds. The theme button at the top right cycles between the system theme (the default), light, and dark, and the dashboard remembers your choice.
+The dashboard has pages for an overview, gates, recent activity, and flaky gates. The range picker at the top sets the time range. You can pick a relative range such as 7 days, a calendar period such as This week, or custom dates. The repo filter at the top accepts several repositories at once. On the overview, the Breakdown panel groups the runs by repo, gate, source (such as a git hook, CI, or a coding agent), branch, or machine. Click a repo to filter the dashboard to it, a gate to open its details, or any other row to see its runs. A gate that ran without `--name` shows its command line on one line, and you see the full command when you hover over it. When a gate has more than one key, the gate details, Activity, Recent failures, and Flaky show the key of each run. To scope the overview to some days, click a day on the calendar or the daily chart, or drag across days on the daily chart. Click the same day again or remove the chip to see the whole range again. A count on the overview, such as failures or an outcome, opens the Activity page with the runs that the count stands for. The dashboard updates while it runs, so new runs appear within seconds. The theme button at the top right cycles between the system theme (the default), light, and dark, and the dashboard remembers your choice.
 
 The dashboard also shows what your gates cost to run. The Time gates ran card is the total time that gates ran, failed runs included, with its change against the previous period. It does not count the time that gate-cache itself used or waited. Under the daily chart, the Time gates ran chart shows one bar per day, split into the five gates that took the most time and Other. It has All, Passing, and Failing views, and you pick days on it the same way as on the daily chart. A legend entry opens the details of that gate. Top gates can rank by Time ran and shows the average and median run time of each gate. The Breakdown panel has a Time ran column, and Avg run and Median run columns when it groups by gate. Click a column header to sort by it. A header with a dotted underline explains its column when you hover or focus it, and an info icon on a headline card does the same for the card. The first column of a wide table stays in view while the table scrolls sideways. The Gates table adds these columns:
 

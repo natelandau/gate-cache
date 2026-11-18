@@ -271,7 +271,7 @@ The dashboard moves events from the inbox into an archive, a SQLite file named `
 
 ### Metrics
 
-The dashboard computes its numbers from the archive, for the repositories and the time range that you choose:
+The dashboard computes its numbers from the archive, for the repositories and the time range that you choose. It counts each event toward a gate. For a name with no whitespace, the gate is the text before the first `@` when that text and the text after the `@` are both not empty. For every other name, the gate is the whole name. The archive stores this value in its `gate` column.
 
 - Gate calls: every recorded event, including `uncached` events.
 - Time saved by cache: the sum of `saved` over `skip` events. A skip with no `saved` adds nothing, and the dashboard counts these skips separately.
@@ -285,7 +285,7 @@ The dashboard computes its numbers from the archive, for the repositories and th
 - Peak memory: the largest `max_rss`. Events from a gate-cache version that did not record `cpu` or `max_rss` are left out. When no event recorded them, the dashboard shows n/a.
 - Early and late failures: a `fail` event that ran for less than half of the median `duration` of the passing runs of its gate is early. Any other `fail` event with a `duration` is late. A failure with no `duration`, such as one reported from a run that it waited for, is in neither group.
 - Time gates ran chart: one bar per day. It splits each bar into the 5 gates with the most run time in the whole time range, not only the picked days, and puts the time of all other gates in Other.
-- Flaky gate: a gate that has, for one tree key, both a `fail` event and a `pass` or `pass_unrecorded` event. The same content both failed and passed, so the result is not stable. The dashboard lists the trees and the runs for each.
+- Flaky gate: a gate that has, for one gate name and one tree key, both a `fail` event and a `pass` or `pass_unrecorded` event. A `fail` under `test@v20` and a `pass` under `test@v22` on the same tree do not make `test` flaky, because the key changed. The same content both failed and passed, so the result is not stable. The dashboard lists the trees and the runs for each.
 - Change: each number on the stat strip shows its change against the previous period of the same length. The dashboard hides the change for the range All. It also hides the change when the previous period starts more than 365 days ago. This occurs for any range longer than about six months, such as 1y, Last year, and This year after June. The dashboard also hides the change when stats started after the previous period began. For net saved, the dashboard also hides the change when either period has events with no cost to subtract.
 - Breakdown: the gate calls, time saved by cache, time gates ran, cache skip rate, and failures for each repo, gate, source, branch, or machine. The source is the `trigger` of the event, with the `agent` name for an agent run. A machine shows the latest `host` that it recorded, and the start of its `machine` ID when two machines have the same host name. A gate row also shows the average and median run time. An event without a value for the grouping, such as an event from an older gate-cache version or an event on a detached HEAD, goes in its own row, for example "No branch recorded".
 - Slower gate: a gate whose median `duration` of `pass` events is higher in the current period than in the previous period. Each period must have at least 5 `pass` events. Only `pass` events count, so `pass_unrecorded`, `fail`, and `skip` events do not.

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 RETENTION_DAYS = 365
 SETTLE_SECONDS = 2.0
 ARCHIVE_NAME = "stats.sqlite3"
@@ -28,7 +28,20 @@ _NS_PER_SECOND = 1_000_000_000
 _INT64_MAX = 2**63 - 1
 _INT64_MIN = -(2**63)
 
-_SCHEMA = """
+# The gate a run counts toward in stats. A name with no whitespace that holds `@` is a gate
+# plus a key, such as `test@v22.1.0` or `test@3f2a9c`: the key changes the cache key, while
+# stats keep every key's runs under the part before the first `@`. A command line has
+# spaces, so an argument such as `npx eslint@9` never merges two commands into one gate.
+# The dashboard reads the result from each event's `gate` field rather than repeating the rule;
+# frontend/src/lib/gates.ts isCommandLine must match the whitespace set below.
+GATE_EXPRESSION = (
+    "CASE WHEN instr(name, '@') > 1 AND instr(name, '@') < length(name)"
+    " AND name NOT GLOB '*[' || char(32, 9, 10, 11, 12, 13) || ']*'"
+    " THEN substr(name, 1, instr(name, '@') - 1) ELSE name END"
+)
+_GATE_COLUMN = f"gate TEXT GENERATED ALWAYS AS ({GATE_EXPRESSION}) VIRTUAL"
+
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY,
@@ -48,10 +61,11 @@ CREATE TABLE IF NOT EXISTS events (
     waited REAL,
     wait_known INTEGER NOT NULL DEFAULT 0,
     reported INTEGER NOT NULL DEFAULT 0,
-    wait_timed_out INTEGER NOT NULL DEFAULT 0
+    wait_timed_out INTEGER NOT NULL DEFAULT 0,
+    {_GATE_COLUMN}
 );
 CREATE INDEX IF NOT EXISTS events_repo_ts ON events (repo, ts);
-CREATE INDEX IF NOT EXISTS events_repo_name_ts ON events (repo, name, ts);
+CREATE INDEX IF NOT EXISTS events_repo_gate_ts ON events (repo, gate, ts);
 CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
 """
 
@@ -228,6 +242,10 @@ def _migrate(connection: sqlite3.Connection, *, stored: int | None) -> None:
     for column, kind in _WAIT_COLUMNS:
         if column not in columns:
             connection.execute(f"ALTER TABLE events ADD COLUMN {column} {kind}")
+    # PRAGMA table_info leaves out generated columns, so ask table_xinfo.
+    if "gate" not in {row[1] for row in connection.execute("PRAGMA table_xinfo(events)")}:
+        connection.execute(f"ALTER TABLE events ADD COLUMN {_GATE_COLUMN}")
+    connection.execute("DROP INDEX IF EXISTS events_repo_name_ts")
     # Keyed on the version, not the columns, so a backfill cut short runs again.
     if stored is None or stored < _WAIT_VERSION:
         _backfill(connection)

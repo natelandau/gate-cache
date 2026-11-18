@@ -9,6 +9,7 @@ function ev(ts: number): EventRow {
     repo: null,
     repo_name: "unknown repo",
     name: "lint",
+    gate: "lint",
     outcome: "pass",
     duration: 1,
     saved: null,

@@ -8,6 +8,7 @@ function event(overrides: Partial<EventRow>): EventRow {
     repo: "/w/app/.git",
     repo_name: "app",
     name: "lint",
+    gate: "lint",
     outcome: "pass",
     duration: 54,
     saved: null,

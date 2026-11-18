@@ -179,8 +179,8 @@
 />
 
 <style>
-  /* Long names, such as a full command line, wrap instead of widening the column, so every
-     character stays readable and the other columns stay in view. */
+  /* A long name wraps instead of widening the column, so the other columns stay in view. A
+     command line stays on one line and ends in an ellipsis, as GateName shows it. */
   .gate {
     display: inline-flex;
     align-items: center;

@@ -22,6 +22,7 @@
   import Button from "../lib/components/Button.svelte";
   import DataTable, { type Column } from "../lib/components/DataTable.svelte";
   import EmptyState from "../lib/components/EmptyState.svelte";
+  import GateName from "../lib/components/GateName.svelte";
   import Notice from "../lib/components/Notice.svelte";
   import OutcomeBadge from "../lib/components/OutcomeBadge.svelte";
   import RunHistogram from "../lib/components/RunHistogram.svelte";
@@ -183,13 +184,18 @@
     return events.map((event, index) => ({ ...event, key: keys[index]! }));
   });
 
-  const recentColumns: Column<Recent>[] = [
+  // A gate whose runs used a key, such as "test@v22", shows which key each run used.
+  const keyed = $derived(recent.some((e) => e.name !== e.gate));
+  const recentColumns: Column<Recent>[] = $derived([
     {
       key: "ts",
       label: "When",
       cell: when,
       title: (e) => formatTimestamp(e.ts),
     },
+    ...(keyed
+      ? [{ key: "name", label: "Name", sortable: false, cell: runName, title: (e: Recent) => e.name }]
+      : []),
     { key: "outcome", label: "Outcome", cell: outcome },
     { key: "ran", label: "Ran for", sortable: false, align: "right", cell: ranCell },
     { key: "saved", label: TERMS.saved.column, sortable: false, align: "right", cell: savedCell },
@@ -199,7 +205,7 @@
       cell: tree,
       title: (e) => e.tree ?? undefined,
     },
-  ];
+  ]);
 
   const treeColumns: Column<FlakyTree>[] = [
     { key: "tree", label: "Tree", cell: flakyTree, title: (t) => t.tree },
@@ -220,6 +226,7 @@
 
 {#snippet when(e: Recent)}{formatRelative(e.ts, clock.now)}{/snippet}
 {#snippet outcome(e: Recent)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} />{/snippet}
+{#snippet runName(e: Recent)}<GateName name={e.name} gate={e.gate} />{/snippet}
 {#snippet tree(e: Recent)}{shortTree(e.tree)}{/snippet}
 {#snippet flakyTree(t: FlakyTree)}{shortTree(t.tree)}{/snippet}
 

@@ -169,7 +169,10 @@ export interface EventRow {
   ts: number;
   repo: string | null;
   repo_name: string;
+  /** The full gate name the run used, key included. */
   name: string;
+  /** The gate the run counts toward: `name` without its "@" key. */
+  gate: string;
   outcome: Outcome;
   duration: number | null;
   saved: number | null;

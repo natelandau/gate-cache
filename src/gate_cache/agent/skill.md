@@ -60,12 +60,14 @@ The syntax is `gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...
 
 ### Inputs that git does not see
 
-A marker covers only the name and the files that git does not ignore. It does not cover ignored files such as `.env`, environment variables, tool versions that no lock file pins, or external services. If a gate depends on one of these inputs, put the value in the name. A changed value gives a new name, so the command runs again:
+A marker covers only the name and the files that git does not ignore. It does not cover ignored files such as `.env`, environment variables, tool versions that no lock file pins, or external services. If a gate depends on one of these inputs, put the value in the name, after an `@`. A changed value gives a new name, so the command runs again:
 
 ```sh
-gate-cache --name "test-node$(node --version)" -- npm test
-gate-cache --name "integration-$(git hash-object .env)" -- uv run pytest tests/integration
+gate-cache --name "test@node$(node --version)" -- npm test
+gate-cache --name "integration@$(git hash-object .env)" -- uv run pytest tests/integration
 ```
+
+The text before the first `@` is the gate, and the text after it is the key. The stats dashboard counts the runs of every key toward the gate, so `test@nodev20.11.0` and `test@nodev22.1.0` show as one gate, `test`. The rule applies only to a name with no spaces and with text on both sides of the `@`. To key on more than one input, join the values after one `@`, or hash them together into one value. Do not use any other separator, such as `-`, for a key. With another separator, each value shows as its own gate.
 
 `git hash-object` prints a hash of the file, so the name does not hold the content of `.env`.
 

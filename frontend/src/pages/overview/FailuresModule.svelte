@@ -10,6 +10,7 @@
 <script lang="ts">
   import { getActivity, spanScope, type EventRow } from "../../lib/api";
   import DataTable, { type Column } from "../../lib/components/DataTable.svelte";
+  import GateName from "../../lib/components/GateName.svelte";
   import Module from "../../lib/components/Module.svelte";
   import { eventKeys } from "../../lib/events";
   import { formatDuration, formatRelative, formatTimestamp } from "../../lib/format";
@@ -51,7 +52,7 @@
       text: (e) => formatRelative(e.ts, clock.now),
       title: (e) => formatTimestamp(e.ts),
     },
-    { key: "name", label: "Gate", sortable: false },
+    { key: "name", label: "Gate", sortable: false, cell: gateCell, title: (e) => e.name },
     { key: "repo_name", label: "Repo", sortable: false, title: (e) => e.repo ?? undefined },
     {
       key: "exit_code",
@@ -70,6 +71,8 @@
   ];
 </script>
 
+{#snippet gateCell(e: Failure)}<GateName name={e.name} gate={e.gate} />{/snippet}
+
 <Module
   more={{ href: activityHref({ outcome: "fail" }, span), label: "All failures in Activity" }}
   title="Recent failures"
@@ -87,7 +90,7 @@
     {rows}
     rowKey={(e) => e.key}
     {columns}
-    onRowClick={(e) => openGatePanel(e)}
+    onRowClick={(e) => openGatePanel({ repo: e.repo, name: e.gate })}
     rowLabel={(e) => `Open ${e.name}`}
     busy={query.loading}
   />

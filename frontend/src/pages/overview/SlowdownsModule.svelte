@@ -96,6 +96,4 @@
     color: var(--text-faint);
     font-size: var(--text-xs);
   }
-
-
 </style>

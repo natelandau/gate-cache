@@ -323,7 +323,54 @@ def test_activity_paging(conn: sqlite3.Connection) -> None:
         "reason",
         "tree",
         "reported",
+        "gate",
     }
+
+
+@pytest.mark.parametrize(
+    ("name", "gate"),
+    [
+        ("test@v22.1.0", "test"),
+        ("test@node22@3f2a9c", "test"),
+        ("lint", "lint"),
+        ("@3f2a9c", "@3f2a9c"),
+        ("test@", "test@"),
+        ("npx eslint@9", "npx eslint@9"),
+        ("pnpm --filter @app/web test", "pnpm --filter @app/web test"),
+        ("test\t@v1", "test\t@v1"),
+    ],
+)
+def test_gate_is_the_name_before_its_key(
+    empty_conn: sqlite3.Connection, name: str, gate: str
+) -> None:
+    """A name with no whitespace counts toward the gate before its first `@`."""
+    insert(empty_conn, BASE, "pass", name=name)
+    assert [g["name"] for g in gates(empty_conn, Filters())["gates"]] == [gate]
+
+
+def test_keys_of_one_gate_share_its_stats_but_not_its_flakiness(
+    empty_conn: sqlite3.Connection,
+) -> None:
+    """Runs under each key roll up into one gate, and a key change on a tree is no flake."""
+    insert(empty_conn, BASE, "fail", name="test@v20", tree="t1", duration=2.0)
+    insert(empty_conn, BASE + 1, "pass", name="test@v22", tree="t1", duration=4.0)
+    rows = gates(empty_conn, Filters())["gates"]
+    assert [(g["name"], g["runs"], g["flaky"]) for g in rows] == [("test", 2, False)]
+    detail = gate_detail(empty_conn, Filters(), repo=REPO_A, name="test")
+    assert {e["name"] for e in detail["recent"]} == {"test@v20", "test@v22"}
+    assert {e["gate"] for e in detail["recent"]} == {"test"}
+    assert detail["flaky_trees"] == []
+    events = activity(empty_conn, Filters(), gate=(REPO_A, "test"))["events"]
+    assert len(events) == 2
+
+
+def test_tree_flaky_under_two_keys_lists_once(empty_conn: sqlite3.Connection) -> None:
+    """A tree flaky under two keys of one gate is one flaky tree with the counts summed."""
+    for key, ts in (("v20", BASE), ("v22", BASE + 10)):
+        insert(empty_conn, ts, "fail", name=f"test@{key}", tree="t1")
+        insert(empty_conn, ts + 1, "pass", name=f"test@{key}", tree="t1")
+    detail = gate_detail(empty_conn, Filters(), repo=REPO_A, name="test")
+    assert detail["flaky_trees"] == [{"tree": "t1", "fails": 2, "passes": 2, "last": BASE + 11}]
 
 
 def test_activity_paging_identical_ts(empty_conn: sqlite3.Connection) -> None:

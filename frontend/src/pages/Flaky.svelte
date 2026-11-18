@@ -75,6 +75,7 @@
                       <li class="run">
                         <OutcomeBadge outcome={run.outcome} title={`${eventTitle(run)} · ${timeText(run)}`} />
                         <span class="muted">{formatRelative(run.ts, clock.now)}</span>
+                        {#if run.name !== run.gate}<span class="muted">{run.name.slice(run.gate.length)}</span>{/if}
                       </li>
                     {/each}
                   </ol>
