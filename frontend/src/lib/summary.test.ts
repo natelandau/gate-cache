@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Summary } from "./api";
+import type { DayBucket } from "./fill";
 import { summaryNote, summaryStats } from "./summary";
 
 const base: Summary = {
@@ -123,5 +124,45 @@ describe("summaryNote", () => {
       "1 skip had no recorded duration, so it adds nothing to time saved. " +
         "3 runs came from an older gate-cache that did not record overhead or wait time, so net saved leaves out their cost.",
     );
+  });
+});
+
+describe("summaryStats sparklines", () => {
+  const day = (over: Partial<DayBucket>): DayBucket => ({
+    day: "2026-11-01",
+    saved: 0,
+    failures: 0,
+    runs: 0,
+    spent: 0,
+    skips: 0,
+    ran: 0,
+    cost: 0,
+    ...over,
+  });
+  const daily = [day({ saved: 60, cost: 10, spent: 30, runs: 4, skips: 2, ran: 4, failures: 1 }), day({ day: "2026-11-02" })];
+  const spark = (label: string, stats = summaryStats(base, {}, daily)) =>
+    stats.find((s) => s.label === label)?.spark;
+
+  it("plots each day's value for the matching stat", () => {
+    expect(spark("Time saved")?.values).toEqual([60, 0]);
+    expect(spark("Net saved")?.values).toEqual([50, 0]);
+    expect(spark("Time spent")?.values).toEqual([30, 0]);
+    expect(spark("Runs")?.values).toEqual([4, 0]);
+    expect(spark("Failures")?.values).toEqual([1, 0]);
+    expect(spark("Time saved")?.color).toBe("--chart-saved");
+    expect(spark("Failures")?.color).toBe("--chart-failures");
+  });
+
+  it("leaves a gap in the skip rate on a day where nothing checked the cache", () => {
+    expect(spark("Skip rate")?.values).toEqual([0.5, null]);
+  });
+
+  it("draws no net saved sparkline when some runs did not record their cost", () => {
+    expect(spark("Net saved", summaryStats({ ...base, cost_unknown_runs: 3 }, {}, daily))).toBeUndefined();
+  });
+
+  it("draws no flaky gates sparkline, and none at all without daily data", () => {
+    expect(spark("Flaky gates")).toBeUndefined();
+    expect(summaryStats(base).every((s) => s.spark === undefined)).toBe(true);
   });
 });

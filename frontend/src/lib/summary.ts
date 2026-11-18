@@ -30,15 +30,23 @@ export async function loadSummary(signal: AbortSignal, span?: DaySpan): Promise<
 /**
  * Return the headline numbers of a summary for a stat strip. The hrefs link the run, flaky
  * gate, and failure counts when they are not zero. Each stat carries its change against the
- * previous window when the summary has one.
+ * previous window when the summary has one, and a sparkline of `daily` when given.
  */
 export function summaryStats(
   s: Summary,
   options: { runsHref?: string; flakyHref?: string; failuresHref?: string } = {},
+  daily?: DayBucket[],
 ): Stat[] {
   const deltas = s.previous ? statDeltas(s, s.previous) : undefined;
+  const spark = (color: string, value: (d: DayBucket) => number | null) =>
+    daily && daily.length > 0 ? { values: daily.map(value), color } : undefined;
   return [
-    { label: "Time saved", value: formatDuration(s.time_saved), delta: deltas?.time_saved },
+    {
+      label: "Time saved",
+      value: formatDuration(s.time_saved),
+      delta: deltas?.time_saved,
+      spark: spark("--chart-saved", (d) => d.saved),
+    },
     {
       label: "Net saved",
       value: formatSignedDuration(s.net_saved),
@@ -49,6 +57,8 @@ export function summaryStats(
         "more than it saved.",
       tone: isNegativeDuration(s.net_saved) ? "danger" : "default",
       delta: deltas?.net_saved,
+      // Days with runs that recorded no cost would overstate net saved, as the delta would.
+      spark: s.cost_unknown_runs > 0 ? undefined : spark("--chart-saved", (d) => d.saved - d.cost),
     },
     {
       label: "Time spent",
@@ -57,6 +67,7 @@ export function summaryStats(
       title:
         "Total time gates ran, failed runs included. gate-cache overhead and waits are not counted.",
       delta: deltas?.time_spent,
+      spark: spark("--chart-runs", (d) => d.spent),
     },
     {
       label: "Runs",
@@ -64,12 +75,14 @@ export function summaryStats(
       hint: s.uncached ? `${formatCount(s.uncached)} uncached` : undefined,
       href: s.runs ? options.runsHref : undefined,
       delta: deltas?.runs,
+      spark: spark("--chart-runs", (d) => d.runs),
     },
     {
       label: "Skip rate",
       value: formatPercent(s.skip_rate),
       hint: plural(s.skips, "skip", "skips"),
       delta: deltas?.skip_rate,
+      spark: spark("--chart-runs", (d) => (d.ran ? d.skips / d.ran : null)),
     },
     {
       label: "Flaky gates",
@@ -84,6 +97,7 @@ export function summaryStats(
       tone: s.failures ? "danger" : "default",
       href: s.failures ? options.failuresHref : undefined,
       delta: deltas?.failures,
+      spark: spark("--chart-failures", (d) => d.failures),
     },
   ];
 }

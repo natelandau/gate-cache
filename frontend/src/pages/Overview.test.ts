@@ -46,7 +46,7 @@ describe("Overview", () => {
     const { body } = render(Overview, {
       props: { query: query({ summary, days }), repoLabel: null },
     });
-    expect(body).toContain("▲ 18%");
+    expect(body).toMatch(/lucide-trending-up[\s\S]*?18%/);
     expect(body).toContain("vs prev 30d");
     expect(body).toMatch(/<h2[^>]*id="calendar-title"[^>]*>Activity<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="daily-title"[^>]*>Daily<\/h2>/);

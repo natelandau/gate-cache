@@ -57,7 +57,7 @@
     {/if}
   </div>
 
-  <StatsModule query={scopedQuery} {span} />
+  <StatsModule query={scopedQuery} {span} days={query.data?.days} />
   <CalendarModule {query} {repoLabel} {span} onselect={pick} />
   <DailyModule {query} {repoLabel} {span} onselect={pick} />
   <SpentModule {repoLabel} {span} onselect={pick} />
