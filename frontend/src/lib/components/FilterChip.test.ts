@@ -11,4 +11,11 @@ describe("FilterChip", () => {
     expect(body).toContain('title="dirty tree"');
     expect(body).toMatch(/<button[^>]*aria-label="Remove reason filter"/);
   });
+
+  it("draws the remove button as an x icon", () => {
+    const { body } = render(FilterChip, {
+      props: { label: "Days: Nov 3", removeLabel: "Show the whole range", onremove: () => {} },
+    });
+    expect(body).toMatch(/<button[^>]*>[\s\S]*<svg[^>]*lucide-x/);
+  });
 });

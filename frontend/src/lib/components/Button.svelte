@@ -41,20 +41,23 @@
     flex: none;
     height: var(--control-height);
     padding: 0 var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border: 0;
+    border-radius: var(--radius-control);
     background: var(--surface);
+    box-shadow: var(--ring);
     color: var(--text);
     font: inherit;
     font-size: var(--text-sm);
     font-weight: 500;
     white-space: nowrap;
     cursor: pointer;
+    transition:
+      box-shadow var(--dur-fast) var(--ease),
+      background-color var(--dur-fast) var(--ease);
   }
 
   .button:hover:not(:disabled) {
-    border-color: var(--border-strong);
-    background: var(--surface-hover);
+    box-shadow: var(--ring-hover);
   }
 
   .button:disabled {
@@ -63,14 +66,13 @@
   }
 
   .accent {
-    border-color: transparent;
     background: var(--accent-soft);
+    box-shadow: none;
     color: var(--accent);
   }
 
   .accent:hover:not(:disabled) {
-    border-color: var(--accent);
-    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .square {

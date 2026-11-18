@@ -18,6 +18,7 @@
 -->
 <script lang="ts">
   import { type Snippet, tick } from "svelte";
+  import Icon from "./Icon.svelte";
 
   interface Props {
     caption: string;
@@ -104,9 +105,7 @@
     {@render icon()}
     <span class="visually-hidden">{caption}:</span>
     <span class="label">{label}</span>
-    <svg class="caret" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true" fill="currentColor">
-      <path d="M1.5 3.5h7L5 7.5z" />
-    </svg>
+    <span class="caret"><Icon name="chevron-down" size={14} /></span>
   </button>
   <div class="popover" bind:this={popover} id="{uid}-popover" role="dialog" aria-label={caption} hidden={!open} style:width>
     {@render children(close)}
@@ -125,22 +124,23 @@
     gap: var(--space-2);
     max-width: 260px;
     height: var(--control-height);
-    padding: 0 var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    padding: 0 var(--space-2) 0 10px;
+    border: 0;
+    border-radius: var(--radius-control);
     background: var(--surface);
+    box-shadow: var(--ring);
     color: var(--text);
     font: inherit;
     font-size: var(--text-sm);
     cursor: pointer;
+    transition: box-shadow var(--dur-fast) var(--ease);
   }
 
   .control:hover {
-    background: var(--surface-hover);
+    box-shadow: var(--ring-hover);
   }
 
   .control.open {
-    border-color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent);
   }
 
@@ -156,6 +156,7 @@
   }
 
   .caret {
+    display: grid;
     color: var(--text-faint);
   }
 
@@ -166,10 +167,10 @@
     z-index: 10;
     max-width: calc(100vw - 2 * var(--space-4));
     padding: var(--space-2);
-    border: 1px solid var(--border-strong);
     border-radius: var(--radius-popover);
     background: var(--surface);
     box-shadow: var(--shadow-popover);
+    animation: fade-in var(--dur-fast) var(--ease-in);
   }
 
   .popover[hidden] {
