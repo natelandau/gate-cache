@@ -291,6 +291,7 @@
     aspect-ratio: 1;
     width: 100%;
     border-radius: 5px;
+    transition: background-color var(--dur-slow) var(--ease);
   }
 
   .layout-weeks .cell {
@@ -301,7 +302,9 @@
     padding: 0;
     border: 0;
     cursor: pointer;
-    transition: opacity var(--dur-fast) var(--ease);
+    transition:
+      background-color var(--dur-slow) var(--ease),
+      opacity var(--dur-fast) var(--ease);
   }
 
   button.cell:hover {

@@ -42,7 +42,7 @@
     >
       {#snippet empty()}
         <EmptyState
-          title={emptyTitle("runs", { range: filters.range, repoLabel })}
+          title={emptyTitle("gate calls", { range: filters.range, repoLabel })}
           detail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
         />
       {/snippet}

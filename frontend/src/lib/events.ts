@@ -5,21 +5,26 @@ import { formatDuration, formatTimestamp } from "./format";
 
 export type OutcomeTone = "accent" | "ok" | "info" | "danger" | "neutral";
 
-/** How each outcome reads in the UI. `description` is the hover text of its badge. */
-export const OUTCOMES: Record<Outcome, { label: string; tone: OutcomeTone; description: string }> = {
+/**
+ * How each outcome reads in the UI. `label` is the short badge text, `long` names the outcome
+ * where there is room, such as a legend, and `description` is the hover text of its badge.
+ */
+export const OUTCOMES: Record<Outcome, { label: string; long: string; tone: OutcomeTone; description: string }> = {
   skip: {
     label: "Skip",
+    long: "Skipped by cache",
     tone: "accent",
     description: "Skipped: the command already passed on this tree.",
   },
-  pass: { label: "Pass", tone: "ok", description: "Ran and passed; the pass was cached." },
+  pass: { label: "Pass", long: "Ran and passed", tone: "ok", description: "Ran and passed; the pass was cached." },
   pass_unrecorded: {
     label: "Pass, not cached",
+    long: "Passed, pass not cached",
     tone: "info",
     description: "Ran and passed, but the pass was not cached because the files changed.",
   },
-  fail: { label: "Fail", tone: "danger", description: "Ran and failed." },
-  uncached: { label: "Uncached", tone: "neutral", description: "Ran without the cache." },
+  fail: { label: "Fail", long: "Ran and failed", tone: "danger", description: "Ran and failed." },
+  uncached: { label: "Uncached", long: "Ran with cache off", tone: "neutral", description: "Ran without the cache." },
 };
 
 /** The time text of a reported failure, which did not run its command. */

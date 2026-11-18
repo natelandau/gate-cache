@@ -44,9 +44,9 @@
 
 <Module
   subtitle="Run time per day, by gate"
-  title="Time spent"
+  title="Time gates ran"
   titleId="spent-title"
-  noun="time spent"
+  noun="run time"
   loading={query.loading && !query.data}
   error={query.error}
   empty={query.data?.series.length === 0}

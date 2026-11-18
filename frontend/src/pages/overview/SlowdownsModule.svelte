@@ -44,12 +44,12 @@
     { key: "name", label: "Gate", sortable: false, cell: gate, title: (g) => g.name },
     {
       key: "before",
-      label: "Median before",
+      label: "Median run before",
       align: "right",
       sortable: false,
       text: (g) => formatDuration(g.before),
     },
-    { key: "now", label: "Now", align: "right", sortable: false, text: (g) => formatDuration(g.now) },
+    { key: "now", label: "Median run now", align: "right", sortable: false, text: (g) => formatDuration(g.now) },
     { key: "change", label: "Change", align: "right", sortable: false, cell: change },
   ];
 </script>

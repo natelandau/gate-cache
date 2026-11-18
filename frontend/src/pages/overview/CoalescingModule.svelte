@@ -48,7 +48,7 @@
   loading={query.loading && !query.data}
   error={query.error}
   {empty}
-  emptyTitle={emptyTitle("runs that waited for another run", { range: filters.range, span, repoLabel })}
+  emptyTitle={emptyTitle("calls that waited for another run", { range: filters.range, span, repoLabel })}
   {emptyDetail}
 >
   <dl class="facts">

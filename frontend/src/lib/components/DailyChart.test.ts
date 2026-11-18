@@ -9,15 +9,16 @@ const days = [
 ];
 
 describe("DailyChart", () => {
-  it("leads with the range's time saved and failure count", () => {
+  it("leads with the range's gate calls and failures, then time saved by cache", () => {
     const body = html(DailyChart, { props: { days } });
-    expect(body).toMatch(/class="headline[^"]*"[\s\S]*?3<span class="u[^"]*">m<\/span>/);
+    expect(body).toMatch(/class="headline[^"]*"[\s\S]*?12[\s\S]*?gate calls/);
+    expect(body).toMatch(/class="headline[^"]*"[\s\S]*?3<span class="u[^"]*">m<\/span>[\s\S]*?saved by cache/);
     expect(body).toMatch(/class="fails[^"]*"[^>]*>1</);
   });
 
   it("names the two series in a legend instead of over the axis", () => {
     const body = html(DailyChart, { props: { days } });
-    expect(body).toMatch(/class="legend[\s\S]*?Time saved[\s\S]*?Failures/);
+    expect(body).toMatch(/class="legend[\s\S]*?Gate calls[\s\S]*?Failures/);
     expect(body).not.toContain("panel-label");
   });
 
@@ -42,6 +43,6 @@ describe("DailyChart", () => {
     });
     expect(body.match(/role="option"/g)?.length).toBe(3);
     expect(body.match(/aria-selected="true"/g)?.length).toBe(1);
-    expect(body).toMatch(/aria-label="[^"]*1m 0s saved, 1 failure"/);
+    expect(body).toMatch(/aria-label="[^"]*2 gate calls, 1 failure, 1m 0s saved by cache"/);
   });
 });

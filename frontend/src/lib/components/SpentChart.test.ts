@@ -27,7 +27,7 @@ describe("SpentChart", () => {
     });
     expect(html.match(/role="option"/g)?.length).toBe(2);
     expect(html.match(/aria-selected="true"/g)?.length).toBe(1);
-    expect(html).toMatch(/aria-label="[^"]*1m 30s spent"/);
+    expect(html).toMatch(/aria-label="[^"]*1m 30s of run time"/);
   });
 
   it("lists each gate with its total beside the chart, then the grand total", () => {

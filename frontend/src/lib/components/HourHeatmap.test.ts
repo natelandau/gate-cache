@@ -55,7 +55,7 @@ describe("HourHeatmap", () => {
     expect(body.match(/tabindex="0"/g)?.length).toBe(1);
     expect(body).toContain('href="#/activity?weekday=1&amp;hour=9"');
     const monday = new Date(1970, 0, 5).toLocaleString(undefined, { weekday: "long" });
-    expect(body).toContain(`aria-label="${monday} 09:00, Runs: 8. Open in Activity"`);
+    expect(body).toContain(`aria-label="${monday} 09:00, Gate calls: 8. Open in Activity"`);
   });
 
   it("links only the cells whose shown value is not zero", () => {

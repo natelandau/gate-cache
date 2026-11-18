@@ -43,7 +43,7 @@
   loading={query.loading && !query.data}
   error={query.error}
   empty={query.data?.summary.runs === 0}
-  emptyTitle={emptyTitle("runs", { range: filters.range, repoLabel })}
+  emptyTitle={emptyTitle("gate calls", { range: filters.range, repoLabel })}
   emptyDetail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
 >
   {#snippet actions()}
@@ -68,7 +68,7 @@
         <dd>{formatCount(facts.activeDays)} / {formatCount(facts.totalDays)}</dd>
       </div>
       <div>
-        <dt>Runs per active day</dt>
+        <dt>Calls per active day</dt>
         <dd>{facts.runsPerActiveDay === null ? "–" : average.format(facts.runsPerActiveDay)}</dd>
       </div>
     </dl>

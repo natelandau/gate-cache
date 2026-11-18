@@ -45,7 +45,7 @@ describe("rankValue", () => {
 
 describe("gateRunText", () => {
   it("joins the average and median run time", () => {
-    expect(gateRunText(gate("x", { avg_run: 3, median_run: 2 }))).toBe("avg 3s \u00b7 median 2s");
+    expect(gateRunText(gate("x", { avg_run: 3, median_run: 2 }))).toBe("avg run 3s \u00b7 median 2s");
   });
 
   it("is empty without a median", () => {

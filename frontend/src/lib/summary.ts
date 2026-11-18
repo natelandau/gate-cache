@@ -28,7 +28,8 @@ export async function loadSummary(signal: AbortSignal, span?: DaySpan): Promise<
 }
 
 /**
- * Return the headline numbers of a summary for a stat strip. The hrefs link the run, flaky
+ * Return the headline numbers of a summary for a stat strip, the gates' own numbers first and
+ * what the cache saved last. The hrefs link the run, flaky
  * gate, and failure counts when they are not zero. Each stat carries its change against the
  * previous window when the summary has one, and a sparkline of `daily` when given.
  */
@@ -49,15 +50,69 @@ export function summaryStats(
     daily && daily.length > 0 ? { values: daily.map(value), color } : undefined;
   return [
     {
-      label: "Time saved",
+      label: "Gate calls",
+      value: formatCount(s.runs),
+      title:
+        "Every time a gate was called through gate-cache, whether its command ran or the cache " +
+        "skipped it.",
+      // Every call counts, so the hint splits the calls that ran from the ones the cache skipped.
+      hint: s.runs ? `${formatCount(s.runs - s.skips)} ran · ${formatCount(s.skips)} skipped` : undefined,
+      href: s.runs ? options.runsHref : undefined,
+      delta: deltas?.runs,
+      spark: spark("var(--chart-runs)", (d) => d.runs),
+    },
+    {
+      label: "Time gates ran",
+      value: formatDuration(s.time_spent),
+      hint: s.fail_time > 0 ? `${formatDuration(s.fail_time)} on failures` : undefined,
+      title:
+        "Total time of the calls that ran, failed runs included. Skipped calls take no time, " +
+        "and gate-cache overhead and waits are not counted.",
+      delta: deltas?.time_spent,
+      spark: spark("var(--chart-runs)", (d) => d.spent),
+    },
+    {
+      label: "Gate failures",
+      value: formatCount(s.failures),
+      title:
+        "Calls whose command failed, plus calls that reported the failure of a concurrent run " +
+        "they waited for instead of running again.",
+      tone: s.failures ? "danger" : "default",
+      href: s.failures ? options.failuresHref : undefined,
+      delta: deltas?.failures,
+      spark: spark("var(--chart-failures)", (d) => d.failures),
+    },
+    {
+      label: "Flaky gates",
+      value: formatCount(s.flaky_gates),
+      title: "Gates that both failed and passed on the same content, so the result changed with no code change.",
+      tone: s.flaky_gates ? "flaky" : "default",
+      href: s.flaky_gates ? options.flakyHref : undefined,
+      delta: deltas?.flaky_gates,
+    },
+    {
+      label: "Cache skip rate",
+      value: formatPercent(s.skip_rate),
+      title:
+        "The share of calls that checked the cache and were skipped because the same gate " +
+        "already passed on the same content. Calls with caching off are left out.",
+      hint: `${formatCount(s.skips)} of ${formatCount(s.runs - s.uncached)} skipped`,
+      delta: deltas?.skip_rate,
+      spark: spark("var(--chart-runs)", (d) => (d.ran ? d.skips / d.ran : null)),
+    },
+    {
+      label: "Time saved by cache",
       value: formatDuration(s.time_saved),
+      title:
+        "Run time that skipped calls did not spend, taken from the earlier passing run that let " +
+        "each one skip.",
       delta: deltas?.time_saved,
       spark: spark("var(--chart-saved)", (d) => d.saved),
     },
     {
-      label: "Net saved",
+      label: "Net saved by cache",
       value: formatSignedDuration(s.net_saved),
-      hint: `minus ${formatDuration(s.overhead + s.waited)} overhead and waits`,
+      hint: `after ${formatDuration(s.overhead + s.waited)} of overhead`,
       title:
         "Time saved minus the time gate-cache spent deciding whether to skip, and minus the " +
         "time runs waited for a concurrent run of the same gate. Negative means the cache cost " +
@@ -66,45 +121,6 @@ export function summaryStats(
       delta: deltas?.net_saved,
       // Days with runs that recorded no cost would overstate net saved, as the delta would.
       spark: costUnknown > 0 ? undefined : spark("var(--chart-saved)", (d) => d.saved - d.cost),
-    },
-    {
-      label: "Time spent",
-      value: formatDuration(s.time_spent),
-      hint: s.fail_time > 0 ? `${formatDuration(s.fail_time)} on failures` : undefined,
-      title:
-        "Total time gates ran, failed runs included. gate-cache overhead and waits are not counted.",
-      delta: deltas?.time_spent,
-      spark: spark("var(--chart-runs)", (d) => d.spent),
-    },
-    {
-      label: "Runs",
-      value: formatCount(s.runs),
-      hint: s.uncached ? `${formatCount(s.uncached)} uncached` : undefined,
-      href: s.runs ? options.runsHref : undefined,
-      delta: deltas?.runs,
-      spark: spark("var(--chart-runs)", (d) => d.runs),
-    },
-    {
-      label: "Skip rate",
-      value: formatPercent(s.skip_rate),
-      hint: plural(s.skips, "skip", "skips"),
-      delta: deltas?.skip_rate,
-      spark: spark("var(--chart-runs)", (d) => (d.ran ? d.skips / d.ran : null)),
-    },
-    {
-      label: "Flaky gates",
-      value: formatCount(s.flaky_gates),
-      tone: s.flaky_gates ? "flaky" : "default",
-      href: s.flaky_gates ? options.flakyHref : undefined,
-      delta: deltas?.flaky_gates,
-    },
-    {
-      label: "Failures",
-      value: formatCount(s.failures),
-      tone: s.failures ? "danger" : "default",
-      href: s.failures ? options.failuresHref : undefined,
-      delta: deltas?.failures,
-      spark: spark("var(--chart-failures)", (d) => d.failures),
     },
   ];
 }
@@ -118,13 +134,13 @@ export function summaryNote(s: Summary): string | undefined {
   const unknown = s.unknown_saved_skips;
   if (unknown) {
     notes.push(
-      `${plural(unknown, "skip", "skips")} had no recorded duration, so ${unknown === 1 ? "it adds" : "they add"} nothing to time saved.`,
+      `${plural(unknown, "skipped call", "skipped calls")} had no recorded duration, so ${unknown === 1 ? "it adds" : "they add"} nothing to time saved by cache.`,
     );
   }
   const costless = s.cost_unknown_runs;
   if (costless) {
     notes.push(
-      `${plural(costless, "run", "runs")} came from an older gate-cache that did not record overhead or wait time, so net saved leaves out ${costless === 1 ? "its" : "their"} cost.`,
+      `${plural(costless, "call", "calls")} came from an older gate-cache that did not record overhead or wait time, so net saved by cache leaves out ${costless === 1 ? "its" : "their"} cost.`,
     );
   }
   return notes.length ? notes.join(" ") : undefined;

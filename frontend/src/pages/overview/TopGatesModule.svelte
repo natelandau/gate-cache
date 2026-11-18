@@ -36,21 +36,21 @@
     () => span,
   );
 
-  let by: GateRank = $state("saved");
+  let by: GateRank = $state("spent");
 
   const options: { value: GateRank; label: string }[] = [
-    { value: "saved", label: "Time saved" },
-    { value: "spent", label: "Time spent" },
-    { value: "runs", label: "Runs" },
+    { value: "spent", label: "Time ran" },
+    { value: "saved", label: "Saved by cache" },
+    { value: "runs", label: "Calls" },
     { value: "fails", label: "Failures" },
     { value: "slow", label: "Slowest" },
   ];
 
   // What an empty tab lacks, for its empty state.
   const SUBJECT: Record<GateRank, string> = {
-    saved: "time saved",
-    spent: "time spent",
-    runs: "runs",
+    saved: "time saved by cache",
+    spent: "run time",
+    runs: "gate calls",
     fails: "failures",
     slow: "passing runs",
   };

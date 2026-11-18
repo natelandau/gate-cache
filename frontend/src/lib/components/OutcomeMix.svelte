@@ -31,7 +31,7 @@
   const parts: MixPart[] = $derived(
     (Object.keys(OUTCOMES) as Outcome[]).map((outcome) => ({
       key: outcome,
-      label: OUTCOMES[outcome].label,
+      label: OUTCOMES[outcome].long,
       count: counts[outcome],
       color: COLORS[outcome],
       href: href?.(outcome),

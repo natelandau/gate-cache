@@ -64,18 +64,18 @@
   <StatsModule query={scopedQuery} {span} range={query.data} />
 
   <div class="grid">
-    <div style:--span={8}><DailyModule {query} {repoLabel} {span} onselect={pick} /></div>
+    <div style:--span={8}><SpentModule {repoLabel} {span} onselect={pick} /></div>
     <div style:--span={4}><CalendarModule {query} {repoLabel} {span} onselect={pick} /></div>
-    <div style:--span={12}><SpentModule {repoLabel} {span} onselect={pick} /></div>
-    <div style:--span={6}><HourlyModule {repoLabel} {span} /></div>
-    <div style:--span={6}><TopGatesModule {repoLabel} {span} /></div>
-    <div style:--span={4}><OutcomeModule query={scopedQuery} {repoLabel} {span} /></div>
-    <div style:--span={4}><FlakyModule {repoLabel} {span} /></div>
-    <div style:--span={4}><ReasonsModule {repoLabel} {span} /></div>
+    <div style:--span={12}><DailyModule {query} {repoLabel} {span} onselect={pick} /></div>
     <div style:--span={7}><FailuresModule {repoLabel} {span} /></div>
     <div style:--span={5}><SlowdownsModule {repoLabel} {span} /></div>
-    <div style:--span={7}><BreakdownModule {repoLabel} {span} /></div>
-    <div style:--span={5}><CoalescingModule {repoLabel} {span} /></div>
+    <div style:--span={6}><TopGatesModule {repoLabel} {span} /></div>
+    <div style:--span={6}><HourlyModule {repoLabel} {span} /></div>
+    <div style:--span={8}><BreakdownModule {repoLabel} {span} /></div>
+    <div style:--span={4}><FlakyModule {repoLabel} {span} /></div>
+    <div style:--span={4}><OutcomeModule query={scopedQuery} {repoLabel} {span} /></div>
+    <div style:--span={4}><ReasonsModule {repoLabel} {span} /></div>
+    <div style:--span={4}><CoalescingModule {repoLabel} {span} /></div>
   </div>
 </section>
 

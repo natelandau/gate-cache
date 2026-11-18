@@ -32,8 +32,8 @@ export function heatValue(
 
 /** The label for `metric`, matching the tabs that pick it. */
 export const HEAT_LABELS: Record<HeatMetric, string> = {
-  runs: "Runs",
-  saved: "Time saved",
+  runs: "Gate calls",
+  saved: "Saved by cache",
   fail: "Failures",
 };
 

@@ -58,8 +58,8 @@ describe("formatHeatValue", () => {
 describe("HEAT_OPTIONS", () => {
   it("lists runs, time saved, and failures with their labels", () => {
     expect(HEAT_OPTIONS).toEqual([
-      { value: "runs", label: "Runs" },
-      { value: "saved", label: "Time saved" },
+      { value: "runs", label: "Gate calls" },
+      { value: "saved", label: "Saved by cache" },
       { value: "fail", label: "Failures" },
     ]);
   });

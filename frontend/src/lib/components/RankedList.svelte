@@ -8,6 +8,8 @@
     draws an inline bar in `barColor`
 -->
 <script lang="ts">
+  import { flip } from "svelte/animate";
+  import { viewChangeMs } from "../motion";
   import Meter from "./Meter.svelte";
 
   interface Item {
@@ -30,7 +32,7 @@
 
 <ol class="ranked">
   {#each items as item, index (item.key)}
-    <li>
+    <li animate:flip={{ duration: viewChangeMs() }}>
       {#snippet row()}
         <span class="rank">{index + 1}</span>
         <span class="name">

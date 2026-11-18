@@ -39,7 +39,7 @@
   loading={query.loading && !query.data}
   error={query.error}
   empty={!outcomes || total === 0}
-  emptyTitle={emptyTitle("runs", { range: filters.range, span, repoLabel })}
+  emptyTitle={emptyTitle("gate calls", { range: filters.range, span, repoLabel })}
   emptyDetail={emptyHint({ range: filters.range, span, repoLabel, recording: freshness.recording })}
 >
   {#if outcomes}

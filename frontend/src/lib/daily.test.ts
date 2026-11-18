@@ -1,44 +1,57 @@
 import { describe, expect, it } from "vitest";
-import { bandIndexAt, bandInset, dailyScale, FAIL_TOP, SAVED_BASE } from "./daily";
+import { bandIndexAt, bandInset, countTicks, dailyScale, FAIL_TOP, RUNS_BASE } from "./daily";
 
 describe("dailyScale", () => {
   it("maps the most failures to the top of the failures band, whatever was saved", () => {
-    for (const saved of [0, 30, 86400]) {
+    for (const runs of [0, 30, 86400]) {
       const scale = dailyScale([
-        { saved, failures: 7 },
-        { saved: 0, failures: 2 },
+        { runs, failures: 7 },
+        { runs: 0, failures: 2 },
       ]);
       expect(scale.failY(7)).toBe(FAIL_TOP);
     }
   });
 
   it("maps the top of the time-saved scale to 1, at or above the busiest day", () => {
-    const scale = dailyScale([{ saved: 600, failures: 0 }]);
-    expect(scale.savedTop).toBeGreaterThanOrEqual(600);
-    expect(scale.savedY(scale.savedTop)).toBe(1);
-    expect(scale.savedY(600)).toBeLessThanOrEqual(1);
+    const scale = dailyScale([{ runs: 600, failures: 0 }]);
+    expect(scale.runsTop).toBeGreaterThanOrEqual(600);
+    expect(scale.runsY(scale.runsTop)).toBe(1);
+    expect(scale.runsY(600)).toBeLessThanOrEqual(1);
   });
 
   it("maps zero values to each band's floor", () => {
-    const scale = dailyScale([{ saved: 120, failures: 3 }]);
-    expect(scale.savedY(0)).toBe(SAVED_BASE);
+    const scale = dailyScale([{ runs: 120, failures: 3 }]);
+    expect(scale.runsY(0)).toBe(RUNS_BASE);
     expect(scale.failY(0)).toBe(0);
   });
 
   it("stays finite when every day is zero or there are no days", () => {
-    for (const days of [[{ saved: 0, failures: 0 }], []]) {
+    for (const days of [[{ runs: 0, failures: 0 }], []]) {
       const scale = dailyScale(days);
-      expect(scale.savedY(0)).toBe(SAVED_BASE);
+      expect(scale.runsY(0)).toBe(RUNS_BASE);
       expect(scale.failY(0)).toBe(0);
       for (const tick of scale.ticks) expect(Number.isFinite(tick.value)).toBe(true);
     }
   });
 
-  it("labels the failure ticks with counts and the saved ticks with durations", () => {
-    const scale = dailyScale([{ saved: 600, failures: 4 }]);
+  it("labels the failure ticks and the gate call ticks with counts", () => {
+    const scale = dailyScale([{ runs: 55, failures: 4 }]);
     expect(scale.ticks[0]).toEqual({ value: 0, label: "0" });
     expect(scale.ticks[1]).toEqual({ value: FAIL_TOP, label: "4" });
-    expect(scale.ticks.slice(2).map((t) => t.value)).toContain(SAVED_BASE);
+    expect(scale.ticks.slice(2).map((t) => t.label)).toEqual(["0", "20", "40", "60"]);
+    expect(scale.ticks.slice(2).map((t) => t.value)).toContain(RUNS_BASE);
+  });
+});
+
+describe("countTicks", () => {
+  it("steps by 1, 2, or 5 times a power of ten up to at least the largest count", () => {
+    expect(countTicks(55)).toEqual([0, 20, 40, 60]);
+    expect(countTicks(3)).toEqual([0, 1, 2, 3]);
+    expect(countTicks(400)).toEqual([0, 100, 200, 300, 400]);
+  });
+
+  it("returns whole-number ticks for an empty range", () => {
+    expect(countTicks(0)).toEqual([0, 1]);
   });
 });
 

@@ -5,7 +5,10 @@ import type { Bar } from "./components/BarList.svelte";
 import { dimension, type Dimension } from "./dimensions";
 import { UNKNOWN_REPO, type Route } from "./router.svelte";
 
-export type Metric = "saved" | "spent" | "runs" | "skip" | "fails";
+export type Metric = "saved" | "spent" | "avg" | "median" | "runs" | "skip" | "fails" | "gates";
+
+/** A sort on the Breakdown table: a numeric column, or the row name. */
+export type BreakdownSort = { key: Metric | "name"; direction: "asc" | "desc" };
 
 function metricValue(row: BreakdownRow, by: Metric): number {
   switch (by) {
@@ -13,26 +16,35 @@ function metricValue(row: BreakdownRow, by: Metric): number {
       return row.time_saved;
     case "spent":
       return row.time_spent;
+    case "avg":
+      return row.avg_run ?? 0;
+    case "median":
+      return row.median_run ?? 0;
     case "runs":
       return row.runs;
     case "skip":
       return row.skip_rate ?? 0;
     case "fails":
       return row.failures;
+    case "gates":
+      return row.gates;
   }
 }
 
 /**
- * Return one bar per row, largest `by` first and ties by label. Rows of a dimension that covers
- * every repo are keyed by the repo filter value, and with a non-empty `selected`, repos outside
- * it are dimmed. Other dimensions already follow the repo filter, so nothing is dimmed.
+ * Return one bar per row in `sort` order, ties by label; each bar's length is the sorted
+ * column, or time spent when sorted by name. Rows of a dimension that covers every repo are
+ * keyed by the repo filter value, and with a non-empty `selected`, repos outside it are
+ * dimmed. Other dimensions already follow the repo filter, so nothing is dimmed.
  */
 export function breakdownBars(
   rows: BreakdownRow[],
-  by: Metric,
+  sort: BreakdownSort,
   group: Dimension,
   selected: string[],
 ): Bar<BreakdownRow>[] {
+  const by: Metric = sort.key === "name" ? "spent" : sort.key;
+  const sign = sort.direction === "asc" ? 1 : -1;
   const chosen = new Set(selected);
   const allRepos = dimension(group).allRepos ?? false;
   return rows
@@ -47,7 +59,11 @@ export function breakdownBars(
         row,
       };
     })
-    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+    .sort((a, b) =>
+      sort.key === "name"
+        ? sign * a.label.localeCompare(b.label)
+        : sign * (a.value - b.value) || a.label.localeCompare(b.label),
+    );
 }
 
 /** What clicking a Breakdown row does. */

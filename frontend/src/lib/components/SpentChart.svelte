@@ -14,6 +14,7 @@
   - `onpickgate`: called with a gate whose legend entry was clicked
 -->
 <script lang="ts">
+  import { barMotion } from "../motion";
   import type { ChartState } from "layerchart";
   import { BarChart, Bars, Tooltip } from "layerchart/svg";
   import type { SpentGate } from "../api";
@@ -86,7 +87,7 @@
   }
 
   function dayText(row: SpentRow): string {
-    return `${formatLongDay(row.day)}: ${formatDuration(row.total)} spent`;
+    return `${formatLongDay(row.day)}: ${formatDuration(row.total)} of run time`;
   }
 </script>
 
@@ -182,6 +183,7 @@
               opacity={opacity(s.key)}
               radius={0}
               strokeWidth={0}
+              motion={barMotion()}
             />
           {/each}
         {/snippet}
@@ -196,7 +198,7 @@
   <div class="visually-hidden">
     <table>
       <caption>
-        Time spent per day for {rows.length} days: {formatDuration(totals.total)} in all. Days without
+        Run time per day for {rows.length} days: {formatDuration(totals.total)} in all. Days without
         time spent are left out.
       </caption>
       <thead>
@@ -326,7 +328,7 @@
   }
 
   .plot {
-    height: 220px;
+    height: 300px;
   }
 
 

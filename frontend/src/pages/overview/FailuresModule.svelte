@@ -62,7 +62,7 @@
     },
     {
       key: "duration",
-      label: "Ran",
+      label: "Ran for",
       align: "right",
       sortable: false,
       text: (e) => formatDuration(e.duration),

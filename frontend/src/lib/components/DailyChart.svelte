@@ -1,6 +1,7 @@
 <!--
   @component
-  Daily time saved as tall bars over a short panel of daily failures. Both panels share one day
+  Daily runs as tall bars over a short panel of daily failures, with time saved in the headline
+  and the tooltip. Both panels share one day
   axis, so hovering a day highlights it in both and shows one tooltip with both values. The two
   measures have different units, so each panel has its own y scale.
 
@@ -15,6 +16,7 @@
   - `onselect`: called with the new span, or undefined to clear; omit for a static chart
 -->
 <script lang="ts">
+  import { barMotion } from "../motion";
   import type { ChartState } from "layerchart";
   import { BarChart, Bars, Tooltip } from "layerchart/svg";
   import { dailyScale } from "../daily";
@@ -36,7 +38,7 @@
   let { days, selected, onselect }: Props = $props();
 
   interface Row extends DayBucket {
-    savedSpan: [number, number];
+    runsSpan: [number, number];
     failSpan: [number, number];
   }
 
@@ -44,13 +46,14 @@
   const scale = $derived(dailyScale(days));
   const totalFailures = $derived(days.reduce((sum, d) => sum + d.failures, 0));
   const totalSaved = $derived(days.reduce((sum, d) => sum + d.saved, 0));
+  const totalRuns = $derived(days.reduce((sum, d) => sum + d.runs, 0));
   const activeDays = $derived(days.filter((d) => d.runs > 0));
 
   const rows = $derived(
     days.map(
       (d): Row => ({
         ...d,
-        savedSpan: [scale.savedY(0), scale.savedY(d.saved)],
+        runsSpan: [scale.runsY(0), scale.runsY(d.runs)],
         failSpan: [0, scale.failY(d.failures)],
       }),
     ),
@@ -64,9 +67,9 @@
   const pick = createDayPick(() => ({ days, selected, onselect }), padding, BAND_PADDING);
 
   function dayText(day: DayBucket): string {
-    return `${formatLongDay(day.day)}: ${formatDuration(day.saved)} saved, ${plural(day.failures, "failure", "failures")}`;
+    return `${formatLongDay(day.day)}: ${plural(day.runs, "gate call", "gate calls")}, ${plural(day.failures, "failure", "failures")}, ${formatDuration(day.saved)} saved by cache`;
   }
-  const savedColor = METRIC_COLORS.saved;
+  const runsColor = METRIC_COLORS.runs;
   const failColor = METRIC_COLORS.fail;
 </script>
 
@@ -76,9 +79,9 @@
       <ChartTooltip
         title={formatLongDay(data.day)}
         rows={[
-          { color: savedColor, label: "Time saved", value: formatDuration(data.saved) },
+          { color: runsColor, label: "Gate calls", value: formatCount(data.runs) },
           { color: failColor, label: "Failures", value: formatCount(data.failures) },
-          { color: METRIC_COLORS.runs, label: "Runs", value: formatCount(data.runs) },
+          { label: "Saved by cache", value: formatDuration(data.saved) },
         ]}
         hint={onselect ? PICK_DAY_HINT : undefined}
       />
@@ -89,11 +92,14 @@
 <figure class="daily">
   <figcaption class="top">
     <span class="headline">
-      <span class="big"><UnitValue value={formatDuration(totalSaved)} /></span>
-      <span class="second">saved · <span class="fails">{formatCount(totalFailures)}</span> {totalFailures === 1 ? "failure" : "failures"}</span>
+      <span class="big">{formatCount(totalRuns)}</span>
+      <span class="second"
+        >{totalRuns === 1 ? "gate call" : "gate calls"} · <span class="fails">{formatCount(totalFailures)}</span>
+        {totalFailures === 1 ? "failure" : "failures"} · <UnitValue value={formatDuration(totalSaved)} /> saved by cache</span
+      >
     </span>
     <span class="legend">
-      <span><i style:background={savedColor}></i>Time saved</span>
+      <span><i style:background={runsColor}></i>Gate calls</span>
       <span><i style:background={failColor}></i>Failures</span>
     </span>
   </figcaption>
@@ -112,7 +118,7 @@
     <BarChart
       data={rows}
       x="day"
-      y={(d: Row) => d.savedSpan}
+      y={(d: Row) => d.runsSpan}
       yDomain={[0, 1]}
       bandPadding={BAND_PADDING}
       {padding}
@@ -128,8 +134,8 @@
       }}
     >
       {#snippet marks()}
-        <Bars y={(d: Row) => d.savedSpan} fill={savedColor} radius={3} strokeWidth={0} />
-        <Bars y={(d: Row) => d.failSpan} fill={failColor} radius={3} strokeWidth={0} />
+        <Bars y={(d: Row) => d.runsSpan} fill={runsColor} radius={3} strokeWidth={0} motion={barMotion()} />
+        <Bars y={(d: Row) => d.failSpan} fill={failColor} radius={3} strokeWidth={0} motion={barMotion()} />
       {/snippet}
       {#snippet tooltip({ context })}{@render dayTooltip(context)}{/snippet}
     </BarChart>
@@ -142,22 +148,25 @@
   <div class="visually-hidden">
     <table>
       <caption>
-        Daily totals for {days.length} days: {formatDuration(totalSaved)} saved,
-        {formatCount(totalFailures)} failures. Days without runs are left out.
+        Daily totals for {days.length} days: {formatCount(totalRuns)} gate calls,
+        {formatCount(totalFailures)} failures, {formatDuration(totalSaved)} saved by cache. Days
+        without calls are left out.
       </caption>
       <thead>
         <tr>
           <th scope="col">Day</th>
-          <th scope="col">Time saved</th>
+          <th scope="col">Gate calls</th>
           <th scope="col">Failures</th>
+          <th scope="col">Saved by cache</th>
         </tr>
       </thead>
       <tbody>
         {#each activeDays as day (day.day)}
           <tr>
             <th scope="row">{formatLongDay(day.day)}</th>
-            <td>{formatDuration(day.saved)}</td>
+            <td>{formatCount(day.runs)}</td>
             <td>{formatCount(day.failures)}</td>
+            <td>{formatDuration(day.saved)}</td>
           </tr>
         {/each}
       </tbody>
@@ -197,6 +206,12 @@
   .second {
     color: var(--text-muted);
     font-size: var(--text-sm);
+  }
+
+  .second :global(.u) {
+    font-size: 1em;
+    font-weight: 400;
+    margin: 0;
   }
 
   .fails {

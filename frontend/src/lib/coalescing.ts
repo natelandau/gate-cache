@@ -38,11 +38,11 @@ export function waitEndings(c: Coalescing): MixPart[] {
   ];
 }
 
-/** Return the wait totals: how many runs waited, the total and typical wait, and what it saved. */
+/** Return the wait totals: how many calls waited, the total and typical wait, and what it saved. */
 export function waitFacts(c: Coalescing): WaitFact[] {
   return [
     {
-      label: "Runs that waited",
+      label: "Calls that waited",
       value: `${formatCount(c.waited)} (${formatPercent(c.runs ? c.waited / c.runs : null)})`,
     },
     { label: "Total wait", value: formatDuration(c.total_wait) },
@@ -60,7 +60,7 @@ export function coalescingNote(c: Coalescing): string | undefined {
   if (c.timed_out) notes.push(`${plural(c.timed_out, "wait", "waits")} reached the timeout.`);
   if (c.unknown_runs) {
     notes.push(
-      `${plural(c.unknown_runs, "run", "runs")} in this range came from an older gate-cache that did not record waits, so ${c.unknown_runs === 1 ? "it is" : "they are"} not counted here.`,
+      `${plural(c.unknown_runs, "call", "calls")} in this range came from an older gate-cache that did not record waits, so ${c.unknown_runs === 1 ? "it is" : "they are"} not counted here.`,
     );
   }
   return notes.length ? notes.join(" ") : undefined;

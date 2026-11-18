@@ -46,7 +46,7 @@ describe("CalendarHeatmap", () => {
     expect(body).toContain(`>${weekStart}<`);
     const monday = new Date(1970, 0, 5).toLocaleString(undefined, { weekday: "short" }).slice(0, 1);
     expect(body).toMatch(new RegExp(`class="weekday[^"]*"[^>]*>${monday}<`));
-    expect(body).toMatch(/title="[^"]*Runs: 10"/);
+    expect(body).toMatch(/title="[^"]*Gate calls: 10"/);
   });
 
   it("lists active days in a screen-reader table", () => {
@@ -76,6 +76,6 @@ describe("CalendarHeatmap", () => {
     expect(body.match(/aria-pressed="true"/g)?.length).toBe(1);
     expect(body).toMatch(/<button[^>]*class="cell[^"]*selected[^"]*"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*class="cell[^"]*selected/);
     expect(body.match(/class="cell[^"]*dimmed/g)?.length).toBe(2);
-    expect(body).toMatch(/aria-label="[^"]*Runs: 2[^"]*"/);
+    expect(body).toMatch(/aria-label="[^"]*Gate calls: 2[^"]*"/);
   });
 });

@@ -142,7 +142,8 @@
   </div>
   <div class="foot">
     <span class="peak">
-      {#if peak}Peak: {weekdayName(peak.weekday, "short")} {hourLabel(peak.hour)} · {formatHeatValue(metric, heatValue(peak, metric))}{/if}
+      {#if peak}Peak: {weekdayName(peak.weekday, "short")} {hourLabel(peak.hour)} · {formatHeatValue(metric, heatValue(peak, metric))}
+        {HEAT_LABELS[metric].toLowerCase()}{/if}
     </span>
     <HeatLegend {metric} />
   </div>
@@ -194,10 +195,13 @@
     display: block;
     aspect-ratio: 1;
     border-radius: 3px;
+    transition: background-color var(--dur-slow) var(--ease);
   }
 
   a.cell {
-    transition: box-shadow var(--dur-fast) var(--ease);
+    transition:
+      background-color var(--dur-slow) var(--ease),
+      box-shadow var(--dur-fast) var(--ease);
   }
 
   a.cell:hover {

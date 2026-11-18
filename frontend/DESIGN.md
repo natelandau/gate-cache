@@ -4,6 +4,8 @@ Read this page before you add or change anything in the dashboard UI. It gives t
 
 ## Principles
 
+The dashboard shows how the user's gates are doing (what runs, how long it takes, and what fails), and what gate-cache saved comes second, so lead every page, default, and sort with the gates' own numbers.
+
 The dashboard is an operations tool that people open many times a day. These principles decide most design questions:
 
 - Data comes first. Every card earns its space with a number, a chart, or a table. Do not add hero sections or decorative images.
@@ -76,7 +78,7 @@ Motion explains a change. It never decorates, and nothing animates when a page f
 | `--ease`     | `cubic-bezier(.2,0,.38,.9)`   | Most transitions                                              |
 | `--ease-in`  | `cubic-bezier(0,0,.38,.9)`    | Elements that enter                                           |
 
-The keyframe `fade-in` lives in `src/app.css`. The live dot in the top bar is the only looping animation. Loading skeletons (`Skeleton`) are still blocks that stay invisible for 200ms, so a fast load never flashes them. A global rule turns every CSS animation and transition off under `prefers-reduced-motion`. A Svelte transition, such as the value swap in `StatStrip`, must read `prefers-reduced-motion` itself and set its duration to 0.
+The keyframe `fade-in` lives in `src/app.css`. The live dot in the top bar is the only looping animation. Loading skeletons (`Skeleton`) are still blocks that stay invisible for 200ms, so a fast load never flashes them. When a tab, filter, or range changes what a module shows, the view eases to the new data: chart bars take `barMotion()` from `src/lib/motion.ts`, ranked rows slide to their new rank with `animate:flip` at `viewChangeMs()`, and bars, meters, and heatmap cells transition their size or color at `--dur-slow`. A global rule turns every CSS animation and transition off under `prefers-reduced-motion`. A Svelte transition, such as the value swap in `StatStrip`, must read `prefers-reduced-motion` itself and set its duration to 0.
 
 ## Palette
 
@@ -131,6 +133,7 @@ Use an existing component before you write markup of your own. If a page needs a
 | ----------------------------------------------------- | --------------------------------- |
 | A page title, subtitle, and page filter chips         | `PageHeader`                      |
 | A Lucide icon                                         | `Icon` (add the name to its `ICONS` map first) |
+| An info icon that explains a label on hover, focus, or click | `InfoTip`                  |
 | A table of rows, sortable, with optional row clicks   | `DataTable`                       |
 | The table of gates on the Gates page                  | `GateTable`                       |
 | Headline numbers as cards with deltas and sparklines  | `StatStrip`, with stats from `summaryStats` |

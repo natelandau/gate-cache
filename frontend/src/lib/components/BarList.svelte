@@ -30,17 +30,26 @@
 </script>
 
 <script lang="ts" generics="T">
+  import Icon from "./Icon.svelte";
 
   interface Props {
     label: string;
     heading: string;
     rows: Bar<T>[];
     color: "saved" | "runs" | "fails";
-    columns: { label: string; text: (row: T) => string }[];
+    columns: { key: string; label: string; text: (row: T) => string }[];
     onpick: (bar: Bar<T>) => void;
+    /** The sorted column, "name" for the first column; with `onsort`, headers sort. */
+    sort?: { key: string; direction: "asc" | "desc" };
+    onsort?: (key: string) => void;
   }
 
-  let { label, heading, rows, color, columns, onpick }: Props = $props();
+  let { label, heading, rows, color, columns, onpick, sort, onsort }: Props = $props();
+
+  function ariaSort(key: string): "ascending" | "descending" | undefined {
+    if (sort?.key !== key) return undefined;
+    return sort.direction === "asc" ? "ascending" : "descending";
+  }
 
   const FILLS = {
     saved: "var(--chart-saved)",
@@ -55,15 +64,28 @@
   }
 </script>
 
+{#snippet header(key: string, text: string)}
+  {#if onsort}
+    <button type="button" class="sort" class:on={sort?.key === key} onclick={() => onsort(key)}>
+      <span>{text}</span>
+      <span class="arrow"
+        >{#if sort?.key === key}<Icon name={sort.direction === "asc" ? "arrow-up" : "arrow-down"} size={12} />{/if}</span
+      >
+    </button>
+  {:else}
+    {text}
+  {/if}
+{/snippet}
+
 <div class="wrap">
   <table class="bars">
     <caption class="visually-hidden">{label}</caption>
     <thead>
       <tr>
-        <th scope="col">{heading}</th>
+        <th scope="col" aria-sort={ariaSort("name")}>{@render header("name", heading)}</th>
         <th class="bar-cell" aria-hidden="true"></th>
-        {#each columns as column (column.label)}
-          <th scope="col" class="num">{column.label}</th>
+        {#each columns as column (column.key)}
+          <th scope="col" class="num" aria-sort={ariaSort(column.key)}>{@render header(column.key, column.label)}</th>
         {/each}
       </tr>
     </thead>
@@ -78,8 +100,8 @@
           <td class="bar-cell" aria-hidden="true">
             <Meter share={share(bar.value)} color={bar.dimmed ? "var(--chart-neutral)" : FILLS[color]} />
           </td>
-          {#each columns as column (column.label)}
-            <td class="num">{column.text(bar.row)}</td>
+          {#each columns as column (column.key)}
+            <td class="num" class:sorted={sort?.key === column.key}>{column.text(bar.row)}</td>
           {/each}
         </tr>
       {/each}
@@ -109,7 +131,8 @@
   }
 
   thead th {
-    height: 32px;
+    height: auto;
+    vertical-align: bottom;
     border-bottom-color: var(--border);
     font-size: var(--text-xs);
     font-weight: 500;
@@ -134,9 +157,10 @@
     text-align: right;
   }
 
+
   .name {
-    width: 180px;
-    max-width: 180px;
+    width: 160px;
+    max-width: 160px;
     overflow: hidden;
     text-overflow: ellipsis;
     font-weight: 500;
@@ -161,13 +185,48 @@
   }
 
   .bar-cell {
-    width: 100%;
-    min-width: 80px;
+    width: 24%;
+    min-width: 48px;
   }
 
 
   .dimmed .name button,
   .dimmed td {
     color: var(--text-muted);
+  }
+
+  .sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 22px;
+    white-space: nowrap;
+    margin: 0 -4px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 3px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    transition: color var(--dur-fast) var(--ease);
+  }
+
+  .num .sort {
+    flex-direction: row-reverse;
+  }
+
+  .sort:hover,
+  .sort.on {
+    color: var(--text);
+  }
+
+  .arrow {
+    display: inline-flex;
+    width: 12px;
+  }
+
+  td.sorted {
+    font-weight: 500;
   }
 </style>

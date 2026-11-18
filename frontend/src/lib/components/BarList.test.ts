@@ -31,9 +31,9 @@ describe("BarList", () => {
       props: {
         label: "Repos",
         heading: "Branch",
-        rows: breakdownBars(rows, "saved", "repo", []),
+        rows: breakdownBars(rows, { key: "saved", direction: "desc" }, "repo", []),
         color: "saved",
-        columns: [{ label: "Gates", text: (row: BreakdownRow) => `${row.gates} gates` }],
+        columns: [{ key: "x", label: "Gates", text: (row: BreakdownRow) => `${row.gates} gates` }],
         onpick: () => {},
       },
     });
@@ -49,7 +49,7 @@ describe("BarList", () => {
       props: {
         label: "Repos",
         heading: "Repo",
-        rows: breakdownBars(rows, "saved", "repo", ["-"]),
+        rows: breakdownBars(rows, { key: "saved", direction: "desc" }, "repo", ["-"]),
         color: "fails",
         columns: [],
         onpick: () => {},

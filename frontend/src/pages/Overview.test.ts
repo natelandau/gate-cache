@@ -60,7 +60,7 @@ describe("Overview", () => {
     expect(body).toMatch(/<h2[^>]*id="top-gates-title"[^>]*>Top gates<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="outcome-title"[^>]*>Outcome mix<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="flaky-gates-title"[^>]*>Flaky gates<\/h2>/);
-    expect(body).toMatch(/Skip<\/span>\s*<(?:span|a)[^>]*>6<\/(?:span|a)>\s*<span[^>]*>50%</);
+    expect(body).toMatch(/Skipped by cache<\/span>\s*<(?:span|a)[^>]*>6<\/(?:span|a)>\s*<span[^>]*>50%</);
   });
 
   it("shows the reasons, recent failures, slowdowns, and breakdown modules", () => {
@@ -120,7 +120,7 @@ describe("Overview", () => {
     for (const title of [
       "Activity",
       "Daily",
-      "Time spent",
+      "Time gates ran",
       "When gates run",
       "Top gates",
       "Outcome mix",
@@ -133,7 +133,7 @@ describe("Overview", () => {
     ]) {
       expect(body).toMatch(new RegExp(`<h2[^>]*>${title}</h2>`));
     }
-    for (const label of ["Time saved", "Net saved", "Time spent", "Runs", "Skip rate", "Flaky gates", "Failures"]) {
+    for (const label of ["Gate calls", "Time gates ran", "Gate failures", "Flaky gates", "Cache skip rate", "Time saved by cache", "Net saved by cache"]) {
       expect(body).toMatch(new RegExp(`<dt[^>]*><span>${label}</span>`));
     }
   });

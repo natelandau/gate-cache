@@ -44,7 +44,7 @@
     rows,
     label,
     showRepo = true,
-    sort = $bindable({ key: "time_saved", direction: "desc" }),
+    sort = $bindable({ key: "time_spent", direction: "desc" }),
     activeKey = null,
     onRowClick,
     busy = false,
@@ -66,25 +66,25 @@
   const columns = $derived<Column<GateRow>[]>([
     { key: "name", label: "Gate", cell: gateCell, title: (g) => g.name, firstDirection: "asc" },
     ...(showRepo ? [repoColumn] : []),
-    { key: "runs", label: "Runs", align: "right", text: (g) => formatCount(g.runs) },
-    { key: "skip_rate", label: "Skip %", align: "right", text: (g) => formatPercent(g.skip_rate) },
+    { key: "runs", label: "Calls", align: "right", text: (g) => formatCount(g.runs) },
+    { key: "skip_rate", label: "Cache skip %", align: "right", text: (g) => formatPercent(g.skip_rate) },
     { key: "avg_run", label: "Avg run", align: "right", text: (g) => formatDuration(g.avg_run) },
     {
       key: "time_spent",
-      label: "Spent",
+      label: "Time ran",
       align: "right",
       text: (g) => formatDuration(g.time_spent),
     },
     {
       key: "median_run",
-      label: "Median",
+      label: "Median run",
       align: "right",
       text: (g) => formatDuration(g.median_run),
       title: (g) => notRecorded(g.median_run),
     },
     {
       key: "p90_run",
-      label: "p90",
+      label: "p90 run",
       align: "right",
       text: (g) => formatDuration(g.p90_run),
       title: (g) => notRecorded(g.p90_run),
@@ -105,7 +105,7 @@
       title: (g) =>
         notRecorded(g.peak_rss) ?? (g.median_rss === null ? undefined : `Median ${formatBytes(g.median_rss)}`),
     },
-    { key: "time_saved", label: "Saved", align: "right", text: (g) => formatDuration(g.time_saved) },
+    { key: "time_saved", label: "Saved by cache", align: "right", text: (g) => formatDuration(g.time_saved) },
     { key: "failures", label: "Failures", align: "right", cell: failuresCell },
     {
       key: "fail_time",

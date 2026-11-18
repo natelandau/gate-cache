@@ -112,22 +112,21 @@
   const stats = $derived.by((): Stat[] => {
     if (!row) return [];
     return [
-      {
-        label: "Runs",
-        value: formatCount(row.runs),
-        hint: `${formatCount(row.failures)} ${row.failures === 1 ? "failure" : "failures"}`,
-      },
-      { label: "Skip rate", value: formatPercent(row.skip_rate) },
+      { label: "Gate calls", value: formatCount(row.runs) },
       {
         label: "Avg run",
         value: formatDuration(row.avg_run),
         hint: runHint(row),
       },
-      { label: "Saved", value: formatDuration(row.time_saved) },
       {
-        label: "Time spent",
+        label: "Time ran",
         value: formatDuration(row.time_spent),
         hint: row.fail_time ? `${formatDuration(row.fail_time)} lost to failures` : undefined,
+      },
+      {
+        label: "Failures",
+        value: formatCount(row.failures),
+        tone: row.failures ? "danger" : "default",
       },
       { label: "CPU/wall", value: formatRatio(row.cpu_ratio) },
       {
@@ -135,6 +134,8 @@
         value: formatBytes(row.peak_rss),
         hint: row.median_rss === null ? undefined : `median ${formatBytes(row.median_rss)}`,
       },
+      { label: "Cache skip rate", value: formatPercent(row.skip_rate) },
+      { label: "Saved by cache", value: formatDuration(row.time_saved) },
     ];
   });
 
@@ -261,7 +262,7 @@
         />
       {:else}
         <section>
-          <h3 class="section-title">Pass duration</h3>
+          <h3 class="section-title">Passing run time</h3>
           {#if detail.trend.length}
             <TrendChart trend={detail.trend} />
           {:else}
@@ -270,7 +271,7 @@
         </section>
 
         <section>
-          <h3 class="section-title">Run times</h3>
+          <h3 class="section-title">Run time spread</h3>
           {#if detail.histogram}
             <RunHistogram histogram={detail.histogram} />
           {:else}
@@ -295,7 +296,7 @@
 
         {#if sources.length}
           <section>
-            <h3 class="section-title">Time spent by source</h3>
+            <h3 class="section-title">Time ran by source</h3>
             <ShareMix parts={sources} format={formatDuration} />
           </section>
         {/if}
@@ -316,7 +317,7 @@
         <section>
           <h3 class="section-title">
             Latest {formatCount(recent.length)}
-            {recent.length === 1 ? "run" : "runs"}
+            {recent.length === 1 ? "call" : "calls"}
           </h3>
           <DataTable
             label="Latest runs of {name}"

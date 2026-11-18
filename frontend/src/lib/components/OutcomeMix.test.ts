@@ -18,8 +18,8 @@ describe("OutcomeMix", () => {
   it("lists every outcome with its label, count, and percent for screen readers too", () => {
     const body = html(OutcomeMix, { props: { counts } });
     expect(body.match(/<li/g)).toHaveLength(5);
-    expect(body).toContain("Pass, not cached");
-    expect(body).toMatch(/Skip<\/span>\s*<span[^>]*>6<\/span>\s*<span[^>]*>60%</);
+    expect(body).toContain("Passed, pass not cached");
+    expect(body).toMatch(/Skipped by cache<\/span>\s*<span[^>]*>6<\/span>\s*<span[^>]*>60%</);
     expect(body).not.toMatch(/<ul[^>]*aria-hidden/);
   });
 

@@ -35,7 +35,9 @@
 
 <script lang="ts">
   import { fly } from "svelte/transition";
+  import { prefersReducedMotion } from "../motion";
   import Icon from "./Icon.svelte";
+  import InfoTip from "./InfoTip.svelte";
   import Skeleton from "./Skeleton.svelte";
   import Sparkline from "./Sparkline.svelte";
   import TrendBadge from "./TrendBadge.svelte";
@@ -52,8 +54,7 @@
 
   let { stats, note, deltaLabel, busy = false, highlight, placeholders }: Props = $props();
 
-  const reduced =
-    typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduced = prefersReducedMotion();
 
 </script>
 
@@ -71,8 +72,7 @@
     {#each stats as stat (stat.label)}
       <div class="card" class:linked={!!stat.href}>
         <dt>
-          <span>{stat.label}</span>
-          {#if stat.title}<span class="info" title={stat.title}><Icon name="info" size={13} label={stat.title} /></span>{/if}
+          <span>{stat.label}</span>{#if stat.title}&nbsp;<InfoTip text={stat.title} label="About {stat.label}" />{/if}
           {#if stat.href}<span class="go"><Icon name="arrow-up-right" size={14} /></span>{/if}
         </dt>
         <dd class="value" class:danger={stat.tone === "danger"} class:flaky={stat.tone === "flaky"}>
@@ -86,17 +86,18 @@
             </span>
           {/key}
         </dd>
-        {#if stat.delta}
-          <dd class="meta">
+        <!-- Every card renders all five rows, so the subgrid lines them up across cards. -->
+        <dd class="meta" aria-hidden={stat.delta ? undefined : "true"}>
+          {#if stat.delta}
             <TrendBadge dir={stat.delta.dir} text={stat.delta.text} tone={stat.delta.tone} />{#if deltaLabel}<span
                 class="vs">{deltaLabel}</span
               >{/if}
-          </dd>
-        {/if}
+          {/if}
+        </dd>
         <dd class="hint" title={stat.hint} aria-hidden={stat.hint ? undefined : "true"}>{stat.hint ?? ""}</dd>
-        {#if stat.spark}
-          <dd class="spark-cell"><Sparkline values={stat.spark.values} color={stat.spark.color} {highlight} /></dd>
-        {/if}
+        <dd class="spark-cell" aria-hidden={stat.spark ? undefined : "true"}>
+          {#if stat.spark}<Sparkline values={stat.spark.values} color={stat.spark.color} {highlight} />{/if}
+        </dd>
       </div>
     {/each}
   </dl>
@@ -111,10 +112,15 @@
     margin: 0;
   }
 
+  /* Each card spans five rows of the strip and shares them through subgrid, so a label that
+     wraps to two lines pushes every card's value down together. */
   .card {
     position: relative;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-row: span 5;
+    grid-template-rows: subgrid;
+    row-gap: 0;
+    align-content: start;
     min-width: 0;
     padding: 14px var(--space-4) var(--space-3);
     border-radius: var(--radius-card);
@@ -124,6 +130,9 @@
   }
 
   .card.placeholder {
+    display: flex;
+    flex-direction: column;
+    grid-row: auto;
     gap: 10px;
   }
 
@@ -132,22 +141,26 @@
   }
 
   dt {
-    display: flex;
-    align-items: center;
-    gap: 5px;
     color: var(--text-muted);
     font-size: var(--text-sm);
-    white-space: nowrap;
+    line-height: 18px;
   }
 
-  .info {
-    display: inline-grid;
-    color: var(--text-faint);
+  /* Room for the arrow that a linked card shows on hover. */
+  .linked dt {
+    padding-right: 14px;
   }
+
+  dt :global(.tip) {
+    vertical-align: -3px;
+  }
+
 
   .go {
+    position: absolute;
+    top: 14px;
+    right: var(--space-3);
     display: inline-grid;
-    margin-left: auto;
     color: var(--text-faint);
     opacity: 0;
     transition: opacity var(--dur-fast) var(--ease);
@@ -236,7 +249,7 @@
   }
 
   .spark-cell {
-    margin-top: auto;
+    align-self: end;
     padding-top: 10px;
   }
 
