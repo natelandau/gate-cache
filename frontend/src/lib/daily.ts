@@ -1,6 +1,5 @@
 import { countTicks, formatCount } from "./format";
 
-
 /** Top of the failures band on the daily chart's shared 0..1 y scale. */
 export const FAIL_TOP = 0.2;
 /** Floor of the runs band; the space between the bands separates them. */

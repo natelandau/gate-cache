@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatDuration } from "./format";
 import {
+  formatHeatAmount,
   formatHeatValue,
   HEAT_OPTIONS,
   heatColor,
@@ -90,5 +91,13 @@ describe("nextActive", () => {
   it("returns null when no active position lies that way", () => {
     expect(nextActive(0, -1, active)).toBeNull();
     expect(nextActive(5, 1, active)).toBeNull();
+  });
+});
+
+describe("formatHeatAmount", () => {
+  it("names the unit, singular for one", () => {
+    expect(formatHeatAmount("runs", 1)).toBe("1 gate call");
+    expect(formatHeatAmount("fail", 3)).toBe("3 failures");
+    expect(formatHeatAmount("saved", 90)).toBe(`${formatDuration(90)} saved by cache`);
   });
 });

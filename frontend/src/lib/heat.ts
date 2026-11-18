@@ -1,4 +1,4 @@
-import { TERMS } from "./terms";
+import { counted, TERMS } from "./terms";
 import { formatCount, formatDuration } from "./format";
 
 /** Which heatmap ramp a grid uses: runs (blue), time saved (green), or failures (red). */
@@ -64,6 +64,12 @@ export function hourLabel(hour: number): string {
 /** Render a cell value for `metric`: a duration for time saved, a count otherwise. */
 export function formatHeatValue(metric: HeatMetric, value: number): string {
   return metric === "saved" ? formatDuration(value) : formatCount(value);
+}
+
+/** Render a cell value for `metric` with its unit, such as "1 gate call" or "5m saved by cache". */
+export function formatHeatAmount(metric: HeatMetric, value: number): string {
+  if (metric === "saved") return `${formatDuration(value)} ${TERMS.saved.column.toLowerCase()}`;
+  return counted(value, metric === "runs" ? TERMS.calls : TERMS.failures, formatCount);
 }
 
 /**

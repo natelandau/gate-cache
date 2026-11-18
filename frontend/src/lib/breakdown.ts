@@ -59,12 +59,13 @@ export function breakdownBars(
   return rows
     .map((row) => {
       const key = allRepos ? (row.repo ?? UNKNOWN_REPO) : row.key;
+      const value = metricValue(row, by);
       return {
         key,
         label: row.label,
         title: row.title ?? undefined,
-        value: metricValue(row, by) ?? 0,
-        missing: metricValue(row, by) === null,
+        value: value ?? 0,
+        missing: value === null,
         dimmed: allRepos && chosen.size > 0 && !chosen.has(key),
         row,
       };

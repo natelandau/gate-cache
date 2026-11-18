@@ -221,7 +221,6 @@
     text-align: right;
   }
 
-
   td {
     border-top: 1px solid var(--border-row);
     transition: background-color var(--dur-fast) var(--ease);

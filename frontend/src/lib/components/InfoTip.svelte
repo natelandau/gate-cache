@@ -19,6 +19,8 @@
 
   const uid = $props.id();
   let pinned = $state(false);
+  // Escape hides the bubble even while hover or focus would show it, until the pointer or focus leaves.
+  let dismissed = $state(false);
   let flip = $state(false);
   let root: HTMLElement | undefined = $state();
 
@@ -31,18 +33,28 @@
   }
 </script>
 
-<span class="tip" class:pinned class:flip bind:this={root}>
+<span class="tip" class:pinned class:flip class:dismissed bind:this={root}>
   <button
     type="button"
     aria-label={label}
     aria-describedby="{uid}-tip"
     aria-expanded={pinned}
     onpointerenter={place}
+    onpointerleave={() => (dismissed = false)}
     onfocus={place}
-    onclick={() => (pinned = !pinned)}
-    onblur={() => (pinned = false)}
+    onclick={() => {
+      pinned = !pinned;
+      dismissed = false;
+    }}
+    onblur={() => {
+      pinned = false;
+      dismissed = false;
+    }}
     onkeydown={(event) => {
-      if (event.key === "Escape") pinned = false;
+      if (event.key === "Escape") {
+        pinned = false;
+        dismissed = true;
+      }
     }}
   >
     <Icon name="info" size={13} />
@@ -110,5 +122,9 @@
   .pinned .bubble {
     opacity: 1;
     transform: none;
+  }
+
+  .tip.dismissed .bubble {
+    opacity: 0;
   }
 </style>

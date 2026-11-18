@@ -113,7 +113,7 @@
     <Select label="Group by" value={group} options={groupOptions} onchange={pickGroup} />
   {/snippet}
   <BarList
-    label="{TERMS.calls.label} by {info.label.toLowerCase()}"
+    label="Breakdown by {info.label.toLowerCase()}"
     heading={info.label}
     rows={shown}
     color={barColor}

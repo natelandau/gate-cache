@@ -150,7 +150,9 @@
     padding-right: 14px;
   }
 
+  /* Above the value link's card-wide overlay, so a linked card's tip still opens on hover or tap. */
   dt :global(.tip) {
+    z-index: 1;
     margin-left: 4px;
     vertical-align: -3px;
   }

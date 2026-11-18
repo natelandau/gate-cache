@@ -17,6 +17,7 @@
   import { tick } from "svelte";
   import type { HourCell } from "../api";
   import {
+    formatHeatAmount,
     formatHeatValue,
     HEAT_LABELS,
     heatColor,
@@ -142,8 +143,10 @@
   </div>
   <div class="foot">
     <span class="peak">
-      {#if peak}Peak: {weekdayName(peak.weekday, "short")} {hourLabel(peak.hour)} · {formatHeatValue(metric, heatValue(peak, metric))}
-        {HEAT_LABELS[metric].toLowerCase()}{/if}
+      {#if peak}Peak: {weekdayName(peak.weekday, "short")} {hourLabel(peak.hour)} · {formatHeatAmount(
+          metric,
+          heatValue(peak, metric),
+        )}{/if}
     </span>
     <HeatLegend {metric} />
   </div>

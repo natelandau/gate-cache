@@ -23,11 +23,10 @@
   import { dailyScale } from "../daily";
   import { METRIC_COLORS } from "../heat";
   import type { DayBucket } from "../fill";
-  import { formatCount, formatDuration, formatLongDay, formatShortDay, plural } from "../format";
+  import { formatCount, formatDuration, formatLongDay, formatShortDay } from "../format";
   import { createDayPick } from "../daypick.svelte";
   import ChartTooltip from "./ChartTooltip.svelte";
   import DayPicker from "./DayPicker.svelte";
-  import UnitValue from "./UnitValue.svelte";
   import { PICK_DAY_HINT, type DaySpan } from "../selection";
 
   interface Props {
@@ -208,7 +207,6 @@
     color: var(--text-muted);
     font-size: var(--text-sm);
   }
-
 
   .fails {
     color: var(--danger);
