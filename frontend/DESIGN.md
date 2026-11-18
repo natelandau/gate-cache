@@ -99,7 +99,7 @@ Each role token except `--focus` and the chart tokens has a `-soft` partner, suc
 
 ### Gate series
 
-A chart that splits a total by gate, such as Time spent, colors the gates with `--chart-series-1` to `--chart-series-5` in rank order, and uses `--chart-neutral` gray for Other. Get a color with `seriesColor` in `src/lib/spent.ts`. The five colors are blue, magenta, teal, violet, and cyan. They avoid green, red, and amber, because those colors mean saved, failures, and warnings.
+A chart that splits a total by gate, such as Time gates ran, colors the gates with `--chart-series-1` to `--chart-series-5` in rank order, and uses `--chart-neutral` gray for Other. Get a color with `seriesColor` in `src/lib/spent.ts`. The five colors are blue, magenta, teal, violet, and cyan. They avoid green, red, and amber, because those colors mean saved, failures, and warnings.
 
 Neighbors in rank order pass the dataviz palette checks in both themes, and teal next to magenta is the closest pair for readers with deuteranopia. Pairs that are not neighbors are close: teal and cyan (3 and 5) for every reader, and blue and violet (1 and 4) and magenta and cyan (2 and 5) for readers with deuteranopia. A stacked chart puts only neighbors side by side. A gate chart always names each part in a legend and in its tooltip, so color never identifies a gate alone. Stacked segments touch with no gap or stroke between them.
 
@@ -140,8 +140,8 @@ Use an existing component before you write markup of your own. If a page needs a
 | The table of gates on the Gates page                  | `GateTable`                       |
 | Headline numbers as cards with deltas and sparklines  | `StatStrip`, with stats from `summaryStats` |
 | A small trend line inside a card                      | `Sparkline`                       |
-| Time saved and failures per day                       | `DailyChart`                      |
-| Time spent per day, stacked by gate                   | `SpentChart`                      |
+| Gate calls and failures per day                       | `DailyChart`                      |
+| Run time per day, stacked by gate                     | `SpentChart`                      |
 | Run time of one gate over time                        | `TrendChart`                      |
 | Any tooltip: a chart's values or a plain explanation  | `TooltipSurface`, the one tooltip surface; a chart renders it inside a LayerChart `Tooltip.Root` with `variant="none"` |
 | The outcome of one run                                | `OutcomeBadge`                    |
