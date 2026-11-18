@@ -29,6 +29,8 @@ Run linters and tests only through these duties, never directly, so every run sh
 
 ## Commits
 
+Before you open a pull request, fast-forward a branch onto `main`, or squash a branch into `main`, compare `src/gate_cache/agent/skill.md` (the `gate-cache --skill` guide) with the branch diff. If the branch adds or changes a feature, option, or message that the guide describes or omits, update the guide on the branch.
+
 Mark a commit as a breaking change (`!` in the subject and a `BREAKING CHANGE:` footer) only when it breaks the CLI: a removed or renamed command or flag, a changed exit code, or a change to the CLI's output. A change to the dashboard UI is never breaking, even when it removes a page.
 
 ## Gates
