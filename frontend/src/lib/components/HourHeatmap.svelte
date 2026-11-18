@@ -99,7 +99,7 @@
     class="grid"
     aria-hidden={href ? undefined : "true"}
     role={href ? "group" : undefined}
-    aria-label={href ? "Open the runs of a weekday and hour" : undefined}
+    aria-label={href ? "Open the gate calls of a weekday and hour" : undefined}
     onkeydown={href ? onkeydown : undefined}
     bind:this={grid}
   >

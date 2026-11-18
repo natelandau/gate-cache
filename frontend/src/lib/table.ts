@@ -4,9 +4,24 @@ import type { Snippet } from "svelte";
 
 export type SortDirection = "asc" | "desc";
 
-export interface SortState {
-  key: string;
+export interface SortState<K extends string = string> {
+  key: K;
   direction: SortDirection;
+}
+
+/**
+ * Return the sort after a header click: the sorted column flips direction, and another column
+ * starts at `first`, which is usually descending for numbers and ascending for names.
+ */
+export function nextSort<K extends string>(sort: SortState<K> | null, key: K, first: SortDirection): SortState<K> {
+  if (sort?.key === key) return { key, direction: sort.direction === "asc" ? "desc" : "asc" };
+  return { key, direction: first };
+}
+
+/** Return the `aria-sort` value of the column `key` under `sort`. */
+export function ariaSort(sort: SortState | null | undefined, key: string): "ascending" | "descending" | undefined {
+  if (sort?.key !== key) return undefined;
+  return sort.direction === "asc" ? "ascending" : "descending";
 }
 
 export interface Column<T> {

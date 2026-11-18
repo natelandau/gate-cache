@@ -1,6 +1,6 @@
 <!--
   @component
-  Daily time spent as one bar per day, stacked by gate with the largest gate at the bottom.
+  Daily run time as one bar per day, stacked by gate with the largest gate at the bottom.
   Hovering a segment or a legend entry highlights that gate and dims the rest, since
   neighboring shades are close. A legend entry for a gate is a button that opens it.
 
@@ -199,7 +199,7 @@
     <table>
       <caption>
         Run time per day for {rows.length} days: {formatDuration(totals.total)} in all. Days without
-        time spent are left out.
+        run time are left out.
       </caption>
       <thead>
         <tr>

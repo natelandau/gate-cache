@@ -1,3 +1,4 @@
+import { TERMS } from "./terms";
 import { formatCount, formatDuration } from "./format";
 
 /** Which heatmap ramp a grid uses: runs (blue), time saved (green), or failures (red). */
@@ -32,9 +33,9 @@ export function heatValue(
 
 /** The label for `metric`, matching the tabs that pick it. */
 export const HEAT_LABELS: Record<HeatMetric, string> = {
-  runs: "Gate calls",
-  saved: "Saved by cache",
-  fail: "Failures",
+  runs: TERMS.calls.label,
+  saved: TERMS.saved.column,
+  fail: TERMS.failures.column,
 };
 
 /** The chart color of each measure: runs are blue, time saved green, and failures red. */

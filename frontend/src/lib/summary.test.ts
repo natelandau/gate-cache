@@ -58,7 +58,7 @@ describe("summaryStats", () => {
 describe("net saved", () => {
   it("names what it subtracts and explains the sum in its title", () => {
     const stat = byLabel(summaryStats({ ...base, overhead: 3, waited: 60, net_saved: 27 }), "Net saved by cache");
-    expect(stat).toMatchObject({ value: "27s", hint: "after 1m 3s of overhead", tone: "default" });
+    expect(stat).toMatchObject({ value: "27s", hint: "after 1m 3s of cache cost", tone: "default" });
     expect(stat?.title).toContain("Time saved minus");
   });
 

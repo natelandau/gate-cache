@@ -1,15 +1,5 @@
-import { formatCount } from "./format";
+import { countTicks, formatCount } from "./format";
 
-/** Return round count ticks from 0 up to at least `max`, at most about four steps of 1, 2, or 5 times a power of ten. */
-export function countTicks(max: number): number[] {
-  const target = Math.max(1, max);
-  const magnitude = 10 ** Math.floor(Math.log10(target / 4));
-  const step = [1, 2, 5, 10].map((m) => m * magnitude).find((s) => target / s <= 4) ?? 10 * magnitude;
-  const unit = Math.max(1, Math.round(step));
-  const ticks: number[] = [];
-  for (let t = 0; t < target + unit; t += unit) ticks.push(t);
-  return ticks;
-}
 
 /** Top of the failures band on the daily chart's shared 0..1 y scale. */
 export const FAIL_TOP = 0.2;
@@ -35,7 +25,7 @@ export interface DailyScale {
 /** Return the shared y scale for daily runs and failures. */
 export function dailyScale(days: { runs: number; failures: number }[]): DailyScale {
   const runsTicks = countTicks(Math.max(0, ...days.map((d) => d.runs)));
-  const runsTop = Math.max(1, runsTicks.at(-1) ?? 0);
+  const runsTop = runsTicks.at(-1)!;
   const maxFailures = Math.max(1, ...days.map((d) => d.failures));
   const runsY = (count: number) => RUNS_BASE + (count / runsTop) * (1 - RUNS_BASE);
   const failY = (count: number) => (count / maxFailures) * FAIL_TOP;

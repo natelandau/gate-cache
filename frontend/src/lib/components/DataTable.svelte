@@ -44,8 +44,8 @@
 
 <script lang="ts" generics="T">
   import type { Snippet } from "svelte";
-  import { raw, sortRows, type Column, type SortState } from "../table";
-  import Icon from "./Icon.svelte";
+  import { ariaSort, nextSort, raw, sortRows, type Column, type SortState } from "../table";
+  import SortHeader from "./SortHeader.svelte";
 
   interface Props {
     rows: T[];
@@ -80,17 +80,7 @@
   const sorted = $derived(sortRows(rows, columns, sort));
 
   function toggle(column: Column<T>): void {
-    if (sort?.key === column.key) {
-      sort = { key: column.key, direction: sort.direction === "asc" ? "desc" : "asc" };
-    } else {
-      const first = column.firstDirection ?? (column.align === "right" ? "desc" : "asc");
-      sort = { key: column.key, direction: first };
-    }
-  }
-
-  function ariaSort(column: Column<T>): "ascending" | "descending" | undefined {
-    if (sort?.key !== column.key) return undefined;
-    return sort.direction === "asc" ? "ascending" : "descending";
+    sort = nextSort(sort, column.key, column.firstDirection ?? (column.align === "right" ? "desc" : "asc"));
   }
 
   function cellText(row: T, column: Column<T>): string {
@@ -124,17 +114,14 @@
     <thead>
       <tr>
         {#each columns as column (column.key)}
-          <th scope="col" class={column.align ?? "left"} aria-sort={ariaSort(column)}>
+          <th scope="col" class={column.align ?? "left"} aria-sort={ariaSort(sort, column.key)}>
             {#if column.sortable ?? true}
-              <button type="button" onclick={() => toggle(column)}>
-                <span>{column.label}</span>
-                <span class="arrow">
-                  {#if sort?.key === column.key}<Icon
-                      name={sort.direction === "asc" ? "arrow-up" : "arrow-down"}
-                      size={12}
-                    />{/if}
-                </span>
-              </button>
+              <SortHeader
+                label={column.label}
+                direction={sort?.key === column.key ? sort.direction : null}
+                align={column.align}
+                onclick={() => toggle(column)}
+              />
             {:else}
               {column.label}
             {/if}
@@ -234,34 +221,6 @@
     text-align: right;
   }
 
-  th button {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    height: 22px;
-    margin: 0 -4px;
-    padding: 0 4px;
-    border: 0;
-    border-radius: 3px;
-    background: none;
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
-  }
-
-  th.right button {
-    flex-direction: row-reverse;
-  }
-
-  th button:hover {
-    color: var(--text);
-  }
-
-  .arrow {
-    display: inline-flex;
-    width: 12px;
-    color: var(--text);
-  }
 
   td {
     border-top: 1px solid var(--border-row);

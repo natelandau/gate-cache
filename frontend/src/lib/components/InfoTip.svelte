@@ -22,9 +22,12 @@
   let flip = $state(false);
   let root: HTMLElement | undefined = $state();
 
+  // Matches the bubble's max-width plus its offset and a margin, in the styles below.
+  const BUBBLE_ROOM = 280;
+
   // Near the right edge of the window, open the bubble leftward so it stays on screen.
   function place(): void {
-    if (root) flip = root.getBoundingClientRect().left + 280 > window.innerWidth;
+    if (root) flip = root.getBoundingClientRect().left + BUBBLE_ROOM > window.innerWidth;
   }
 </script>
 
@@ -78,6 +81,7 @@
     left: -8px;
     z-index: 20;
     width: max-content;
+    /* With the 8px offset and a margin, BUBBLE_ROOM in the script reserves this width. */
     max-width: 260px;
     padding: var(--space-2) 10px;
     border-radius: var(--radius-popover);

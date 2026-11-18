@@ -8,6 +8,7 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
+  import { TERMS } from "../../lib/terms";
   import { getGates, spanScope } from "../../lib/api";
   import MetricTabs from "../../lib/components/MetricTabs.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -39,18 +40,18 @@
   let by: GateRank = $state("spent");
 
   const options: { value: GateRank; label: string }[] = [
-    { value: "spent", label: "Time ran" },
-    { value: "saved", label: "Saved by cache" },
-    { value: "runs", label: "Calls" },
+    { value: "spent", label: TERMS.ran.column },
+    { value: "saved", label: TERMS.saved.column },
+    { value: "runs", label: TERMS.calls.column },
     { value: "fails", label: "Failures" },
     { value: "slow", label: "Slowest" },
   ];
 
   // What an empty tab lacks, for its empty state.
   const SUBJECT: Record<GateRank, string> = {
-    saved: "time saved by cache",
-    spent: "run time",
-    runs: "gate calls",
+    saved: TERMS.saved.noun,
+    spent: TERMS.ran.noun,
+    runs: TERMS.calls.many,
     fails: "failures",
     slow: "passing runs",
   };

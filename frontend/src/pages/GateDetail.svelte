@@ -9,6 +9,7 @@
   - `onclose`: close the panel
 -->
 <script lang="ts">
+  import { TERMS } from "../lib/terms";
   import {
     getGate,
     getGates,
@@ -112,14 +113,14 @@
   const stats = $derived.by((): Stat[] => {
     if (!row) return [];
     return [
-      { label: "Gate calls", value: formatCount(row.runs) },
+      { label: TERMS.calls.label, value: formatCount(row.runs) },
       {
         label: "Avg run",
         value: formatDuration(row.avg_run),
         hint: runHint(row),
       },
       {
-        label: "Time ran",
+        label: TERMS.ran.column,
         value: formatDuration(row.time_spent),
         hint: row.fail_time ? `${formatDuration(row.fail_time)} lost to failures` : undefined,
       },
@@ -134,8 +135,8 @@
         value: formatBytes(row.peak_rss),
         hint: row.median_rss === null ? undefined : `median ${formatBytes(row.median_rss)}`,
       },
-      { label: "Cache skip rate", value: formatPercent(row.skip_rate) },
-      { label: "Saved by cache", value: formatDuration(row.time_saved) },
+      { label: TERMS.skipRate.label, value: formatPercent(row.skip_rate) },
+      { label: TERMS.saved.column, value: formatDuration(row.time_saved) },
     ];
   });
 
@@ -191,7 +192,7 @@
     },
     { key: "outcome", label: "Outcome", cell: outcome },
     { key: "ran", label: "Ran for", sortable: false, align: "right", cell: ranCell },
-    { key: "saved", label: "Saved", sortable: false, align: "right", cell: savedCell },
+    { key: "saved", label: TERMS.saved.column, sortable: false, align: "right", cell: savedCell },
     {
       key: "tree",
       label: "Tree",
@@ -257,7 +258,7 @@
     {#if detail}
       {#if detail.recent.length === 0}
         <EmptyState
-          title={emptyTitle(`runs of ${name}`, { range: filters.range, repoLabel: null })}
+          title={emptyTitle(`calls of ${name}`, { range: filters.range, repoLabel: null })}
           detail="Pick a longer range to see older runs."
         />
       {:else}
@@ -320,7 +321,7 @@
             {recent.length === 1 ? "call" : "calls"}
           </h3>
           <DataTable
-            label="Latest runs of {name}"
+            label="Latest calls of {name}"
             rows={recent}
             columns={recentColumns}
             rowKey={(e) => e.key}

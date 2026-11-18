@@ -72,7 +72,7 @@
     {#each stats as stat (stat.label)}
       <div class="card" class:linked={!!stat.href}>
         <dt>
-          <span>{stat.label}</span>{#if stat.title}&nbsp;<InfoTip text={stat.title} label="About {stat.label}" />{/if}
+          <span>{stat.label}</span>{#if stat.title}<InfoTip text={stat.title} label="About {stat.label}" />{/if}
           {#if stat.href}<span class="go"><Icon name="arrow-up-right" size={14} /></span>{/if}
         </dt>
         <dd class="value" class:danger={stat.tone === "danger"} class:flaky={stat.tone === "flaky"}>
@@ -120,7 +120,6 @@
     grid-row: span 5;
     grid-template-rows: subgrid;
     row-gap: 0;
-    align-content: start;
     min-width: 0;
     padding: 14px var(--space-4) var(--space-3);
     border-radius: var(--radius-card);
@@ -152,9 +151,9 @@
   }
 
   dt :global(.tip) {
+    margin-left: 4px;
     vertical-align: -3px;
   }
-
 
   .go {
     position: absolute;
@@ -212,7 +211,6 @@
     outline-offset: 1px;
   }
 
-
   .danger {
     color: var(--danger);
   }
@@ -236,7 +234,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-
 
   .hint {
     min-height: 16px;

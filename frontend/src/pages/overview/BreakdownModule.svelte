@@ -11,8 +11,11 @@
   - `span`: page-local days the overview is scoped to, if any; row links carry them
 -->
 <script lang="ts">
+  import { TERMS } from "../../lib/terms";
   import { getBreakdown, spanScope, type BreakdownRow } from "../../lib/api";
-  import { breakdownBars, drillDown, type BreakdownSort, type Metric } from "../../lib/breakdown";
+  import { barMetric, breakdownBars, DEFAULT_SORT, drillDown, type BreakdownSort, type Metric } from "../../lib/breakdown";
+  import { METRIC_COLORS } from "../../lib/heat";
+  import { nextSort } from "../../lib/table";
   import BarList, { type Bar } from "../../lib/components/BarList.svelte";
   import Button from "../../lib/components/Button.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -37,7 +40,7 @@
   const VISIBLE = 15;
 
   let group = $state<Dimension>("repo");
-  let sort = $state<BreakdownSort>({ key: "spent", direction: "desc" });
+  let sort = $state<BreakdownSort>(DEFAULT_SORT);
   let expanded = $state(false);
 
   const info = $derived(dimension(group));
@@ -54,39 +57,29 @@
 
   const groupOptions = DIMENSIONS.map((d) => ({ value: d.value, label: d.label }));
 
-  const COLORS: Record<Metric, "saved" | "runs" | "fails"> = {
-    saved: "saved",
-    spent: "runs",
-    avg: "runs",
-    median: "runs",
-    runs: "runs",
-    skip: "runs",
-    fails: "fails",
-    gates: "runs",
-  };
+  // Time saved bars are green and failure bars red; every other measure is blue.
+  const BAR_COLORS: Partial<Record<Metric, string>> = { saved: METRIC_COLORS.saved, fails: METRIC_COLORS.fail };
 
-  const allColumns: { key: Metric; label: string; text: (row: BreakdownRow) => string }[] = [
-    { key: "spent", label: "Time ran", text: (row) => formatDuration(row.time_spent) },
-    { key: "saved", label: "Saved by cache", text: (row) => formatDuration(row.time_saved) },
-    { key: "avg", label: "Avg run", text: (row) => formatDuration(row.avg_run) },
-    { key: "median", label: "Median run", text: (row) => formatDuration(row.median_run) },
-    { key: "runs", label: "Calls", text: (row) => formatCount(row.runs) },
-    { key: "skip", label: "Cache skip %", text: (row) => formatPercent(row.skip_rate) },
+  // `gateOnly` columns describe one gate's passes, so only gate rows show them; `manyGates`
+  // counts the gates in a row, so gate rows hide it.
+  const allColumns: { key: Metric; label: string; text: (row: BreakdownRow) => string; gateOnly?: true; manyGates?: true }[] = [
+    { key: "spent", label: TERMS.ran.column, text: (row) => formatDuration(row.time_spent) },
+    { key: "saved", label: TERMS.saved.column, text: (row) => formatDuration(row.time_saved) },
+    { key: "avg", label: "Avg run", text: (row) => formatDuration(row.avg_run), gateOnly: true },
+    { key: "median", label: "Median run", text: (row) => formatDuration(row.median_run), gateOnly: true },
+    { key: "runs", label: TERMS.calls.column, text: (row) => formatCount(row.runs) },
+    { key: "skip", label: TERMS.skipRate.column, text: (row) => formatPercent(row.skip_rate) },
     { key: "fails", label: "Failures", text: (row) => formatCount(row.failures) },
-    { key: "gates", label: "Gates", text: (row) => formatCount(row.gates) },
+    { key: "gates", label: "Gates", text: (row) => formatCount(row.gates), manyGates: true },
   ];
 
-  // Avg and median describe one gate's passes, so only gate rows show them.
-  const GATE_ONLY = new Set<Metric>(["avg", "median"]);
-  const columns = $derived(allColumns.filter((c) => columnShown(c.key, group)));
+  const columns = $derived(allColumns.filter((c) => (info.oneGate ? !c.manyGates : !c.gateOnly)));
   const bars = $derived(breakdownBars(rows ?? [], sort, group, filters.repos));
-  const barColor = $derived(COLORS[sort.key === "name" ? "spent" : sort.key]);
+  const barColor = $derived(BAR_COLORS[barMetric(sort)] ?? METRIC_COLORS.runs);
 
   // A first click sorts numbers largest first and names A to Z; a second click reverses.
-  function sortBy(key: string): void {
-    const next = key as BreakdownSort["key"];
-    if (sort.key === next) sort = { key: next, direction: sort.direction === "asc" ? "desc" : "asc" };
-    else sort = { key: next, direction: next === "name" ? "asc" : "desc" };
+  function sortBy(key: BreakdownSort["key"]): void {
+    sort = nextSort(sort, key, key === "name" ? "asc" : "desc");
   }
   const shown = $derived(expanded ? bars : bars.slice(0, VISIBLE));
   const scope = $derived({ range: filters.range, span, repoLabel: info.allRepos ? null : repoLabel });
@@ -94,17 +87,8 @@
   function pickGroup(value: string): void {
     group = value as Dimension;
     expanded = false;
-    // A grouping without the sorted column falls back to time spent.
-    if (sort.key !== "name" && !columnShown(sort.key, group)) {
-      sort = { key: "spent", direction: "desc" };
-    }
-  }
-
-  function columnShown(key: Metric, g: Dimension): boolean {
-    const oneGate = dimension(g).oneGate;
-    if (key === "gates") return !oneGate;
-    if (GATE_ONLY.has(key)) return !!oneGate;
-    return true;
+    // A grouping without the sorted column falls back to the default sort.
+    if (sort.key !== "name" && !columns.some((c) => c.key === sort.key)) sort = DEFAULT_SORT;
   }
 
   function pick(bar: Bar<BreakdownRow>): void {
@@ -129,7 +113,7 @@
     <Select label="Group by" value={group} options={groupOptions} onchange={pickGroup} />
   {/snippet}
   <BarList
-    label="Gate calls by {info.label.toLowerCase()}"
+    label="{TERMS.calls.label} by {info.label.toLowerCase()}"
     heading={info.label}
     rows={shown}
     color={barColor}
@@ -137,6 +121,7 @@
     onpick={pick}
     {sort}
     onsort={sortBy}
+    widths={{ name: "160px", bar: "24%" }}
   />
   {#if bars.length > VISIBLE}
     <div class="more">

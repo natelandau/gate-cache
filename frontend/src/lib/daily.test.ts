@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { bandIndexAt, bandInset, countTicks, dailyScale, FAIL_TOP, RUNS_BASE } from "./daily";
+import { bandIndexAt, bandInset, dailyScale, FAIL_TOP, RUNS_BASE } from "./daily";
+import { countTicks } from "./format";
 
 describe("dailyScale", () => {
-  it("maps the most failures to the top of the failures band, whatever was saved", () => {
+  it("maps the most failures to the top of the failures band, whatever the call count", () => {
     for (const runs of [0, 30, 86400]) {
       const scale = dailyScale([
         { runs, failures: 7 },
@@ -12,7 +13,7 @@ describe("dailyScale", () => {
     }
   });
 
-  it("maps the top of the time-saved scale to 1, at or above the busiest day", () => {
+  it("maps the top of the gate calls scale to 1, at or above the busiest day", () => {
     const scale = dailyScale([{ runs: 600, failures: 0 }]);
     expect(scale.runsTop).toBeGreaterThanOrEqual(600);
     expect(scale.runsY(scale.runsTop)).toBe(1);

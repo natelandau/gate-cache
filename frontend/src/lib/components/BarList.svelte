@@ -29,33 +29,26 @@
   }
 </script>
 
-<script lang="ts" generics="T">
-  import Icon from "./Icon.svelte";
+<script lang="ts" generics="T, K extends string">
+  import { ariaSort, type SortState } from "../table";
+  import SortHeader from "./SortHeader.svelte";
 
   interface Props {
     label: string;
     heading: string;
     rows: Bar<T>[];
-    color: "saved" | "runs" | "fails";
-    columns: { key: string; label: string; text: (row: T) => string }[];
+    /** CSS color of the bars, such as "var(--chart-runs)". */
+    color: string;
+    columns: { key: K; label: string; text: (row: T) => string }[];
     onpick: (bar: Bar<T>) => void;
     /** The sorted column, "name" for the first column; with `onsort`, headers sort. */
-    sort?: { key: string; direction: "asc" | "desc" };
-    onsort?: (key: string) => void;
+    sort?: SortState<K | "name">;
+    onsort?: (key: K | "name") => void;
+    /** CSS widths of the name and bar columns; by default the bar takes the space the number columns leave. */
+    widths?: { name?: string; bar?: string };
   }
 
-  let { label, heading, rows, color, columns, onpick, sort, onsort }: Props = $props();
-
-  function ariaSort(key: string): "ascending" | "descending" | undefined {
-    if (sort?.key !== key) return undefined;
-    return sort.direction === "asc" ? "ascending" : "descending";
-  }
-
-  const FILLS = {
-    saved: "var(--chart-saved)",
-    runs: "var(--chart-runs)",
-    fails: "var(--chart-failures)",
-  };
+  let { label, heading, rows, color, columns, onpick, sort, onsort, widths = {} }: Props = $props();
 
   const max = $derived(Math.max(0, ...rows.map((row) => row.value)));
 
@@ -64,14 +57,9 @@
   }
 </script>
 
-{#snippet header(key: string, text: string)}
+{#snippet header(key: K | "name", text: string, align: "left" | "right")}
   {#if onsort}
-    <button type="button" class="sort" class:on={sort?.key === key} onclick={() => onsort(key)}>
-      <span>{text}</span>
-      <span class="arrow"
-        >{#if sort?.key === key}<Icon name={sort.direction === "asc" ? "arrow-up" : "arrow-down"} size={12} />{/if}</span
-      >
-    </button>
+    <SortHeader label={text} direction={sort?.key === key ? sort.direction : null} {align} onclick={() => onsort(key)} />
   {:else}
     {text}
   {/if}
@@ -80,12 +68,17 @@
 <div class="wrap">
   <table class="bars">
     <caption class="visually-hidden">{label}</caption>
+    <colgroup>
+      <col style:width={widths.name} />
+      <col style:width={widths.bar ?? "100%"} />
+      {#each columns as column (column.key)}<col />{/each}
+    </colgroup>
     <thead>
       <tr>
-        <th scope="col" aria-sort={ariaSort("name")}>{@render header("name", heading)}</th>
+        <th scope="col" aria-sort={ariaSort(sort, "name")}>{@render header("name", heading, "left")}</th>
         <th class="bar-cell" aria-hidden="true"></th>
         {#each columns as column (column.key)}
-          <th scope="col" class="num" aria-sort={ariaSort(column.key)}>{@render header(column.key, column.label)}</th>
+          <th scope="col" class="num" aria-sort={ariaSort(sort, column.key)}>{@render header(column.key, column.label, "right")}</th>
         {/each}
       </tr>
     </thead>
@@ -98,7 +91,7 @@
             </button>
           </th>
           <td class="bar-cell" aria-hidden="true">
-            <Meter share={share(bar.value)} color={bar.dimmed ? "var(--chart-neutral)" : FILLS[color]} />
+            <Meter share={share(bar.value)} color={bar.dimmed ? "var(--chart-neutral)" : color} />
           </td>
           {#each columns as column (column.key)}
             <td class="num" class:sorted={sort?.key === column.key}>{column.text(bar.row)}</td>
@@ -157,10 +150,8 @@
     text-align: right;
   }
 
-
   .name {
-    width: 160px;
-    max-width: 160px;
+    max-width: 240px;
     overflow: hidden;
     text-overflow: ellipsis;
     font-weight: 500;
@@ -185,45 +176,12 @@
   }
 
   .bar-cell {
-    width: 24%;
     min-width: 48px;
   }
-
 
   .dimmed .name button,
   .dimmed td {
     color: var(--text-muted);
-  }
-
-  .sort {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    height: 22px;
-    white-space: nowrap;
-    margin: 0 -4px;
-    padding: 0 4px;
-    border: 0;
-    border-radius: 3px;
-    background: none;
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
-    transition: color var(--dur-fast) var(--ease);
-  }
-
-  .num .sort {
-    flex-direction: row-reverse;
-  }
-
-  .sort:hover,
-  .sort.on {
-    color: var(--text);
-  }
-
-  .arrow {
-    display: inline-flex;
-    width: 12px;
   }
 
   td.sorted {

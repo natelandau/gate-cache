@@ -27,12 +27,12 @@ const rows = [repo("/w/api/.git", "api", 200), repo(null, "unknown repo", 50)];
 
 describe("BarList", () => {
   it("scales bars to the largest value and shows the heading, columns, and titles", () => {
-    const body = html(BarList<BreakdownRow>, {
+    const body = html(BarList<BreakdownRow, string>, {
       props: {
         label: "Repos",
         heading: "Branch",
         rows: breakdownBars(rows, { key: "saved", direction: "desc" }, "repo", []),
-        color: "saved",
+        color: "var(--chart-saved)",
         columns: [{ key: "x", label: "Gates", text: (row: BreakdownRow) => `${row.gates} gates` }],
         onpick: () => {},
       },
@@ -45,12 +45,12 @@ describe("BarList", () => {
   });
 
   it("mutes dimmed rows, marks them not selected, and draws their bar in the neutral color", () => {
-    const body = html(BarList<BreakdownRow>, {
+    const body = html(BarList<BreakdownRow, string>, {
       props: {
         label: "Repos",
         heading: "Repo",
         rows: breakdownBars(rows, { key: "saved", direction: "desc" }, "repo", ["-"]),
-        color: "fails",
+        color: "var(--chart-failures)",
         columns: [],
         onpick: () => {},
       },

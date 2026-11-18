@@ -4,26 +4,35 @@ import type { BreakdownRow } from "./api";
 import type { Bar } from "./components/BarList.svelte";
 import { dimension, type Dimension } from "./dimensions";
 import { UNKNOWN_REPO, type Route } from "./router.svelte";
+import type { SortState } from "./table";
 
 export type Metric = "saved" | "spent" | "avg" | "median" | "runs" | "skip" | "fails" | "gates";
 
 /** A sort on the Breakdown table: a numeric column, or the row name. */
-export type BreakdownSort = { key: Metric | "name"; direction: "asc" | "desc" };
+export type BreakdownSort = SortState<Metric | "name">;
 
-function metricValue(row: BreakdownRow, by: Metric): number {
+/** The Breakdown table's sort until the user picks a column: most run time first. */
+export const DEFAULT_SORT: BreakdownSort = { key: "spent", direction: "desc" };
+
+/** Return what the bars measure under `sort`: the sorted column, or run time for a name sort. */
+export function barMetric(sort: BreakdownSort): Metric {
+  return sort.key === "name" ? "spent" : sort.key;
+}
+
+function metricValue(row: BreakdownRow, by: Metric): number | null {
   switch (by) {
     case "saved":
       return row.time_saved;
     case "spent":
       return row.time_spent;
     case "avg":
-      return row.avg_run ?? 0;
+      return row.avg_run;
     case "median":
-      return row.median_run ?? 0;
+      return row.median_run;
     case "runs":
       return row.runs;
     case "skip":
-      return row.skip_rate ?? 0;
+      return row.skip_rate;
     case "fails":
       return row.failures;
     case "gates":
@@ -43,7 +52,7 @@ export function breakdownBars(
   group: Dimension,
   selected: string[],
 ): Bar<BreakdownRow>[] {
-  const by: Metric = sort.key === "name" ? "spent" : sort.key;
+  const by = barMetric(sort);
   const sign = sort.direction === "asc" ? 1 : -1;
   const chosen = new Set(selected);
   const allRepos = dimension(group).allRepos ?? false;
@@ -54,16 +63,19 @@ export function breakdownBars(
         key,
         label: row.label,
         title: row.title ?? undefined,
-        value: metricValue(row, by),
+        value: metricValue(row, by) ?? 0,
+        missing: metricValue(row, by) === null,
         dimmed: allRepos && chosen.size > 0 && !chosen.has(key),
         row,
       };
     })
-    .sort((a, b) =>
-      sort.key === "name"
-        ? sign * a.label.localeCompare(b.label)
-        : sign * (a.value - b.value) || a.label.localeCompare(b.label),
-    );
+    // Rows with no value for the sorted column go last in either direction, as in DataTable.
+    .sort((a, b) => {
+      if (sort.key === "name") return sign * a.label.localeCompare(b.label);
+      if (a.missing !== b.missing) return a.missing ? 1 : -1;
+      return sign * (a.value - b.value) || a.label.localeCompare(b.label);
+    })
+    .map(({ missing: _, ...bar }) => bar);
 }
 
 /** What clicking a Breakdown row does. */

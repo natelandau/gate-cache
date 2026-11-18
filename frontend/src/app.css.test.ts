@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { VIEW_CHANGE_MS } from "./lib/motion";
 
 // Vitest replaces imported CSS with an empty module, so read the file from disk. The
 // project has no Node type definitions, hence the computed specifier and the cast.
@@ -39,5 +40,9 @@ describe("app.css tokens", () => {
 
   it("keeps no keyframes that nothing uses", () => {
     expect(css).not.toContain("@keyframes value-swap");
+  });
+
+  it("keeps --dur-slow equal to the chart view-change duration", () => {
+    expect(css).toContain(`--dur-slow: ${VIEW_CHANGE_MS}ms;`);
   });
 });

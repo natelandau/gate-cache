@@ -16,6 +16,7 @@
   - `onselect`: called with the new span, or undefined to clear; omit for a static chart
 -->
 <script lang="ts">
+  import { counted, TERMS } from "../terms";
   import { barMotion } from "../motion";
   import type { ChartState } from "layerchart";
   import { BarChart, Bars, Tooltip } from "layerchart/svg";
@@ -67,7 +68,7 @@
   const pick = createDayPick(() => ({ days, selected, onselect }), padding, BAND_PADDING);
 
   function dayText(day: DayBucket): string {
-    return `${formatLongDay(day.day)}: ${plural(day.runs, "gate call", "gate calls")}, ${plural(day.failures, "failure", "failures")}, ${formatDuration(day.saved)} saved by cache`;
+    return `${formatLongDay(day.day)}: ${counted(day.runs, TERMS.calls, formatCount)}, ${counted(day.failures, TERMS.failures, formatCount)}, ${formatDuration(day.saved)} saved by cache`;
   }
   const runsColor = METRIC_COLORS.runs;
   const failColor = METRIC_COLORS.fail;
@@ -79,9 +80,9 @@
       <ChartTooltip
         title={formatLongDay(data.day)}
         rows={[
-          { color: runsColor, label: "Gate calls", value: formatCount(data.runs) },
+          { color: runsColor, label: TERMS.calls.label, value: formatCount(data.runs) },
           { color: failColor, label: "Failures", value: formatCount(data.failures) },
-          { label: "Saved by cache", value: formatDuration(data.saved) },
+          { label: TERMS.saved.column, value: formatDuration(data.saved) },
         ]}
         hint={onselect ? PICK_DAY_HINT : undefined}
       />
@@ -94,12 +95,12 @@
     <span class="headline">
       <span class="big">{formatCount(totalRuns)}</span>
       <span class="second"
-        >{totalRuns === 1 ? "gate call" : "gate calls"} · <span class="fails">{formatCount(totalFailures)}</span>
-        {totalFailures === 1 ? "failure" : "failures"} · <UnitValue value={formatDuration(totalSaved)} /> saved by cache</span
+        >{totalRuns === 1 ? TERMS.calls.one : TERMS.calls.many} · <span class="fails">{formatCount(totalFailures)}</span>
+        {totalFailures === 1 ? TERMS.failures.one : TERMS.failures.many} · {formatDuration(totalSaved)} saved by cache</span
       >
     </span>
     <span class="legend">
-      <span><i style:background={runsColor}></i>Gate calls</span>
+      <span><i style:background={runsColor}></i>{TERMS.calls.label}</span>
       <span><i style:background={failColor}></i>Failures</span>
     </span>
   </figcaption>
@@ -208,11 +209,6 @@
     font-size: var(--text-sm);
   }
 
-  .second :global(.u) {
-    font-size: 1em;
-    font-weight: 400;
-    margin: 0;
-  }
 
   .fails {
     color: var(--danger);

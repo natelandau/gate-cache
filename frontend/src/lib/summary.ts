@@ -1,3 +1,4 @@
+import { TERMS } from "./terms";
 import { currentScope, getSummary, type Summary } from "./api";
 import type { Stat } from "./components/StatStrip.svelte";
 import { statDeltas } from "./deltas";
@@ -50,7 +51,7 @@ export function summaryStats(
     daily && daily.length > 0 ? { values: daily.map(value), color } : undefined;
   return [
     {
-      label: "Gate calls",
+      label: TERMS.calls.label,
       value: formatCount(s.runs),
       title:
         "Every time a gate was called through gate-cache, whether its command ran or the cache " +
@@ -62,7 +63,7 @@ export function summaryStats(
       spark: spark("var(--chart-runs)", (d) => d.runs),
     },
     {
-      label: "Time gates ran",
+      label: TERMS.ran.label,
       value: formatDuration(s.time_spent),
       hint: s.fail_time > 0 ? `${formatDuration(s.fail_time)} on failures` : undefined,
       title:
@@ -72,7 +73,7 @@ export function summaryStats(
       spark: spark("var(--chart-runs)", (d) => d.spent),
     },
     {
-      label: "Gate failures",
+      label: TERMS.failures.label,
       value: formatCount(s.failures),
       title:
         "Calls whose command failed, plus calls that reported the failure of a concurrent run " +
@@ -83,7 +84,7 @@ export function summaryStats(
       spark: spark("var(--chart-failures)", (d) => d.failures),
     },
     {
-      label: "Flaky gates",
+      label: TERMS.flaky.label,
       value: formatCount(s.flaky_gates),
       title: "Gates that both failed and passed on the same content, so the result changed with no code change.",
       tone: s.flaky_gates ? "flaky" : "default",
@@ -91,7 +92,7 @@ export function summaryStats(
       delta: deltas?.flaky_gates,
     },
     {
-      label: "Cache skip rate",
+      label: TERMS.skipRate.label,
       value: formatPercent(s.skip_rate),
       title:
         "The share of calls that checked the cache and were skipped because the same gate " +
@@ -101,7 +102,7 @@ export function summaryStats(
       spark: spark("var(--chart-runs)", (d) => (d.ran ? d.skips / d.ran : null)),
     },
     {
-      label: "Time saved by cache",
+      label: TERMS.saved.label,
       value: formatDuration(s.time_saved),
       title:
         "Run time that skipped calls did not spend, taken from the earlier passing run that let " +
@@ -110,9 +111,9 @@ export function summaryStats(
       spark: spark("var(--chart-saved)", (d) => d.saved),
     },
     {
-      label: "Net saved by cache",
+      label: TERMS.net.label,
       value: formatSignedDuration(s.net_saved),
-      hint: `after ${formatDuration(s.overhead + s.waited)} of overhead`,
+      hint: `after ${formatDuration(s.overhead + s.waited)} of cache cost`,
       title:
         "Time saved minus the time gate-cache spent deciding whether to skip, and minus the " +
         "time runs waited for a concurrent run of the same gate. Negative means the cache cost " +

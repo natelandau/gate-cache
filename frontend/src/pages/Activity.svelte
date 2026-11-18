@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { TERMS } from "../lib/terms";
   import { tick } from "svelte";
   import {
     activityHint,
@@ -107,7 +108,7 @@
     { key: "repo_name", label: "Repo", sortable: false, title: (e) => e.repo ?? undefined },
     { key: "outcome", label: "Outcome", sortable: false, cell: outcomeCell },
     { key: "ran", label: "Ran for", sortable: false, align: "right", cell: ranCell },
-    { key: "saved", label: "Saved", sortable: false, align: "right", cell: savedCell },
+    { key: "saved", label: TERMS.saved.column, sortable: false, align: "right", cell: savedCell },
   ];
 
   let heading: HTMLElement | undefined = $state();

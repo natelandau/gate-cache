@@ -12,7 +12,7 @@ describe("DailyChart", () => {
   it("leads with the range's gate calls and failures, then time saved by cache", () => {
     const body = html(DailyChart, { props: { days } });
     expect(body).toMatch(/class="headline[^"]*"[\s\S]*?12[\s\S]*?gate calls/);
-    expect(body).toMatch(/class="headline[^"]*"[\s\S]*?3<span class="u[^"]*">m<\/span>[\s\S]*?saved by cache/);
+    expect(body).toMatch(/class="headline[^"]*"[\s\S]*?3m 0s saved by cache/);
     expect(body).toMatch(/class="fails[^"]*"[^>]*>1</);
   });
 

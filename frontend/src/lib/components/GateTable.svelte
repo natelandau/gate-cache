@@ -13,6 +13,7 @@
   - `empty`: snippet shown when there are no gates
 -->
 <script lang="ts">
+  import { TERMS } from "../terms";
   import type { Snippet } from "svelte";
   import type { GateRow } from "../api";
   import {
@@ -66,12 +67,12 @@
   const columns = $derived<Column<GateRow>[]>([
     { key: "name", label: "Gate", cell: gateCell, title: (g) => g.name, firstDirection: "asc" },
     ...(showRepo ? [repoColumn] : []),
-    { key: "runs", label: "Calls", align: "right", text: (g) => formatCount(g.runs) },
-    { key: "skip_rate", label: "Cache skip %", align: "right", text: (g) => formatPercent(g.skip_rate) },
+    { key: "runs", label: TERMS.calls.column, align: "right", text: (g) => formatCount(g.runs) },
+    { key: "skip_rate", label: TERMS.skipRate.column, align: "right", text: (g) => formatPercent(g.skip_rate) },
     { key: "avg_run", label: "Avg run", align: "right", text: (g) => formatDuration(g.avg_run) },
     {
       key: "time_spent",
-      label: "Time ran",
+      label: TERMS.ran.column,
       align: "right",
       text: (g) => formatDuration(g.time_spent),
     },
@@ -105,7 +106,7 @@
       title: (g) =>
         notRecorded(g.peak_rss) ?? (g.median_rss === null ? undefined : `Median ${formatBytes(g.median_rss)}`),
     },
-    { key: "time_saved", label: "Saved by cache", align: "right", text: (g) => formatDuration(g.time_saved) },
+    { key: "time_saved", label: TERMS.saved.column, align: "right", text: (g) => formatDuration(g.time_saved) },
     { key: "failures", label: "Failures", align: "right", cell: failuresCell },
     {
       key: "fail_time",
