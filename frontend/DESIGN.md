@@ -7,7 +7,8 @@ Read this page before you add or change anything in the dashboard UI. It gives t
 The dashboard is an operations tool that people open many times a day. These principles decide most design questions:
 
 - Data comes first. Use dense rows (28px), tabular numbers, and small type. Do not add large cards, hero sections, or decorative motion.
-- Freshness and filters are always visible. Every page reads the global date range and the global repo filter, and the top bar shows when the data last updated. Page-local filters, such as the Activity outcome, reason, and Breakdown row, live only in the hash route. They are not saved, and other pages ignore them.
+- Freshness and filters are always visible. Every page reads the global date range and the global repo filter, and the top bar shows when the data last updated. Page-local filters, such as the Activity outcome, reason, and Breakdown row and the days picked on the Overview, live only in the hash route. They are not saved, and other pages ignore them. Each one shows as a `FilterChip` that removes it.
+- A chart mark or count that stands for a set of runs is a way into those runs. A day on a chart scopes the Overview, and a count links to Activity filtered to exactly those runs. Build the link with `activityHref` in `src/lib/router.svelte.ts`, and keep the day selection logic in `src/lib/selection.ts`.
 - Familiar controls win over new ones. Use native `<select>`, radio buttons, and buttons, styled with tokens.
 - Every control is reachable with the keyboard and shows a visible focus ring. Motion respects `prefers-reduced-motion`.
 - Light and dark themes are equal. Check every change in both. The theme button in the top bar switches between System (the default), Light, and Dark.
@@ -47,7 +48,7 @@ These rules keep the palette readable and consistent:
 2. Use the role token (`--accent`, `--danger`, and so on) for text, icons, and borders. The palette slots are mid-tones, and they are too light for small text on white. The role tokens are darker shades in light mode and lighter shades in dark mode, and each one reaches 4.5:1 contrast on `--bg`, `--surface`, and its `-soft` background.
 3. Use a palette slot directly only for chart marks, dots, the favicon, and the focus ring. Time saved is green, runs are blue, and failures are red in every chart, bar, and heatmap.
 4. Never show blue (`100`) and violet (`200`) as two series in one chart. Readers with protanopia cannot tell them apart.
-5. Never let color carry meaning alone. A badge has a text label, a chart has a legend and a screen-reader table, and a count has a label.
+5. Never let color carry meaning alone. A badge has a text label, a chart has a legend and a screen-reader table, and a count has a label. A picked chart mark gets an outline or ring, the other marks dim, and `aria-pressed` or `aria-selected` states the pick.
 6. If you add a token, follow the derivation rule in the comment at the top of `src/app.css`, then measure the contrast of each new text token in both themes.
 
 ## Components
@@ -63,6 +64,7 @@ Use an existing component before you write markup of your own. If a page needs a
 | Run time of one gate over time                        | `TrendChart`                      |
 | The outcome of one run                                | `OutcomeBadge`                    |
 | Any other short label, such as "flaky"                | `Badge` (pick the tone by role)   |
+| A page-local filter that the user can remove          | `FilterChip`                      |
 | A labeled choice from a short list, such as a filter  | `Select` (a native `<select>`)    |
 | A command                                             | `Button` (`accent` for at most one control per view) |
 | A one-line message above page content                 | `Notice` (`info`, `warning`, `error`) |

@@ -9,6 +9,8 @@
 
 import type { ActivityFilter, ActivityPage, EventRow } from "./api";
 import { OUTCOMES } from "./events";
+import { hourLabel, weekdayName } from "./heat";
+import { spanLabel } from "./selection";
 import { emptyHint, type ScopeText } from "./scope";
 
 export const PAGE_SIZE = 100;
@@ -63,31 +65,89 @@ export function feedView(
   };
 }
 
-/**
- * Return what the feed lists under the page-local filters, for empty-state copy: "runs",
- * '"Fail" runs', '"Uncached" runs with reason "..."', or 'runs in "Branch: main"'.
- */
-export function activitySubject(filter: ActivityFilter): string {
-  let runs = filter.outcome ? `"${OUTCOMES[filter.outcome].label}" runs` : "runs";
-  if (filter.group) runs = `${runs} in "${filter.group.label}"`;
-  return filter.reason ? `${runs} with reason "${filter.reason}"` : runs;
+/** Return a weekday and hour slot as "Tuesdays 09:00 to 10:00". */
+export function slotLabel(slot: { weekday: number; hour: number }): string {
+  return `${weekdayName(slot.weekday, "long")}s ${hourLabel(slot.hour)} to ${hourLabel(slot.hour + 1)}`;
+}
+
+/** One page-local filter the user can remove, with its chip text and the filter without it. */
+export interface FilterPart {
+  key: string;
+  /** Names the filter in "Remove the ... filter". */
+  noun: string;
+  label: string;
+  /** Full text for a label cut short, such as a long reason. */
+  title?: string;
+  without: ActivityFilter;
 }
 
 /**
- * Return the next step for an empty feed. Under a page-local filter it names the filter to
+ * Return each removable filter in a fixed order. The outcome is left out, since it has its own
+ * control.
+ */
+export function filterParts(filter: ActivityFilter): FilterPart[] {
+  const omit = (key: keyof ActivityFilter): ActivityFilter => {
+    const next = { ...filter };
+    delete next[key];
+    return next;
+  };
+  const { reason, group, span, slot, gate, flaky } = filter;
+  const parts: (FilterPart | null)[] = [
+    reason ? { key: "reason", noun: "reason", label: `Reason: ${reason}`, title: reason, without: omit("reason") } : null,
+    group ? { key: "group", noun: `"${group.label}"`, label: group.label, without: omit("group") } : null,
+    span ? { key: "span", noun: "day", label: `Days: ${spanLabel(span)}`, without: omit("span") } : null,
+    slot ? { key: "slot", noun: "hour", label: slotLabel(slot), without: omit("slot") } : null,
+    gate
+      ? {
+          key: "gate",
+          noun: "gate",
+          label: `Gate: ${gate.name}`,
+          title: gate.repo ? `${gate.name} in ${gate.repo}` : gate.name,
+          without: omit("gate"),
+        }
+      : null,
+    flaky ? { key: "flaky", noun: "flaky", label: "Flaky trees only", without: omit("flaky") } : null,
+  ];
+  return parts.filter((part) => part !== null);
+}
+
+/**
+ * Return what the feed lists under the page-local filters, for empty-state copy, such as
+ * '"Fail" runs of lint on flaky trees'. Picked days are left to `emptyTitle`, which names
+ * them in place of the range.
+ */
+export function activitySubject(filter: ActivityFilter): string {
+  let text = filter.outcome ? `"${OUTCOMES[filter.outcome].label}" runs` : "runs";
+  if (filter.group) text += ` in "${filter.group.label}"`;
+  if (filter.gate) text += ` of ${filter.gate.name}`;
+  if (filter.flaky) text += " on flaky trees";
+  if (filter.reason) text += ` with reason "${filter.reason}"`;
+  if (filter.slot) text += ` on ${slotLabel(filter.slot)}`;
+  return text;
+}
+
+function listed(names: string[]): string {
+  if (names.length <= 2) return names.join(" and ");
+  return `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
+}
+
+/**
+ * Return the next step for an empty feed. Under page-local filters it names the filters to
  * clear, since loosening the global filters may not help; otherwise it is the generic hint.
  */
 export function activityHint(
   filter: ActivityFilter,
   scope: ScopeText & { recording: boolean | null },
 ): string {
+  const removable = filterParts(filter).map((part) => part.noun);
+  if (scope.recording === false || (!filter.outcome && removable.length === 0)) return emptyHint(scope);
   const steps: string[] = [];
-  if (filter.outcome) steps.push("pick All outcomes");
-  if (filter.reason) steps.push("remove the reason filter");
-  if (filter.group) steps.push(`remove the "${filter.group.label}" filter`);
-  if (scope.recording === false || steps.length === 0) return emptyHint(scope);
-  const text = steps.join(" and ");
-  const clear = text.charAt(0).toUpperCase() + text.slice(1);
+  if (filter.outcome) steps.push("Pick All outcomes");
+  if (removable.length) {
+    const noun = removable.length === 1 ? "filter" : "filters";
+    steps.push(`${steps.length ? "remove" : "Remove"} the ${listed(removable)} ${noun}`);
+  }
+  const clear = steps.join(" and ");
   const allTime = scope.range.kind === "preset" && scope.range.preset === "all";
   return allTime ? `${clear}.` : `${clear}, or pick a longer range.`;
 }

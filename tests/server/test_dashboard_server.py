@@ -627,3 +627,66 @@ def test_breakdown_row_drills_into_activity(server: DashboardServer, archive: Ar
     key = quote(by_label["Agent: claude-code"]["key"])
     _, page = get(server, f"/api/v1/activity?group=source&key={key}")
     assert [e["ts"] for e in page["events"]] == [1000.0]
+
+
+def test_activity_weekday_hour_filter(server: DashboardServer, archive: Archive) -> None:
+    """The weekday and hour parameters keep only events in that local hour."""
+    # 1970-01-04 was a Sunday; 3600 s is 01:00 UTC on Thursday 1970-01-01.
+    sunday_0105 = 3 * 86400 + 3900.0
+    archive.connection.executemany(
+        "INSERT INTO events (line_hash, ts, name, paths, outcome) VALUES (?, ?, 'lint', '[]', 'pass')",
+        [("h1", sunday_0105), ("h2", sunday_0105 + 3600), ("h3", 3900.0)],
+    )
+    archive.connection.commit()
+    status, body = get(server, "/api/v1/activity?weekday=0&hour=1&tz=UTC")
+    assert status == 200
+    assert [e["ts"] for e in body["events"]] == [sunday_0105]
+
+
+@pytest.mark.parametrize(
+    ("query", "word"),
+    [
+        ("weekday=1", "hour"),
+        ("hour=1", "hour"),
+        ("weekday=x&hour=1", "weekday"),
+        ("hour=25&weekday=1", "hour"),
+    ],
+)
+def test_activity_rejects_bad_slot(server: DashboardServer, query: str, word: str) -> None:
+    """A lone, non-integer, or out-of-range weekday or hour is a bad request."""
+    status, body = get(server, f"/api/v1/activity?{query}")
+    assert status == 400
+    assert word in body["error"]
+
+
+def test_activity_gate_filter(server: DashboardServer, archive: Archive) -> None:
+    """The gate and gate_repo parameters keep one gate; gate_repo=- is the unknown repo."""
+    archive.connection.executemany(
+        "INSERT INTO events (line_hash, ts, repo, name, paths, outcome)"
+        " VALUES (?, ?, ?, ?, '[]', 'pass')",
+        [("h1", 1.0, None, "lint"), ("h2", 2.0, "/r/.git", "lint"), ("h3", 3.0, None, "test")],
+    )
+    archive.connection.commit()
+    status, body = get(server, "/api/v1/activity?gate=lint&gate_repo=-")
+    assert status == 200
+    assert [e["ts"] for e in body["events"]] == [1.0]
+
+
+def test_activity_gate_requires_repo(server: DashboardServer) -> None:
+    """A gate filter without gate_repo is a bad request."""
+    status, body = get(server, "/api/v1/activity?gate=lint")
+    assert status == 400
+    assert "gate_repo" in body["error"]
+
+
+def test_activity_flaky_filter(server: DashboardServer, archive: Archive) -> None:
+    """flaky=1 keeps only runs on trees that both failed and passed."""
+    archive.connection.executemany(
+        "INSERT INTO events (line_hash, ts, name, tree, paths, outcome)"
+        " VALUES (?, ?, 'lint', ?, '[]', ?)",
+        [("h1", 1.0, "t1", "fail"), ("h2", 2.0, "t1", "pass"), ("h3", 3.0, "t2", "pass")],
+    )
+    archive.connection.commit()
+    status, body = get(server, "/api/v1/activity?flaky=1")
+    assert status == 200
+    assert [e["ts"] for e in body["events"]] == [2.0, 1.0]

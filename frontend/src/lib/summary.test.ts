@@ -61,6 +61,17 @@ describe("net saved", () => {
     const stat = summaryStats({ ...base, time_saved: 0, overhead: 5, net_saved: -5 })[1];
     expect(stat).toMatchObject({ value: "\u22125s", tone: "danger" });
   });
+
+  it("links non-zero run and failure counts to their runs", () => {
+    const hrefs = { runsHref: "#/activity", failuresHref: "#/activity?outcome=fail" };
+    const stat = (stats: ReturnType<typeof summaryStats>, label: string) => stats.find((x) => x.label === label);
+    const linked = summaryStats({ ...base, failures: 3 }, hrefs);
+    expect(stat(linked, "Runs")?.href).toBe("#/activity");
+    expect(stat(linked, "Failures")?.href).toBe("#/activity?outcome=fail");
+    const empty = summaryStats({ ...base, runs: 0, failures: 0 }, hrefs);
+    expect(stat(empty, "Runs")?.href).toBeUndefined();
+    expect(stat(empty, "Failures")?.href).toBeUndefined();
+  });
 });
 
 describe("summaryStats deltas", () => {

@@ -45,4 +45,21 @@ describe("CalendarHeatmap", () => {
     expect(body).toContain("More");
     expect(body).toContain("var(--heat-saved-5)");
   });
+
+  it("stays static without a select handler", () => {
+    const { body } = render(CalendarHeatmap, { props: { days, metric: "runs" } });
+    expect(body).not.toContain("<button");
+  });
+
+  it("makes each day a toggle with one tab stop when it can select", () => {
+    const { body } = render(CalendarHeatmap, {
+      props: { days, metric: "runs", selected: { from: "2026-11-04", to: "2026-11-04" }, onselect: () => {} },
+    });
+    expect(body.match(/<button/g)?.length).toBe(3);
+    expect(body.match(/tabindex="0"/g)?.length).toBe(1);
+    expect(body.match(/aria-pressed="true"/g)?.length).toBe(1);
+    expect(body).toMatch(/<button[^>]*class="cell[^"]*selected[^"]*"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*class="cell[^"]*selected/);
+    expect(body.match(/class="cell[^"]*dimmed/g)?.length).toBe(2);
+    expect(body).toMatch(/aria-label="[^"]*Runs: 2[^"]*"/);
+  });
 });

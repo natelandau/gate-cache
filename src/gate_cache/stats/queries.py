@@ -192,6 +192,32 @@ def _skip_rate(skips: int, ran: int) -> float | None:
     return skips / ran if ran else None
 
 
+# A flaky tree: one gate's content that both failed and passed. Every flaky view groups by this.
+_FLAKY_GROUP = (
+    " GROUP BY repo, name, tree"
+    " HAVING SUM(outcome = 'fail') > 0 AND SUM(outcome IN " + _GOOD + ") > 0"
+)
+# Joins events to the flaky trees in `ft`, from _flaky_trees_cte.
+_ON_FLAKY_TREE = (
+    "EXISTS (SELECT 1 FROM ft WHERE ft.repo IS events.repo AND ft.name = events.name"
+    " AND ft.tree = events.tree)"
+)
+
+
+def _flaky_trees_cte(where: str) -> str:
+    """Return a WITH clause naming `ft`, the flaky trees among events matching `where`.
+
+    The aggregate keeps SQLite from flattening the CTE, so it runs once rather than once per
+    event that joins to it.
+    """
+    return (
+        "WITH ft AS (SELECT repo, name, tree FROM events"  # noqa: S608
+        + _and(where, "tree IS NOT NULL")
+        + _FLAKY_GROUP
+        + ") "
+    )
+
+
 def _flaky_trees(
     conn: sqlite3.Connection, where: str, params: list[Any]
 ) -> list[tuple[str | None, str, str, int, int, float]]:
@@ -199,9 +225,10 @@ def _flaky_trees(
     sql = (
         "SELECT repo, name, tree,"  # noqa: S608
         " SUM(outcome = 'fail'), SUM(outcome IN " + _GOOD + "), MAX(ts)"
-        " FROM events" + _and(where, "tree IS NOT NULL") + " GROUP BY repo, name, tree"
-        " HAVING SUM(outcome = 'fail') > 0 AND SUM(outcome IN " + _GOOD + ") > 0"
-        " ORDER BY MAX(ts) DESC, tree"
+        " FROM events"
+        + _and(where, "tree IS NOT NULL")
+        + _FLAKY_GROUP
+        + " ORDER BY MAX(ts) DESC, tree"
     )
     return [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in conn.execute(sql, params)]
 
@@ -296,8 +323,10 @@ class _Tally:
         self.failures += other.failures
 
 
-def _local_buckets(conn: sqlite3.Connection, filters: Filters) -> Iterator[tuple[datetime, _Tally]]:
-    """Yield the local start and tally of each quarter-hour bucket that holds an event.
+def _local_buckets(
+    conn: sqlite3.Connection, filters: Filters
+) -> Iterator[tuple[int, datetime, _Tally]]:
+    """Yield the id, local start, and tally of each quarter-hour bucket that holds an event.
 
     Raises:
         ValueError: If the filter's time zone is unknown.
@@ -312,7 +341,7 @@ def _local_buckets(conn: sqlite3.Connection, filters: Filters) -> Iterator[tuple
         params,
     ):
         start = datetime.fromtimestamp(bucket_id * _BUCKET_SECONDS, tz=UTC).astimezone(zone)
-        yield start, _Tally(runs=int(runs), saved=float(saved), failures=int(failures))
+        yield bucket_id, start, _Tally(runs=int(runs), saved=float(saved), failures=int(failures))
 
 
 def previous_window(conn: sqlite3.Connection, filters: Filters, *, now: float) -> Filters | None:
@@ -376,7 +405,7 @@ def summary(
         if result["cost_unknown_runs"] or totals["cost_unknown_runs"]:
             previous["net_saved"] = None
     days: dict[str, _Tally] = defaultdict(_Tally)
-    for start, tally in _local_buckets(conn, filters):
+    for _, start, tally in _local_buckets(conn, filters):
         days[start.date().isoformat()].add(tally)
     return {
         **result,
@@ -447,7 +476,7 @@ def hourly(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         168 cells ordered by weekday then hour, with weekday 0 as Sunday.
     """
     grid: dict[tuple[int, int], _Tally] = defaultdict(_Tally)
-    for start, tally in _local_buckets(conn, filters):
+    for _, start, tally in _local_buckets(conn, filters):
         grid[(start.isoweekday() % 7, start.hour)].add(tally)
     cells: list[dict[str, Any]] = []
     for weekday in range(7):
@@ -856,7 +885,33 @@ def _parse_cursor(cursor: str) -> tuple[float, int]:
     return ts, event_id
 
 
-def activity(
+def _hour_buckets(conn: sqlite3.Connection, filters: Filters, weekday: int, hour: int) -> list[int]:
+    """Return the ids of the event buckets in a local weekday and hour.
+
+    The buckets come from `_local_buckets`, as in `hourly`, so they hold exactly the events
+    the heatmap cell counts.
+    """
+    return [
+        bucket_id
+        for bucket_id, start, _ in _local_buckets(conn, filters)
+        if start.isoweekday() % 7 == weekday and start.hour == hour
+    ]
+
+
+def _check_slot(weekday: int | None, hour: int | None) -> None:
+    """Raise ValueError unless weekday and hour are both absent or both in range."""
+    if (weekday is None) != (hour is None):
+        msg = f"weekday and hour go together: weekday={weekday!r}, hour={hour!r}"
+        raise ValueError(msg)
+    if weekday is not None and not 0 <= weekday <= 6:  # noqa: PLR2004
+        msg = f"weekday must be 0 to 6: {weekday!r}"
+        raise ValueError(msg)
+    if hour is not None and not 0 <= hour <= 23:  # noqa: PLR2004
+        msg = f"hour must be 0 to 23: {hour!r}"
+        raise ValueError(msg)
+
+
+def activity(  # noqa: PLR0913
     conn: sqlite3.Connection,
     filters: Filters,
     *,
@@ -865,6 +920,10 @@ def activity(
     outcome: str | None = None,
     reason: str | None = None,
     group: tuple[str, str] | None = None,
+    weekday: int | None = None,
+    hour: int | None = None,
+    gate: tuple[str | None, str] | None = None,
+    flaky: bool = False,
 ) -> dict[str, Any]:
     """Return one page of events, newest first.
 
@@ -876,15 +935,38 @@ def activity(
         outcome: Keep only events with this outcome, or every event when None.
         reason: Keep only events with exactly this reason, or every event when None.
         group: Keep only the events of one breakdown row, as its dimension and key.
+        weekday: With `hour`, keep only events in this local weekday (0 is Sunday).
+        hour: With `weekday`, keep only events in this local hour (0 to 23).
+        gate: Keep only events of this repo and gate name; None as the repo is the unknown repo.
+        flaky: Keep only events on trees that both failed and passed in the window.
 
     Returns:
         The events and the cursor for the next page, or None on the last page.
 
     Raises:
-        ValueError: If the cursor or group is malformed or the outcome is unknown.
+        ValueError: If the cursor or group is malformed, the outcome is unknown, or the
+            weekday and hour are not both given and in range.
     """
+    _check_slot(weekday, hour)
     limit = max(1, min(limit, _MAX_PAGE))
     where, params = _where(filters)
+    if weekday is not None and hour is not None:
+        # One JSON parameter, since a long range holds more buckets than SQLite allows as
+        # bound variables or OR terms.
+        buckets = _hour_buckets(conn, filters, weekday, hour)
+        where = _and(where, _BUCKET + " IN (SELECT value FROM json_each(?))")  # noqa: S608
+        params = [*params, json.dumps(buckets)]
+    if gate is not None:
+        where = _and(where, "repo IS ? AND name = ?")
+        params = [*params, gate[0], gate[1]]
+    prefix, prefix_params = "", []
+    if flaky:
+        # Flakiness is decided over every outcome in the window, whatever else is filtered.
+        tree_where, prefix_params = (
+            _where(filters, name=gate[1], exact_repo=(gate[0],)) if gate else _where(filters)
+        )
+        prefix = _flaky_trees_cte(tree_where)
+        where = _and(where, _ON_FLAKY_TREE)
     if outcome is not None:
         if outcome not in _OUTCOMES:
             msg = f"unknown outcome: {outcome!r}"
@@ -904,8 +986,8 @@ def activity(
         params = [*params, ts, ts, event_id]
     names = _all_repo_names(conn)
     rows = conn.execute(
-        f"SELECT {_ROW_COLUMNS}, id FROM events{where} ORDER BY ts DESC, id DESC LIMIT ?",  # noqa: S608
-        [*params, limit + 1],
+        f"{prefix}SELECT {_ROW_COLUMNS}, id FROM events{where} ORDER BY ts DESC, id DESC LIMIT ?",  # noqa: S608
+        [*prefix_params, *params, limit + 1],
     ).fetchall()
     page = rows[:limit]
     more = len(rows) > limit
@@ -933,13 +1015,8 @@ def flaky(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     names = _all_repo_names(conn)
     runs: dict[tuple[str | None, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in conn.execute(
-        "WITH f AS (SELECT repo AS frepo, name AS fname, tree AS ftree FROM events"  # noqa: S608
-        + _and(where, "tree IS NOT NULL")
-        + " GROUP BY repo, name, tree"
-        " HAVING SUM(outcome = 'fail') > 0 AND SUM(outcome IN " + _GOOD + ") > 0)"  # noqa: S608
-        f" SELECT {_ROW_COLUMNS} FROM events JOIN f"
-        " ON events.repo IS f.frepo AND events.name = f.fname AND events.tree = f.ftree"
-        + where
+        f"{_flaky_trees_cte(where)}SELECT {_ROW_COLUMNS} FROM events"  # noqa: S608
+        + _and(where, _ON_FLAKY_TREE)
         + " ORDER BY ts, id",
         [*params, *params],
     ):

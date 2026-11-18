@@ -1,6 +1,9 @@
 <script lang="ts">
-  import type { Query } from "../lib/query.svelte";
-  import type { SummaryView } from "../lib/summary";
+  import FilterChip from "../lib/components/FilterChip.svelte";
+  import { createQuery, type Query } from "../lib/query.svelte";
+  import { navigate } from "../lib/router.svelte";
+  import { spanLabel, type DaySpan } from "../lib/selection";
+  import { loadSummary, type SummaryView } from "../lib/summary";
   import BreakdownModule from "./overview/BreakdownModule.svelte";
   import CalendarModule from "./overview/CalendarModule.svelte";
   import CoalescingModule from "./overview/CoalescingModule.svelte";
@@ -18,34 +21,61 @@
     /** The shell's summary query, shared with the sidebar's flaky badge. */
     query: Query<SummaryView>;
     repoLabel: string | null;
+    /** Page-local days picked on the calendar or daily chart, from the hash route. */
+    span?: DaySpan;
   }
 
-  let { query, repoLabel }: Props = $props();
+  let { query, repoLabel, span }: Props = $props();
+
+  // The calendar and daily chart keep the whole range so other days stay pickable; the
+  // stats and outcome mix follow the picked days through their own summary.
+  const scoped = createQuery(
+    (signal) => (span ? loadSummary(signal, span) : Promise.resolve(undefined)),
+    () => span,
+  );
+  const scopedQuery = $derived(span ? scoped : query);
+
+  let heading: HTMLElement;
+
+  // Picking replaces the history entry, like the Activity filters.
+  function pick(next: DaySpan | undefined): void {
+    navigate(next ? { page: "overview", span: next } : { page: "overview" }, { replace: true });
+  }
+
+  function clear(): void {
+    pick(undefined);
+    heading.focus();
+  }
 </script>
 
 <section class="page" aria-labelledby="overview-title">
-  <h1 id="overview-title" class="page-title">Overview</h1>
+  <div class="head">
+    <h1 id="overview-title" class="page-title" tabindex="-1" bind:this={heading}>Overview</h1>
+    {#if span}
+      <FilterChip label="Days: {spanLabel(span)}" removeLabel="Show the whole range" onremove={clear} />
+    {/if}
+  </div>
 
-  <StatsModule {query} />
-  <CalendarModule {query} {repoLabel} />
-  <DailyModule {query} {repoLabel} />
+  <StatsModule query={scopedQuery} {span} />
+  <CalendarModule {query} {repoLabel} {span} onselect={pick} />
+  <DailyModule {query} {repoLabel} {span} onselect={pick} />
 
   <div class="row halves">
-    <HourlyModule {repoLabel} />
-    <TopGatesModule {repoLabel} />
+    <HourlyModule {repoLabel} {span} />
+    <TopGatesModule {repoLabel} {span} />
   </div>
   <div class="row thirds">
-    <OutcomeModule {query} {repoLabel} />
-    <FlakyModule {repoLabel} />
-    <ReasonsModule {repoLabel} />
+    <OutcomeModule query={scopedQuery} {repoLabel} {span} />
+    <FlakyModule {repoLabel} {span} />
+    <ReasonsModule {repoLabel} {span} />
   </div>
   <div class="row wide-narrow">
-    <FailuresModule {repoLabel} />
-    <SlowdownsModule {repoLabel} />
+    <FailuresModule {repoLabel} {span} />
+    <SlowdownsModule {repoLabel} {span} />
   </div>
   <div class="row wide-narrow">
-    <BreakdownModule {repoLabel} />
-    <CoalescingModule {repoLabel} />
+    <BreakdownModule {repoLabel} {span} />
+    <CoalescingModule {repoLabel} {span} />
   </div>
 </section>
 
@@ -54,6 +84,17 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-4);
+  }
+
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .page-title:focus {
+    outline: none;
   }
 
   .row {

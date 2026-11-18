@@ -1,11 +1,20 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { activityHint, activitySubject, addPage, feedView, PAGE_SIZE, type PagedFeed } from "../lib/activity";
-  import { getActivity, type ActivityFilter, type EventRow, type Outcome } from "../lib/api";
-  import Badge from "../lib/components/Badge.svelte";
+  import {
+    activityHint,
+    activitySubject,
+    addPage,
+    feedView,
+    filterParts,
+    PAGE_SIZE,
+    type FilterPart,
+    type PagedFeed,
+  } from "../lib/activity";
+  import { getActivity, spanScope, type ActivityFilter, type EventRow, type Outcome } from "../lib/api";
   import Button from "../lib/components/Button.svelte";
   import DataTable, { type Column } from "../lib/components/DataTable.svelte";
   import EmptyState from "../lib/components/EmptyState.svelte";
+  import FilterChip from "../lib/components/FilterChip.svelte";
   import Notice from "../lib/components/Notice.svelte";
   import OutcomeBadge from "../lib/components/OutcomeBadge.svelte";
   import Select from "../lib/components/Select.svelte";
@@ -18,26 +27,19 @@
 
   interface Props {
     repoLabel: string | null;
-    /**
-     * Page-local filters from the hash route: an outcome, an exact reason, and the runs of one
-     * overview Breakdown row.
-     */
+    /** The page-local filters from the hash route. */
     filter: ActivityFilter;
   }
 
   let { repoLabel, filter }: Props = $props();
 
-  const outcome = $derived(filter.outcome);
-  const reason = $derived(filter.reason);
-  const group = $derived(filter.group);
-  // What the server sees; the chip label is display only.
-  const sent = $derived({ outcome, reason, group: group && { by: group.by, key: group.key } });
+  function fetchPage(before: string | null, signal: AbortSignal) {
+    const { span, ...rest } = filter;
+    return getActivity({ limit: PAGE_SIZE, before, ...rest }, { signal, scope: spanScope(span) });
+  }
 
   // The first page follows the archive live; see lib/activity.ts for why later pages do not.
-  const first = createQuery(
-    (signal) => getActivity({ limit: PAGE_SIZE, ...filter }, { signal }),
-    () => sent,
-  );
+  const first = createQuery((signal) => fetchPage(null, signal), () => filter);
 
   const outcomeOptions = [
     { value: "", label: "All outcomes" },
@@ -46,12 +48,19 @@
 
   // Filter changes replace the history entry, so going back leaves the page instead of
   // stepping through every filter tried.
-  function showOutcome(value: string): void {
-    navigate({ page: "activity", ...filter, outcome: (value || undefined) as Outcome | undefined }, { replace: true });
+  function show(next: ActivityFilter): void {
+    navigate({ page: "activity", ...next }, { replace: true });
   }
 
-  function remove(key: "reason" | "group"): void {
-    navigate({ page: "activity", ...filter, [key]: undefined }, { replace: true });
+  function showOutcome(value: string): void {
+    const { outcome: _, ...rest } = filter;
+    show(value ? { ...rest, outcome: value as Outcome } : rest);
+  }
+
+  const parts = $derived(filterParts(filter));
+
+  function remove(part: FilterPart): void {
+    show(part.without);
     heading.focus();
   }
 
@@ -68,13 +77,13 @@
     moreError = undefined;
   }
 
+  // Pages loaded under other filters never mix with the first page of the current ones.
+  const inputs = $derived(JSON.stringify([filters.repos, filters.range, filter]));
+
   $effect(() => {
-    void [filters.repos, filters.range, sent];
+    void inputs;
     resetPaging();
   });
-
-  // Pages loaded under other filters never mix with the first page of the current ones.
-  const inputs = $derived(JSON.stringify([filters.repos, filters.range, sent]));
   const view = $derived(feedView(first.data, paged, inputs));
 
   type Row = EventRow & { key: string };
@@ -113,10 +122,7 @@
     loadingMore = true;
     moreError = undefined;
     try {
-      const page = await getActivity(
-        { limit: PAGE_SIZE, before, ...filter },
-        { signal: controller.signal },
-      );
+      const page = await fetchPage(before, controller.signal);
       if (controller.signal.aborted || inputs !== at) return;
       paged = addPage(paged, live, page, at);
       await tick();
@@ -155,23 +161,15 @@
   </div>
 
   <div class="filters">
-    <Select label="Outcome" value={outcome ?? ""} options={outcomeOptions} onchange={showOutcome} />
-    {#if reason}
-      <span class="chip">
-        <Badge title={reason}><span class="reason">Reason: {reason}</span></Badge>
-        <Button square label="Remove reason filter" title="Remove reason filter" onclick={() => remove("reason")}>
-          ×
-        </Button>
-      </span>
-    {/if}
-    {#if group}
-      <span class="chip">
-        <Badge title={group.label}><span class="reason">{group.label}</span></Badge>
-        <Button square label="Remove {group.label} filter" title="Remove filter" onclick={() => remove("group")}>
-          ×
-        </Button>
-      </span>
-    {/if}
+    <Select label="Outcome" value={filter.outcome ?? ""} options={outcomeOptions} onchange={showOutcome} />
+    {#each parts as part (part.key)}
+      <FilterChip
+        label={part.label}
+        title={part.title}
+        removeLabel="Remove {part.noun} filter"
+        onremove={() => remove(part)}
+      />
+    {/each}
   </div>
 
   {#if first.error}
@@ -192,7 +190,7 @@
       >
         {#snippet empty()}
           <EmptyState
-            title={emptyTitle(activitySubject(filter), { range: filters.range, repoLabel })}
+            title={emptyTitle(activitySubject(filter), { range: filters.range, span: filter.span, repoLabel })}
             detail={activityHint(
               filter,
               { range: filters.range, repoLabel, recording: freshness.recording },
@@ -244,21 +242,6 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-3);
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  /* Reasons can be long error text; the badge title carries the full reason. */
-  .reason {
-    max-width: 48ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .page-title:focus {

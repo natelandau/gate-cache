@@ -39,9 +39,26 @@ describe("emptyTitle", () => {
   });
 });
 
+describe("emptyTitle with picked days", () => {
+  it("names the days in place of the range", () => {
+    expect(
+      emptyTitle("runs", { range: preset("7d"), repoLabel: "app", span: { from: "2026-11-03", to: "2026-11-03" } }),
+    ).toBe("No runs on Nov 3 for app.");
+  });
+});
+
 describe("emptyHint", () => {
   it("asks to turn recording on first", () => {
     expect(emptyHint({ range: preset("7d"), repoLabel: "app", recording: false })).toBe(
+      "Turn recording on with gate-cache stats on, then run a gate through gate-cache.",
+    );
+  });
+
+  it("suggests other days when days are picked", () => {
+    expect(emptyHint({ range: preset("7d"), repoLabel: "app", recording: true, span: { from: "2026-11-03", to: "2026-11-03" } })).toBe(
+      "Pick other days, or remove the day filter.",
+    );
+    expect(emptyHint({ range: preset("7d"), repoLabel: null, recording: false, span: { from: "2026-11-03", to: "2026-11-03" } })).toBe(
       "Turn recording on with gate-cache stats on, then run a gate through gate-cache.",
     );
   });

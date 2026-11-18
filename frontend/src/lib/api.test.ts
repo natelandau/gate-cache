@@ -95,6 +95,17 @@ describe("fetchers", () => {
     expect(params.getAll("repo")).toEqual(["/work/other/.git"]);
   });
 
+  it("send the activity weekday, hour, gate, and flaky filters", async () => {
+    respond(200, { events: [], next_before: null });
+    await getActivity({ slot: { weekday: 0, hour: 23 }, gate: { repo: null, name: "lint" }, flaky: true }, { scope });
+    const params = calledUrl().searchParams;
+    expect(params.get("weekday")).toBe("0");
+    expect(params.get("hour")).toBe("23");
+    expect(params.get("gate")).toBe("lint");
+    expect(params.get("gate_repo")).toBe("-");
+    expect(params.get("flaky")).toBe("1");
+  });
+
   it("unwrap the hourly cells and the reasons", async () => {
     const cell = { weekday: 0, hour: 9, runs: 2, saved: 1.5, failures: 0 };
     respond(200, { cells: [cell] });

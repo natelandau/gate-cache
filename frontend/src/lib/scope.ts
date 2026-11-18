@@ -1,11 +1,14 @@
 /** Copy that names the active filters, for empty states. */
 
 import { type RangeSpec, rangeLabel } from "./range";
+import { spanRange, type DaySpan } from "./selection";
 
 export interface ScopeText {
   range: RangeSpec;
   /** Display name of the repo selection, or null for all repos. */
   repoLabel: string | null;
+  /** Days picked on a chart, which the copy names in place of the range. */
+  span?: DaySpan;
 }
 
 /** Return the range as it reads inside a sentence, such as "in the last 7 days" or "this month". */
@@ -31,15 +34,20 @@ function isAllTime(range: RangeSpec): boolean {
  */
 export function emptyTitle(subject: string, scope: ScopeText): string {
   const repo = scope.repoLabel ? ` for ${scope.repoLabel}` : "";
-  if (isAllTime(scope.range)) return `No ${subject} recorded${repo || " yet"}.`;
-  return `No ${subject} ${rangePhrase(scope.range)}${repo}.`;
+  const range = spanRange(scope.range, scope.span);
+  if (isAllTime(range)) return `No ${subject} recorded${repo || " yet"}.`;
+  return `No ${subject} ${rangePhrase(range)}${repo}.`;
 }
 
-/** Return the next step for an empty page: turn recording on, or loosen a filter. */
+/**
+ * Return the next step for an empty page: turn recording on, or loosen a filter. Days picked
+ * on a chart are the filter to loosen first.
+ */
 export function emptyHint(scope: ScopeText & { recording: boolean | null }): string {
   if (scope.recording === false) {
     return "Turn recording on with gate-cache stats on, then run a gate through gate-cache.";
   }
+  if (scope.span) return "Pick other days, or remove the day filter.";
   if (scope.repoLabel) return "Pick All repos or a longer range.";
   if (!isAllTime(scope.range)) return "Run a gate through gate-cache, or pick a longer range.";
   return "Run a gate through gate-cache.";

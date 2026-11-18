@@ -5,9 +5,10 @@
 
   Props:
   - `repoLabel`: the repo selection's display name, or null for all repos
+  - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import { getGates } from "../../lib/api";
+  import { getGates, spanScope } from "../../lib/api";
   import MetricTabs from "../../lib/components/MetricTabs.svelte";
   import Module from "../../lib/components/Module.svelte";
   import RankedList from "../../lib/components/RankedList.svelte";
@@ -18,15 +19,21 @@
   import { rankGates, rankValue, type GateRank } from "../../lib/rank";
   import { href } from "../../lib/router.svelte";
   import { emptyHint, emptyTitle } from "../../lib/scope";
+  import type { DaySpan } from "../../lib/selection";
   import { filters, freshness } from "../../lib/state.svelte";
 
   interface Props {
     repoLabel: string | null;
+    /** Page-local days the overview is scoped to. */
+    span?: DaySpan;
   }
 
-  let { repoLabel }: Props = $props();
+  let { repoLabel, span }: Props = $props();
 
-  const query = createQuery((signal) => getGates({ signal }));
+  const query = createQuery(
+    (signal) => getGates({ signal, scope: spanScope(span) }),
+    () => span,
+  );
 
   let by: GateRank = $state("saved");
 
@@ -73,8 +80,8 @@
   loading={query.loading && !query.data}
   error={query.error}
   empty={!query.data || items.length === 0}
-  emptyTitle={emptyTitle(subject, { range: filters.range, repoLabel })}
-  emptyDetail={emptyHint({ range: filters.range, repoLabel, recording: freshness.recording })}
+  emptyTitle={emptyTitle(subject, { range: filters.range, span, repoLabel })}
+  emptyDetail={emptyHint({ range: filters.range, span, repoLabel, recording: freshness.recording })}
 >
   {#snippet actions()}
     <MetricTabs

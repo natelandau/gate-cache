@@ -41,3 +41,23 @@ export function dailyScale(days: { saved: number; failures: number }[]): DailySc
     gridTicks: [failY(0), ...savedTicks.map(savedY)],
   };
 }
+
+/**
+ * Return the outer padding, in percent of the plot width, of a band scale with `count` bands
+ * and d3's `padding`, which sets inner and outer padding alike. Columns of equal width inside
+ * that inset line up with the bands, one step per day.
+ */
+export function bandInset(count: number, padding: number): number {
+  return count === 0 ? 0 : ((padding / 2) / (count + padding)) * 100;
+}
+
+/**
+ * Return the index of the band under `fraction` of the plot width (0 at the left edge, 1 at
+ * the right), or null off the plot. The outer padding counts as its nearest band.
+ */
+export function bandIndexAt(fraction: number, count: number, padding: number): number | null {
+  if (count === 0 || fraction < 0 || fraction > 1) return null;
+  const inset = bandInset(count, padding) / 100;
+  const index = Math.floor(((fraction - inset) / (1 - 2 * inset)) * count);
+  return Math.min(count - 1, Math.max(0, index));
+}

@@ -5,8 +5,8 @@
   screen readers.
 
   Props:
-  - `parts`: the parts in display order, each `{ key, label, count, color, title? }`; pass a
-    nonzero total
+  - `parts`: the parts in display order, each `{ key, label, count, color, title?, href? }`;
+    pass a nonzero total. A part with `href` and a count links its count and bar segment.
 -->
 <script lang="ts">
   import { formatCount } from "../format";
@@ -25,12 +25,16 @@
   <div class="bar" aria-hidden="true">
     {#each shares as item (item.part.key)}
       {#if item.count > 0}
-        <span
+        <!-- The legend links are the keyboard and screen-reader path, so segments skip the tab order. -->
+        <svelte:element
+          this={item.part.href ? "a" : "span"}
           class="segment"
+          href={item.part.href}
+          tabindex={item.part.href ? -1 : undefined}
           style:background={item.part.color}
           style:width="{item.share * 100}%"
           title="{item.part.label}: {formatCount(item.count)} ({item.percent})"
-        ></span>
+        ></svelte:element>
       {/if}
     {/each}
   </div>
@@ -39,7 +43,16 @@
       <li title={item.part.title}>
         <i class="swatch" style:background={item.part.color}></i>
         <span>{item.part.label}</span>
-        <span class="mono num">{formatCount(item.count)}</span>
+        {#if item.part.href && item.count > 0}
+          <a
+            class="mono num"
+            href={item.part.href}
+            aria-label="{formatCount(item.count)} {item.part.label} runs. Open in Activity"
+            >{formatCount(item.count)}</a
+          >
+        {:else}
+          <span class="mono num">{formatCount(item.count)}</span>
+        {/if}
         <span class="mono num percent">{item.percent}</span>
       </li>
     {/each}
@@ -60,7 +73,12 @@
   }
 
   .segment {
+    display: block;
     height: 100%;
+  }
+
+  a.num {
+    color: var(--accent);
   }
 
   .legend {

@@ -48,6 +48,8 @@ export interface MixPart {
   color: string;
   /** Optional longer description, shown as a tooltip on the legend row. */
   title?: string;
+  /** Optional link to the runs this part counts; a part with no count gets no link. */
+  href?: string;
 }
 
 export interface PartShare<T> {

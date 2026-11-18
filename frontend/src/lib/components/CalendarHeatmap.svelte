@@ -4,12 +4,20 @@
   Saturday as rows. Cells are colored on the metric's ramp, scaled to the busiest visible day.
   Each cell's tooltip names the date and value, and a hidden table lists the same data.
 
+  With `onselect`, each day is a toggle button with one tab stop for the grid. Click picks a
+  day, Shift+click extends from the last picked day, and clicking the only picked day clears
+  it. Arrow keys move by day (up and down) and week (left and right), Enter or Space picks,
+  Shift+Arrow extends, and Escape clears. Picked days get an inset ring and the others dim.
+
   Props:
   - `days`: one bucket per day with gaps already filled, in order; `day` is a local
     `YYYY-MM-DD` date
   - `metric`: which value to show and which ramp to use
+  - `selected`: the picked days, if any
+  - `onselect`: called with the new span, or undefined to clear; omit for a static calendar
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import type { DayBucket } from "../fill";
   import {
     formatHeatValue,
@@ -20,18 +28,52 @@
     weekdayName,
     type HeatMetric,
   } from "../heat";
+  import { createDayCursor } from "../daycursor.svelte";
+  import { inSpan, spanOf, toggleDay, type DaySpan } from "../selection";
   import HeatLegend from "./HeatLegend.svelte";
 
   interface Props {
     days: DayBucket[];
     metric: HeatMetric;
+    selected?: DaySpan;
+    onselect?: (span: DaySpan | undefined) => void;
   }
 
-  let { days, metric }: Props = $props();
+  let { days, metric, selected, onselect }: Props = $props();
 
   interface Cell {
     bucket: DayBucket;
     date: Date;
+    index: number;
+  }
+
+  // Rows are weekdays and columns are weeks, so Left and Right move a week.
+  const STEPS = { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -7, ArrowRight: 7 };
+
+  // Until the user moves it, the tab stop is the first picked day, else the latest day.
+  const nav = createDayCursor(() => ({ days, selected, onselect }), STEPS);
+  let grid: HTMLElement | undefined = $state();
+
+  function pick(index: number, extend: boolean): void {
+    const day = days[index]?.day;
+    if (!day || !onselect) return;
+    const anchor = nav.cursor.anchor;
+    const anchorDay = anchor !== null ? days[anchor]?.day : undefined;
+    if (extend && anchorDay) {
+      onselect(spanOf(anchorDay, day));
+      nav.move(index, anchor);
+    } else {
+      onselect(toggleDay(selected, day));
+      nav.move(index, index);
+    }
+  }
+
+  async function onkeydown(event: KeyboardEvent): Promise<void> {
+    // Each cell is a button, so Enter and Space reach its click handler natively.
+    if (event.key === "Enter" || event.key === " ") return;
+    if (!nav.key(event)) return;
+    await tick();
+    grid?.querySelector<HTMLElement>(`[data-index="${nav.cursor.at}"]`)?.focus();
   }
 
   interface Week {
@@ -61,7 +103,7 @@
   const max = $derived(Math.max(0, ...days.map((bucket) => heatValue(bucket, metric))));
 
   const weeks = $derived.by(() => {
-    const cells: (Cell | null)[] = days.map((bucket) => ({ bucket, date: localDate(bucket.day) }));
+    const cells: (Cell | null)[] = days.map((bucket, index) => ({ bucket, date: localDate(bucket.day), index }));
     const lead = cells[0]?.date.getDay() ?? 0;
     const padded = [...Array<null>(lead).fill(null), ...cells];
     while (padded.length % 7 !== 0) padded.push(null);
@@ -83,24 +125,47 @@
 </script>
 
 <figure class="calendar">
-  <div class="scroll" aria-hidden="true">
-    <div class="weekdays">
+  <div class="scroll" aria-hidden={onselect ? undefined : "true"}>
+    <div class="weekdays" aria-hidden="true">
       <span></span>
       {#each dayLabels as label, index (index)}<span>{label}</span>{/each}
     </div>
-    <div class="grid">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="grid"
+      role={onselect ? "group" : undefined}
+      aria-label={onselect ? "Pick days to scope the page" : undefined}
+      onkeydown={onselect ? onkeydown : undefined}
+      bind:this={grid}
+    >
       {#each weeks as week (week.key)}
-        <span class="month">{week.month}</span>
+        <span class="month" aria-hidden="true">{week.month}</span>
         {#each week.cells as cell, index (index)}
           {#if cell}
             {@const value = heatValue(cell.bucket, metric)}
-            <span
-              class="cell"
-              style:background={heatColor(metric, heatStep(value, max))}
-              title="{dateLong.format(cell.date)}&#10;{HEAT_LABELS[metric]}: {formatHeatValue(metric, value)}"
-            ></span>
+            {@const date = dateLong.format(cell.date)}
+            {@const text = `${HEAT_LABELS[metric]}: ${formatHeatValue(metric, value)}`}
+            {@const title = `${date}\n${text}`}
+            {#if onselect}
+              {@const on = inSpan(selected, cell.bucket.day)}
+              <button
+                type="button"
+                class="cell"
+                class:selected={on}
+                class:dimmed={nav.picked !== null && !on}
+                style:background={heatColor(metric, heatStep(value, max))}
+                {title}
+                aria-label="{date}, {text}"
+                aria-pressed={on}
+                tabindex={cell.index === nav.cursor.at ? 0 : -1}
+                data-index={cell.index}
+                onclick={(event) => pick(cell.index, event.shiftKey)}
+              ></button>
+            {:else}
+              <span class="cell" style:background={heatColor(metric, heatStep(value, max))} {title}></span>
+            {/if}
           {:else}
-            <span class="cell pad"></span>
+            <span class="cell pad" aria-hidden="true"></span>
           {/if}
         {/each}
       {/each}
@@ -172,5 +237,31 @@
     width: 12px;
     height: 12px;
     border-radius: 2px;
+  }
+
+  button.cell {
+    padding: 0;
+    border: 0;
+    cursor: pointer;
+  }
+
+  button.cell:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+
+  /* A ring, not a color, marks a picked day, so the ramp color stays readable. */
+  .cell.selected {
+    box-shadow: inset 0 0 0 2px var(--text);
+  }
+
+  .cell.dimmed {
+    opacity: 0.35;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .cell.dimmed {
+      transition: opacity 120ms ease-out;
+    }
   }
 </style>

@@ -4,7 +4,7 @@
   import Notice from "../lib/components/Notice.svelte";
   import OutcomeBadge from "../lib/components/OutcomeBadge.svelte";
   import { eventTitle, shortTree, timeText } from "../lib/events";
-  import { formatCount, formatRelative, formatTimestamp } from "../lib/format";
+  import { formatRelative, formatTimestamp, plural } from "../lib/format";
   import { gateKey, tally } from "../lib/gates";
   import { createQuery } from "../lib/query.svelte";
   import { href } from "../lib/router.svelte";
@@ -19,9 +19,6 @@
 
   const query = createQuery((signal) => getFlaky({ signal }));
 
-  function plural(count: number, one: string, many: string): string {
-    return `${formatCount(count)} ${count === 1 ? one : many}`;
-  }
 </script>
 
 <section class="page" aria-labelledby="flaky-title">

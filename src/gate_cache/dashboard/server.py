@@ -270,11 +270,8 @@ def _gate_detail(server: DashboardServer, params: dict[str, list[str]]) -> dict[
 
 def _activity(server: DashboardServer, params: dict[str, list[str]]) -> dict[str, Any]:
     filters = _filters(params)
-    text = params["limit"][-1] if "limit" in params else "100"
-    if _INTEGER_RE.fullmatch(text) is None:
-        msg = "limit must be an integer"
-        raise _BadRequestError(msg)
-    limit = max(1, min(int(text), _MAX_LIMIT))
+    requested = _integer(params, "limit")
+    limit = max(1, min(100 if requested is None else requested, _MAX_LIMIT))
     before = _text(params, "before")
     outcome = _text(params, "outcome")
     reason = _text(params, "reason")
@@ -284,10 +281,24 @@ def _activity(server: DashboardServer, params: dict[str, list[str]]) -> dict[str
         msg = "group and key must be given together"
         raise _BadRequestError(msg)
     group = (group_by, key) if group_by is not None and key is not None else None
+    weekday = _integer(params, "weekday")
+    hour = _integer(params, "hour")
+    gate = _gate(params)
+    flaky = _text(params, "flaky") == "1"
     return _query(
         server,
         lambda c: queries.activity(
-            c, filters, limit=limit, before=before, outcome=outcome, reason=reason, group=group
+            c,
+            filters,
+            limit=limit,
+            before=before,
+            outcome=outcome,
+            reason=reason,
+            group=group,
+            weekday=weekday,
+            hour=hour,
+            gate=gate,
+            flaky=flaky,
         ),
     )
 
@@ -299,6 +310,29 @@ def _breakdown(server: DashboardServer, params: dict[str, list[str]]) -> dict[st
         raise _BadRequestError(msg)
     filters = _filters(params)
     return _query(server, lambda c: queries.breakdown(c, filters, by=by))
+
+
+def _integer(params: dict[str, list[str]], key: str) -> int | None:
+    """Return an integer query parameter, or None when absent or empty."""
+    text = _text(params, key)
+    if text is None:
+        return None
+    if _INTEGER_RE.fullmatch(text) is None:
+        msg = f"{key} must be an integer"
+        raise _BadRequestError(msg)
+    return int(text)
+
+
+def _gate(params: dict[str, list[str]]) -> tuple[str | None, str] | None:
+    """Return the gate an activity request names as (repo, name), or None when absent."""
+    name = _text(params, "gate")
+    if name is None:
+        return None
+    repo = _text(params, "gate_repo")
+    if repo is None:
+        msg = "gate_repo is required with gate"
+        raise _BadRequestError(msg)
+    return _repo_value(repo), name
 
 
 def _simple(

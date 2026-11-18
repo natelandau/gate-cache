@@ -5,23 +5,29 @@
 
   Props:
   - `repoLabel`: the repo selection's display name, or null for all repos
+  - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import { getCoalescing } from "../../lib/api";
+  import { getCoalescing, spanScope } from "../../lib/api";
   import { COALESCING_HINT, coalescingNote, waitEndings, waitFacts } from "../../lib/coalescing";
   import Module from "../../lib/components/Module.svelte";
   import ShareMix from "../../lib/components/ShareMix.svelte";
   import { createQuery } from "../../lib/query.svelte";
   import { emptyHint, emptyTitle } from "../../lib/scope";
+  import type { DaySpan } from "../../lib/selection";
   import { filters, freshness } from "../../lib/state.svelte";
 
   interface Props {
     repoLabel: string | null;
+    span?: DaySpan;
   }
 
-  let { repoLabel }: Props = $props();
+  let { repoLabel, span }: Props = $props();
 
-  const query = createQuery((signal) => getCoalescing({ signal }));
+  const query = createQuery(
+    (signal) => getCoalescing({ signal, scope: spanScope(span) }),
+    () => span,
+  );
 
   const data = $derived(query.data);
   const endings = $derived(data ? waitEndings(data) : []);
@@ -31,7 +37,7 @@
   const emptyDetail = $derived(
     data?.runs
       ? (note ?? COALESCING_HINT)
-      : emptyHint({ range: filters.range, repoLabel, recording: freshness.recording }),
+      : emptyHint({ range: filters.range, span, repoLabel, recording: freshness.recording }),
   );
 </script>
 
@@ -42,7 +48,7 @@
   loading={query.loading && !query.data}
   error={query.error}
   {empty}
-  emptyTitle={emptyTitle("runs that waited for another run", { range: filters.range, repoLabel })}
+  emptyTitle={emptyTitle("runs that waited for another run", { range: filters.range, span, repoLabel })}
   {emptyDetail}
 >
   <dl class="facts">
