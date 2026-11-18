@@ -4,9 +4,9 @@ import CalendarHeatmap from "./CalendarHeatmap.svelte";
 
 // 2026-11-03 is a Tuesday, so the first week has two padding cells.
 const days = [
-  { day: "2026-11-03", saved: 0, failures: 0, runs: 0 },
-  { day: "2026-11-04", saved: 60, failures: 1, runs: 2 },
-  { day: "2026-11-05", saved: 120, failures: 0, runs: 10 },
+  { day: "2026-11-03", saved: 0, failures: 0, runs: 0, spent: 0, skips: 0, ran: 0, cost: 0 },
+  { day: "2026-11-04", saved: 60, failures: 1, runs: 2, spent: 0, skips: 0, ran: 0, cost: 0 },
+  { day: "2026-11-05", saved: 120, failures: 0, runs: 10, spent: 0, skips: 0, ran: 0, cost: 0 },
 ];
 
 function cellStyles(body: string): string[] {

@@ -39,7 +39,7 @@ function query(data: SummaryView | undefined, loading = false): Query<SummaryVie
   return { data, error: undefined, loading } as unknown as Query<SummaryView>;
 }
 
-const days = [{ day: "2026-11-17", saved: 118, failures: 0, runs: 12 }];
+const days = [{ day: "2026-11-17", saved: 118, failures: 0, runs: 12, spent: 0, skips: 0, ran: 0, cost: 0 }];
 
 describe("Overview", () => {
   it("shows the stat strip with deltas, the activity calendar, and the daily chart", () => {
