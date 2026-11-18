@@ -4,6 +4,8 @@ import { summaryNote, summaryStats } from "./summary";
 
 const base: Summary = {
   time_saved: 90,
+  time_spent: 60,
+  fail_time: 0,
   unknown_saved_skips: 0,
   overhead: 0,
   waited: 0,
@@ -26,22 +28,23 @@ describe("summaryStats", () => {
     expect(stats.map((s) => [s.label, s.value])).toEqual([
       ["Time saved", "1m 30s"],
       ["Net saved", "1m 30s"],
+      ["Time spent", "1m 0s"],
       ["Runs", "12"],
       ["Skip rate", "50%"],
       ["Flaky gates", "0"],
       ["Failures", "0"],
     ]);
-    expect(stats[2]?.hint).toBeUndefined();
-    expect(stats[3]?.hint).toBe("1 skip");
+    expect(stats[3]?.hint).toBeUndefined();
+    expect(stats[4]?.hint).toBe("1 skip");
   });
 
   it("flags problems and links flaky gates only when given a link", () => {
     const summary = { ...base, uncached: 2, failures: 3, flaky_gates: 1 };
     const linked = summaryStats(summary, { flakyHref: "#/flaky" });
-    expect(linked[2]?.hint).toBe("2 uncached");
-    expect(linked[4]).toMatchObject({ tone: "flaky", href: "#/flaky" });
-    expect(linked[5]).toMatchObject({ tone: "danger" });
-    expect(summaryStats(summary)[4]?.href).toBeUndefined();
+    expect(linked[3]?.hint).toBe("2 uncached");
+    expect(linked[5]).toMatchObject({ tone: "flaky", href: "#/flaky" });
+    expect(linked[6]).toMatchObject({ tone: "danger" });
+    expect(summaryStats(summary)[5]?.href).toBeUndefined();
   });
 });
 
@@ -55,6 +58,13 @@ describe("net saved", () => {
       tone: "default",
     });
     expect(stat?.title).toContain("Time saved minus");
+  });
+
+  it("hints at the time failed runs took only when there is some", () => {
+    const find = (s: Summary) => summaryStats(s).find((x) => x.label === "Time spent");
+    expect(find(base)?.hint).toBeUndefined();
+    expect(find({ ...base, fail_time: 20 })?.hint).toBe("20s on failures");
+    expect(find(base)?.title).toContain("overhead and waits are not counted");
   });
 
   it("shows a cache that cost more than it saved as negative, in the danger tone", () => {
@@ -83,6 +93,7 @@ describe("summaryStats deltas", () => {
     const previous = { ...base, days: 30, runs: 6 };
     const stats = summaryStats({ ...base, previous });
     expect(stats.map((s) => s.delta?.text)).toEqual([
+      "No change",
       "No change",
       "No change",
       "▲ 100%",

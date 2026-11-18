@@ -1,7 +1,7 @@
 import { currentScope, getSummary, type Summary } from "./api";
 import type { Stat } from "./components/StatStrip.svelte";
 import { statDeltas } from "./deltas";
-import { type DayBucket, fillDays } from "./fill";
+import { type DayBucket, fillDays, zeroBucket } from "./fill";
 import {
   formatCount,
   formatDuration,
@@ -24,7 +24,7 @@ export async function loadSummary(signal: AbortSignal, span?: DaySpan): Promise<
   const now = nowSeconds();
   const scope = clampScope(currentScope(now), span);
   const summary = await getSummary({ signal, scope });
-  return { summary, days: fillDays(summary.daily, scope.from, scope.to ?? now, scope.tz) };
+  return { summary, days: fillDays(summary.daily, scope.from, scope.to ?? now, scope.tz, zeroBucket) };
 }
 
 /**
@@ -49,6 +49,14 @@ export function summaryStats(
         "more than it saved.",
       tone: isNegativeDuration(s.net_saved) ? "danger" : "default",
       delta: deltas?.net_saved,
+    },
+    {
+      label: "Time spent",
+      value: formatDuration(s.time_spent),
+      hint: s.fail_time > 0 ? `${formatDuration(s.fail_time)} on failures` : undefined,
+      title:
+        "Total time gates ran, failed runs included. gate-cache overhead and waits are not counted.",
+      delta: deltas?.time_spent,
     },
     {
       label: "Runs",

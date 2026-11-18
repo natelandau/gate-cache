@@ -15,6 +15,9 @@ function repo(path: string | null, name: string, time_saved: number): BreakdownR
     runs: 1,
     skip_rate: null,
     time_saved,
+    time_spent: 0,
+    avg_run: null,
+    median_run: null,
     failures: 0,
     gates: 1,
   };

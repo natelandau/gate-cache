@@ -1,7 +1,7 @@
 <!--
   @component
-  Top gates: the gates that saved the most time, ran most, failed most, or run slowest. A row
-  opens the gate's detail panel.
+  Top gates: the gates that saved or spent the most time, ran most, failed most, or run slowest. A row opens
+  the gate's detail panel.
 
   Props:
   - `repoLabel`: the repo selection's display name, or null for all repos
@@ -16,7 +16,7 @@
   import { gateKey } from "../../lib/gates";
   import { openGatePanel } from "../../lib/panel";
   import { createQuery } from "../../lib/query.svelte";
-  import { rankGates, rankValue, type GateRank } from "../../lib/rank";
+  import { gateRunText, rankGates, rankValue, type GateRank } from "../../lib/rank";
   import { href } from "../../lib/router.svelte";
   import { emptyHint, emptyTitle } from "../../lib/scope";
   import type { DaySpan } from "../../lib/selection";
@@ -39,6 +39,7 @@
 
   const options: { value: GateRank; label: string }[] = [
     { value: "saved", label: "Time saved" },
+    { value: "spent", label: "Time spent" },
     { value: "runs", label: "Runs" },
     { value: "fails", label: "Failures" },
     { value: "slow", label: "Slowest" },
@@ -47,6 +48,7 @@
   // What an empty tab lacks, for its empty state.
   const SUBJECT: Record<GateRank, string> = {
     saved: "time saved",
+    spent: "time spent",
     runs: "runs",
     fails: "failures",
     slow: "passing runs",
@@ -61,9 +63,9 @@
     ranked.map((row) => ({
       key: gateKey(row),
       title: row.name,
-      subtitle: row.repo_name,
+      subtitle: [row.repo_name, gateRunText(row)].filter(Boolean).join(" \u00b7 "),
       value:
-        by === "saved" || by === "slow"
+        by === "saved" || by === "spent" || by === "slow"
           ? formatDuration(rankValue(row, by))
           : formatCount(rankValue(row, by) ?? 0),
       tone: by === "fails" ? ("danger" as const) : ("accent" as const),

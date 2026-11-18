@@ -15,6 +15,9 @@ function row(label: string, overrides: Partial<BreakdownRow> = {}): BreakdownRow
     runs: 0,
     skip_rate: null,
     time_saved: 0,
+    time_spent: 0,
+    avg_run: null,
+    median_run: null,
     failures: 0,
     gates: 1,
     ...overrides,
@@ -37,6 +40,11 @@ describe("breakdownBars", () => {
     const skip = breakdownBars(repos, "skip", "repo", []);
     expect(labels(skip)).toEqual(["web", "api", "unknown repo"]);
     expect(skip.at(-1)?.value).toBe(0);
+  });
+
+  it("sorts by time spent", () => {
+    const spent = [row("a", { time_spent: 5 }), row("b", { time_spent: 50 })];
+    expect(labels(breakdownBars(spent, "spent", "gate", []))).toEqual(["b", "a"]);
   });
 
   it("keys repo rows by the repo filter value and dims repos outside the filter", () => {

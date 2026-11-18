@@ -23,11 +23,21 @@
   import EmptyState from "../lib/components/EmptyState.svelte";
   import Notice from "../lib/components/Notice.svelte";
   import OutcomeBadge from "../lib/components/OutcomeBadge.svelte";
+  import RunHistogram from "../lib/components/RunHistogram.svelte";
+  import ShareMix from "../lib/components/ShareMix.svelte";
   import StatStrip, { type Stat } from "../lib/components/StatStrip.svelte";
   import TrendChart from "../lib/components/TrendChart.svelte";
   import { eventKeys, eventTitle, shortTree, timeText } from "../lib/events";
-  import { formatCount, formatDuration, formatPercent, formatRelative, formatTimestamp } from "../lib/format";
-  import { findGate } from "../lib/gates";
+  import {
+    formatBytes,
+    formatCount,
+    formatDuration,
+    formatPercent,
+    formatRatio,
+    formatRelative,
+    formatTimestamp,
+  } from "../lib/format";
+  import { findGate, sourceParts } from "../lib/gates";
   import { inertOutside } from "../lib/inert";
   import { createQuery } from "../lib/query.svelte";
   import { UNKNOWN_REPO } from "../lib/router.svelte";
@@ -109,11 +119,58 @@
       {
         label: "Avg run",
         value: formatDuration(row.avg_run),
-        hint: row.median_run === null ? undefined : `median ${formatDuration(row.median_run)}`,
+        hint: runHint(row),
       },
       { label: "Saved", value: formatDuration(row.time_saved) },
+      {
+        label: "Time spent",
+        value: formatDuration(row.time_spent),
+        hint: row.fail_time ? `${formatDuration(row.fail_time)} lost to failures` : undefined,
+      },
+      { label: "CPU/wall", value: formatRatio(row.cpu_ratio) },
+      {
+        label: "Peak memory",
+        value: formatBytes(row.peak_rss),
+        hint: row.median_rss === null ? undefined : `median ${formatBytes(row.median_rss)}`,
+      },
     ];
   });
+
+  function runHint(r: GateRow): string | undefined {
+    const parts: string[] = [];
+    if (r.median_run !== null) parts.push(`median ${formatDuration(r.median_run)}`);
+    if (r.p90_run !== null) parts.push(`p90 ${formatDuration(r.p90_run)}`);
+    return parts.length ? parts.join(" \u00b7 ") : undefined;
+  }
+
+  // Failures are counted from the timing classes, the same data the section shows.
+  const failureClasses = $derived.by(() => {
+    const timing = detail?.failure_timing;
+    if (!timing) return [];
+    const threshold = timing.threshold === null ? "" : ` (${formatDuration(timing.threshold)})`;
+    return [
+      {
+        key: "early",
+        label: "Early",
+        title: `Early: ended before half of the median passing run${threshold}`,
+        ...timing.early,
+      },
+      {
+        key: "late",
+        label: "Late",
+        title: `Late: ran at least half of the median passing run${threshold}`,
+        ...timing.late,
+      },
+      {
+        key: "unclassified",
+        label: "Unclassified",
+        title: "No passing run with a duration to compare against",
+        ...timing.unclassified,
+      },
+    ].filter((c) => c.runs > 0);
+  });
+
+  const sources = $derived(sourceParts(detail?.by_source ?? []));
 
   type Recent = EventRow & { key: string };
   const recent = $derived.by<Recent[]>(() => {
@@ -205,6 +262,37 @@
             <p class="muted">No passes with a recorded duration in this range.</p>
           {/if}
         </section>
+
+        <section>
+          <h3 class="section-title">Run times</h3>
+          {#if detail.histogram}
+            <RunHistogram histogram={detail.histogram} />
+          {:else}
+            <p class="muted">Needs 5 passing runs</p>
+          {/if}
+        </section>
+
+        {#if failureClasses.length}
+          <section>
+            <h3 class="section-title">Failures</h3>
+            <ul class="failures">
+              {#each failureClasses as c (c.key)}
+                <li title={c.title}>
+                  <span>{c.label}</span>
+                  <span class="mono num">{formatCount(c.runs)} {c.runs === 1 ? "run" : "runs"}</span>
+                  <span class="mono num muted">{formatDuration(c.time)}</span>
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
+
+        {#if sources.length}
+          <section>
+            <h3 class="section-title">Time spent by source</h3>
+            <ShareMix parts={sources} format={formatDuration} />
+          </section>
+        {/if}
 
         {#if detail.flaky_trees.length}
           <section>
@@ -304,6 +392,26 @@
   .muted {
     margin: 0;
     color: var(--text-muted);
+  }
+
+  .failures {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: var(--space-1) var(--space-3);
+    margin: 0;
+    padding: 0;
+    font-size: var(--text-sm);
+    list-style: none;
+  }
+
+  .failures li {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+  }
+
+  .num {
+    text-align: right;
   }
 
   /* The top bar wraps to a variable height here, so the panel covers the whole screen. */

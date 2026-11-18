@@ -56,6 +56,7 @@
 
   const options: { value: Metric; label: string }[] = [
     { value: "saved", label: "Time saved" },
+    { value: "spent", label: "Time spent" },
     { value: "runs", label: "Runs" },
     { value: "skip", label: "Skip %" },
     { value: "fails", label: "Failures" },
@@ -63,6 +64,7 @@
 
   const COLORS: Record<Metric, "saved" | "runs" | "fails"> = {
     saved: "saved",
+    spent: "runs",
     runs: "runs",
     skip: "runs",
     fails: "fails",
@@ -70,13 +72,24 @@
 
   const allColumns: { label: string; text: (row: BreakdownRow) => string }[] = [
     { label: "Saved", text: (row) => formatDuration(row.time_saved) },
+    { label: "Spent", text: (row) => formatDuration(row.time_spent) },
+    { label: "Avg", text: (row) => formatDuration(row.avg_run) },
+    { label: "Median", text: (row) => formatDuration(row.median_run) },
     { label: "Runs", text: (row) => formatCount(row.runs) },
     { label: "Skip %", text: (row) => formatPercent(row.skip_rate) },
     { label: "Failures", text: (row) => formatCount(row.failures) },
     { label: "Gates", text: (row) => formatCount(row.gates) },
   ];
 
-  const columns = $derived(info.oneGate ? allColumns.filter((c) => c.label !== "Gates") : allColumns);
+  // Avg and median describe one gate's passes, so only gate rows show them.
+  const GATE_ONLY = new Set(["Avg", "Median"]);
+  const columns = $derived(
+    allColumns.filter((c) => {
+      if (c.label === "Gates") return !info.oneGate;
+      if (GATE_ONLY.has(c.label)) return info.oneGate;
+      return true;
+    }),
+  );
   const bars = $derived(breakdownBars(rows ?? [], by, group, filters.repos));
   const shown = $derived(expanded ? bars : bars.slice(0, VISIBLE));
   const scope = $derived({ range: filters.range, span, repoLabel: info.allRepos ? null : repoLabel });

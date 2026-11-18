@@ -7,6 +7,7 @@ export type Delta = NonNullable<Stat["delta"]>;
 export type DeltaKey =
   | "time_saved"
   | "net_saved"
+  | "time_spent"
   | "runs"
   | "skip_rate"
   | "flaky_gates"
@@ -19,6 +20,7 @@ const RULES: Record<DeltaKey, { kind: Kind; upIsGood: boolean; duration?: boolea
   time_saved: { kind: "percent", upIsGood: true, duration: true },
   // Net time saved can cross zero, where a percentage means nothing.
   net_saved: { kind: "count", upIsGood: true, duration: true },
+  time_spent: { kind: "percent", upIsGood: false, duration: true },
   runs: { kind: "percent", upIsGood: true },
   skip_rate: { kind: "points", upIsGood: true },
   flaky_gates: { kind: "count", upIsGood: false },
@@ -66,6 +68,7 @@ export function statDeltas(
   return {
     time_saved: delta(current.time_saved, previous.time_saved, RULES.time_saved),
     net_saved: net,
+    time_spent: delta(current.time_spent, previous.time_spent, RULES.time_spent),
     runs: delta(current.runs, previous.runs, RULES.runs),
     skip_rate: rate,
     flaky_gates: delta(current.flaky_gates, previous.flaky_gates, RULES.flaky_gates),

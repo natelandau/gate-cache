@@ -8,10 +8,10 @@ import re
 import statistics
 import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 from zoneinfo import ZoneInfo
 
 from gate_cache.stats.archive import RETENTION_DAYS
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 _RAN = "('skip', 'pass', 'pass_unrecorded', 'fail')"
 _GOOD = "('pass', 'pass_unrecorded')"
 _RECENT_LIMIT = 50
+_TOP_SPENT = 5
 _MAX_PAGE = 500
 _OUTCOMES: frozenset[str] = frozenset(get_args(Outcome))
 # The archive keeps outcomes from newer gate-cache versions; only known ones count.
@@ -36,6 +37,11 @@ _BUCKET = (
     f"(CAST(ts / {_BUCKET_SECONDS} AS INTEGER)"
     f" - (ts < CAST(ts / {_BUCKET_SECONDS} AS INTEGER) * {_BUCKET_SECONDS}))"
 )
+# Fewer passes make a 90th percentile meaningless.
+_MIN_SPREAD_RUNS = 5
+_HISTOGRAM_BINS = 12
+# A failure faster than this share of the median pass stopped before the gate did its real work.
+_EARLY_FAIL_FRACTION = 0.5
 _INTEGER_RE = re.compile(r"-?[0-9]+")
 
 # Plain decimal text, optionally in the exponent form repr gives very large or small floats.
@@ -266,6 +272,8 @@ def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         " COALESCE(SUM(outcome = 'pass_unrecorded'), 0),"
         " COALESCE(SUM(overhead), 0.0),"
         " COALESCE(SUM(waited), 0.0),"
+        " COALESCE(SUM(duration), 0.0),"
+        " COALESCE(SUM(CASE WHEN outcome = 'fail' THEN duration END), 0.0),"
         # Uncached runs never record overhead, so only runs that checked the cache count.
         " COALESCE(SUM(outcome IN " + _RAN + " AND (overhead IS NULL OR wait_known = 0)), 0)"
         " FROM events" + where,
@@ -283,6 +291,8 @@ def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         unrecorded,
         overhead,
         waited,
+        time_spent,
+        fail_time,
         cost_unknown,
     ) = row
     return {
@@ -290,6 +300,8 @@ def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         "unknown_saved_skips": unknown,
         "overhead": float(overhead),
         "waited": float(waited),
+        "time_spent": float(time_spent),
+        "fail_time": float(fail_time),
         "net_saved": float(saved) - float(overhead) - float(waited),
         "cost_unknown_runs": cost_unknown,
         "runs": runs,
@@ -323,6 +335,11 @@ class _Tally:
         self.failures += other.failures
 
 
+def _bucket_start(bucket_id: int, zone: ZoneInfo) -> datetime:
+    """Return the local start of a quarter-hour bucket."""
+    return datetime.fromtimestamp(bucket_id * _BUCKET_SECONDS, tz=UTC).astimezone(zone)
+
+
 def _local_buckets(
     conn: sqlite3.Connection, filters: Filters
 ) -> Iterator[tuple[int, datetime, _Tally]]:
@@ -340,7 +357,7 @@ def _local_buckets(
         " FROM events" + where + " GROUP BY 1",
         params,
     ):
-        start = datetime.fromtimestamp(bucket_id * _BUCKET_SECONDS, tz=UTC).astimezone(zone)
+        start = _bucket_start(bucket_id, zone)
         yield bucket_id, start, _Tally(runs=int(runs), saved=float(saved), failures=int(failures))
 
 
@@ -393,6 +410,7 @@ def summary(
             for key in (
                 "time_saved",
                 "net_saved",
+                "time_spent",
                 "runs",
                 "skips",
                 "skip_rate",
@@ -499,24 +517,22 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     where, params = _where(filters)
     names = _all_repo_names(conn)
     flaky_keys = {(r[0], r[1]) for r in _flaky_trees(conn, where, params)}
-    durations: dict[tuple[str | None, str], list[float]] = {}
-    for repo, name, duration in conn.execute(
-        "SELECT repo, name, duration FROM events"  # noqa: S608
-        + _and(where, "outcome = 'pass' AND duration IS NOT NULL"),
-        params,
-    ):
-        durations.setdefault((repo, name), []).append(duration)
+    durations = _pass_durations(conn, where, params)
+    resources = _resource_costs(conn, where, params)
     rows = conn.execute(
         "SELECT repo, name, COUNT(*),"  # noqa: S608
         " SUM(outcome = 'skip'), SUM(outcome IN " + _RAN + "),"
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
-        " SUM(outcome = 'fail'), MAX(ts)"
+        " SUM(outcome = 'fail'), MAX(ts), COALESCE(SUM(duration), 0.0),"
+        " COALESCE(SUM(CASE WHEN outcome = 'fail' THEN duration END), 0.0)"
         " FROM events" + where + " GROUP BY repo, name",
         params,
     ).fetchall()
     out: list[dict[str, Any]] = []
-    for repo, name, runs, skips, ran, saved, failures, last in rows:
+    for repo, name, runs, skips, ran, saved, failures, last, spent, fail_time in rows:
         durs = durations.get((repo, name), [])
+        avg_run, median_run = _run_stats(durs)
+        cpu_ratio, peak_rss, rss_values = resources.get((repo, name), (None, None, []))
         out.append(
             {
                 "repo": repo,
@@ -524,23 +540,109 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
                 "name": name,
                 "runs": runs,
                 "skip_rate": _skip_rate(skips, ran),
-                "avg_run": statistics.fmean(durs) if durs else None,
-                "median_run": float(statistics.median(durs)) if durs else None,
+                "avg_run": avg_run,
+                "median_run": median_run,
                 "time_saved": float(saved),
                 "failures": failures,
                 "last_run": last,
                 "flaky": (repo, name) in flaky_keys,
+                "time_spent": float(spent),
+                "fail_time": float(fail_time),
+                "p90_run": _p90(durs),
+                "cpu_ratio": cpu_ratio,
+                "peak_rss": peak_rss,
+                "median_rss": float(statistics.median(rss_values)) if rss_values else None,
             }
         )
     out.sort(key=lambda g: (-g["time_saved"], g["repo_name"], g["name"]))
     return {"gates": out}
 
 
-def _median_passes(
-    conn: sqlite3.Connection, filters: Filters
-) -> dict[tuple[str | None, str], tuple[float, int]]:
-    """Return the median passing duration and pass count for each gate."""
+SpentStatus = Literal["all", "passing", "failing"]
+_SPENT_CONDITIONS: dict[str, str] = {
+    "all": "duration IS NOT NULL",
+    "passing": "duration IS NOT NULL AND outcome != 'fail'",
+    "failing": "duration IS NOT NULL AND outcome = 'fail'",
+}
+
+
+def spent(conn: sqlite3.Connection, filters: Filters, *, status: SpentStatus) -> dict[str, Any]:
+    """Return daily run time for the top gates by time spent, with the rest as "other".
+
+    Args:
+        conn: Archive connection.
+        filters: Repo, range, and time zone filters.
+        status: Which runs count: all, passing, or failing.
+
+    Returns:
+        The status, the top gates with their totals, and per-day seconds in the same order
+        as the gates. Days with no time are left out.
+
+    Raises:
+        ValueError: If the status or the filter's time zone is unknown.
+    """
+    if status not in _SPENT_CONDITIONS:
+        msg = f"status must be one of {', '.join(_SPENT_CONDITIONS)}"
+        raise ValueError(msg)
+    zone = _zone(filters.tz)
     where, params = _where(filters)
+    where = _and(where, _SPENT_CONDITIONS[status])
+    names = _all_repo_names(conn)
+    totals: dict[tuple[str | None, str], float] = defaultdict(float)
+    cells: dict[str, dict[tuple[str | None, str], float]] = defaultdict(lambda: defaultdict(float))
+    days: dict[int, str] = {}
+    for repo, name, bucket_id, seconds in conn.execute(
+        "SELECT repo, name, " + _BUCKET + ", SUM(duration)"  # noqa: S608
+        " FROM events" + where + " GROUP BY repo, name, 3",
+        params,
+    ):
+        key = (repo, name)
+        totals[key] += float(seconds)
+        if bucket_id not in days:
+            days[bucket_id] = _bucket_start(bucket_id, zone).date().isoformat()
+        cells[days[bucket_id]][key] += float(seconds)
+    top = sorted(totals, key=lambda k: (-totals[k], k[1], names[k[0]]))[:_TOP_SPENT]
+    top_keys = set(top)
+    multi_repo = len({repo for repo, _ in top}) > 1
+    daily = []
+    for day, by_gate in sorted(cells.items()):
+        per_gate = [by_gate.get(key, 0.0) for key in top]
+        other = sum(seconds for key, seconds in by_gate.items() if key not in top_keys)
+        daily.append({"day": day, "gates": per_gate, "other": other})
+    return {
+        "status": status,
+        "gates": [
+            {
+                "repo": repo,
+                "repo_name": names[repo],
+                "name": name,
+                "label": f"{name} · {names[repo]}" if multi_repo else name,
+                "total": totals[(repo, name)],
+            }
+            for repo, name in top
+        ],
+        "daily": daily,
+    }
+
+
+def _run_stats(durations: list[float]) -> tuple[float | None, float | None]:
+    """Return the average and median of passing durations, None for both when there are none."""
+    if not durations:
+        return None, None
+    return statistics.fmean(durations), float(statistics.median(durations))
+
+
+def _p90(values: list[float]) -> float | None:
+    """Return the 90th percentile, or None when there are too few values."""
+    if len(values) < _MIN_SPREAD_RUNS:
+        return None
+    return statistics.quantiles(values, n=10, method="inclusive")[8]
+
+
+def _pass_durations(
+    conn: sqlite3.Connection, where: str, params: list[Any]
+) -> dict[tuple[str | None, str], list[float]]:
+    """Return the passing durations of each gate."""
     durations: dict[tuple[str | None, str], list[float]] = defaultdict(list)
     for repo, name, duration in conn.execute(
         "SELECT repo, name, duration FROM events"  # noqa: S608
@@ -548,6 +650,98 @@ def _median_passes(
         params,
     ):
         durations[(repo, name)].append(duration)
+    return durations
+
+
+def _histogram(passes: list[float], median: float | None) -> dict[str, Any] | None:
+    """Bin passing durations linearly from the fastest to the slowest, None with too few passes."""
+    if len(passes) < _MIN_SPREAD_RUNS:
+        return None
+    low, high = min(passes), max(passes)
+    if high == low:
+        high = low + 1
+    width = (high - low) / _HISTOGRAM_BINS
+    counts = [0] * _HISTOGRAM_BINS
+    for duration in passes:
+        counts[min(int((duration - low) / width), _HISTOGRAM_BINS - 1)] += 1
+    return {
+        "edges": [*(low + i * width for i in range(_HISTOGRAM_BINS)), high],
+        "counts": counts,
+        "median": median,
+        "p90": _p90(passes),
+    }
+
+
+def _failure_timing(
+    conn: sqlite3.Connection, where: str, params: list[Any], median: float | None
+) -> dict[str, Any]:
+    """Split the time failed runs took into early and late against the median pass."""
+    threshold = median * _EARLY_FAIL_FRACTION if median is not None else None
+    buckets = {key: {"runs": 0, "time": 0.0} for key in ("early", "late", "unclassified")}
+    for (duration,) in conn.execute(
+        "SELECT duration FROM events"  # noqa: S608
+        + _and(where, "outcome = 'fail' AND duration IS NOT NULL"),
+        params,
+    ):
+        key = "unclassified"
+        if threshold is not None:
+            key = "early" if duration < threshold else "late"
+        buckets[key]["runs"] += 1
+        buckets[key]["time"] += duration
+    return {"threshold": threshold, **buckets}
+
+
+@dataclass
+class _ResourceTotals:
+    """Running CPU, wall time, and memory samples of one gate."""
+
+    cpu: float = 0.0
+    wall: float = 0.0
+    has_cpu: bool = False
+    rss: list[int] = field(default_factory=list)
+
+
+def _is_number(value: object) -> bool:
+    """Return whether a value read from the raw line is a real number, not a boolean."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _resource_costs(
+    conn: sqlite3.Connection, where: str, params: list[Any]
+) -> dict[tuple[str | None, str], tuple[float | None, int | None, list[int]]]:
+    """Return CPU seconds per wall second, peak memory, and memory samples for each gate."""
+    totals: dict[tuple[str | None, str], _ResourceTotals] = defaultdict(_ResourceTotals)
+    for repo, name, duration, cpu, rss in conn.execute(
+        "SELECT repo, name, duration,"  # noqa: S608
+        " CASE WHEN json_valid(raw) THEN json_extract(raw, '$.cpu') END,"
+        " CASE WHEN json_valid(raw) THEN json_extract(raw, '$.max_rss') END"
+        # Only runs that ran the command record usage, so skips need no JSON parsing.
+        " FROM events" + _and(where, "duration IS NOT NULL"),
+        params,
+    ):
+        gate = totals[(repo, name)]
+        if _is_number(cpu):
+            gate.cpu += cpu
+            gate.wall += duration
+            gate.has_cpu = True
+        if _is_number(rss):
+            gate.rss.append(int(rss))
+    return {
+        key: (
+            gate.cpu / gate.wall if gate.has_cpu and gate.wall else None,
+            max(gate.rss) if gate.rss else None,
+            gate.rss,
+        )
+        for key, gate in totals.items()
+    }
+
+
+def _median_passes(
+    conn: sqlite3.Connection, filters: Filters
+) -> dict[tuple[str | None, str], tuple[float, int]]:
+    """Return the median passing duration and pass count for each gate."""
+    where, params = _where(filters)
+    durations = _pass_durations(conn, where, params)
     return {key: (float(statistics.median(d)), len(d)) for key, d in durations.items()}
 
 
@@ -628,10 +822,23 @@ def gate_detail(
         f"SELECT {_ROW_COLUMNS} FROM events{where} ORDER BY ts DESC, id DESC LIMIT ?",  # noqa: S608
         [*params, _RECENT_LIMIT],
     ).fetchall()
+    pass_durations = [d for _, d in trend]
+    median = statistics.median(pass_durations) if pass_durations else None
+    by_source = sorted(
+        _breakdown_rows(conn, where, params, "source", names),
+        key=lambda r: (-r["time_spent"], r["label"]),
+    )
     return {
         "repo": repo,
         "repo_name": names[repo],
         "name": name,
+        "histogram": _histogram(pass_durations, median),
+        "failure_timing": _failure_timing(conn, where, params, median),
+        "by_source": [
+            {k: row[k] for k in ("key", "label", "title", "runs", "time_spent")}
+            for row in by_source
+            if row["time_spent"] > 0
+        ],
         "trend": [{"ts": ts, "duration": d} for ts, d in trend],
         "recent": [_event_row(r, names) for r in recent],
         "flaky_trees": [
@@ -813,6 +1020,75 @@ def group_filter(by: str, key: str) -> tuple[str, list[str | None]]:
     return f"({condition})", values
 
 
+def _breakdown_rows(
+    conn: sqlite3.Connection,
+    where: str,
+    params: list[Any],
+    by: str,
+    names: _RepoNames | None = None,
+) -> list[dict[str, Any]]:
+    """Return per-group rollups of the events a WHERE clause selects, ordered by time saved.
+
+    Gate rows also carry the average and median passing duration, taken from the same events.
+
+    Args:
+        conn: Archive connection.
+        where: A WHERE clause, as `_where` builds it.
+        params: The values the clause binds.
+        by: The dimension to group by, one of DIMENSIONS.
+        names: Repo display names; loaded from the archive when omitted.
+
+    Returns:
+        The rows, each with an opaque `key`.
+    """
+    grouping = _grouping(by)
+    width = len(grouping.columns)
+    names = _all_repo_names(conn) if names is None else names
+    # With exactly one MAX aggregate, SQLite takes the bare `extra` value from that newest row.
+    rows = conn.execute(
+        "SELECT " + ", ".join(grouping.columns) + ","  # noqa: S608
+        f" {grouping.extra or 'NULL'}, MAX(ts),"
+        " COUNT(*), SUM(outcome = 'skip'), SUM(outcome IN " + _RAN + "),"
+        " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
+        " SUM(outcome = 'fail'), COUNT(DISTINCT json_array(repo, name)),"
+        " COALESCE(SUM(duration), 0.0)"
+        " FROM events" + where + " GROUP BY " + ", ".join(str(i) for i in range(1, width + 1)),
+        params,
+    ).fetchall()
+    labels = grouping.labels([(tuple(row[:width]), row[width]) for row in rows], names)
+    durations = _pass_durations(conn, where, params) if by == "gate" else {}
+    # Gate and branch names repeat across repos, so they name the repo only when rows mix repos.
+    with_repo = grouping.in_repo and width > 1 and len({row[0] for row in rows}) > 1
+    out: list[dict[str, Any]] = []
+    for row, label in zip(rows, labels, strict=True):
+        group = row[:width]
+        runs, skips, ran, saved, failures, n_gates, spent = row[width + 2 :]
+        repo = group[0] if grouping.in_repo else None
+        avg_run, median_run = (
+            _run_stats(durations.get((group[0], group[1]), [])) if by == "gate" else (None, None)
+        )
+        out.append(
+            {
+                "key": json.dumps(list(group)),
+                "label": f"{label.label} · {names[repo]}" if with_repo else label.label,
+                "title": label.title,
+                "missing": label.missing,
+                "repo": repo,
+                "name": label.gate,
+                "runs": runs,
+                "skip_rate": _skip_rate(skips, ran),
+                "time_saved": float(saved),
+                "time_spent": float(spent),
+                "avg_run": avg_run,
+                "median_run": median_run,
+                "failures": failures,
+                "gates": n_gates,
+            }
+        )
+    out.sort(key=lambda r: (-r["time_saved"], r["label"]))
+    return out
+
+
 def breakdown(conn: sqlite3.Connection, filters: Filters, *, by: str) -> dict[str, Any]:
     """Return per-group rollups of the filtered runs, ordered by time saved.
 
@@ -831,45 +1107,8 @@ def breakdown(conn: sqlite3.Connection, filters: Filters, *, by: str) -> dict[st
     Raises:
         ValueError: If the dimension is unknown.
     """
-    grouping = _grouping(by)
-    width = len(grouping.columns)
     where, params = _where(filters)
-    names = _all_repo_names(conn)
-    # With exactly one MAX aggregate, SQLite takes the bare `extra` value from that newest row.
-    rows = conn.execute(
-        "SELECT " + ", ".join(grouping.columns) + ","  # noqa: S608
-        f" {grouping.extra or 'NULL'}, MAX(ts),"
-        " COUNT(*), SUM(outcome = 'skip'), SUM(outcome IN " + _RAN + "),"
-        " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
-        " SUM(outcome = 'fail'), COUNT(DISTINCT json_array(repo, name))"
-        " FROM events" + where + " GROUP BY " + ", ".join(str(i) for i in range(1, width + 1)),
-        params,
-    ).fetchall()
-    labels = grouping.labels([(tuple(row[:width]), row[width]) for row in rows], names)
-    # Gate and branch names repeat across repos, so they name the repo only when rows mix repos.
-    with_repo = grouping.in_repo and width > 1 and len({row[0] for row in rows}) > 1
-    out: list[dict[str, Any]] = []
-    for row, label in zip(rows, labels, strict=True):
-        group = row[:width]
-        runs, skips, ran, saved, failures, n_gates = row[width + 2 :]
-        repo = group[0] if grouping.in_repo else None
-        out.append(
-            {
-                "key": json.dumps(list(group)),
-                "label": f"{label.label} · {names[repo]}" if with_repo else label.label,
-                "title": label.title,
-                "missing": label.missing,
-                "repo": repo,
-                "name": label.gate,
-                "runs": runs,
-                "skip_rate": _skip_rate(skips, ran),
-                "time_saved": float(saved),
-                "failures": failures,
-                "gates": n_gates,
-            }
-        )
-    out.sort(key=lambda r: (-r["time_saved"], r["label"]))
-    return {"by": by, "rows": out}
+    return {"by": by, "rows": _breakdown_rows(conn, where, params, by)}
 
 
 def _parse_cursor(cursor: str) -> tuple[float, int]:

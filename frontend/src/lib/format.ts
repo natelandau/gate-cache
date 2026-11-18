@@ -48,6 +48,32 @@ export function formatRelative(ts: number, now: number): string {
   return `${Math.floor(elapsed / DAY)}d ago`;
 }
 
+const shortDayFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+const longDayFormat = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/**
+ * Render a `YYYY-MM-DD` day as month and day, such as "Nov 10". Day keys are calendar dates,
+ * so both day formatters use UTC to avoid shifting by the local offset.
+ */
+export function formatShortDay(day: string): string {
+  return shortDayFormat.format(new Date(`${day}T00:00:00Z`));
+}
+
+/** Render a `YYYY-MM-DD` day with weekday and year, such as "Tue, Nov 10, 2026". */
+export function formatLongDay(day: string): string {
+  return longDayFormat.format(new Date(`${day}T00:00:00Z`));
+}
+
 const countFormat = new Intl.NumberFormat("en-US");
 
 /** Render an integer count with thousands separators. */
@@ -85,4 +111,24 @@ export function durationTicks(max: number, count = 3): number[] {
     Math.ceil(max / count / 86400) * 86400;
   const intervals = Math.ceil(max / step);
   return Array.from({ length: intervals + 1 }, (_, index) => index * step);
+}
+
+const BYTE_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
+
+/** Render a byte count in binary units, such as `512 B`, `1.5 KiB`, `50.0 MiB`. Returns `n/a` for null. */
+export function formatBytes(bytes: number | null): string {
+  if (bytes === null || !Number.isFinite(bytes)) return "n/a";
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${Math.round(value)} B` : `${value.toFixed(1)} ${BYTE_UNITS[unit]}`;
+}
+
+/** Render a ratio with one decimal and a times sign, such as `3.4×`. Returns `n/a` for null. */
+export function formatRatio(ratio: number | null): string {
+  if (ratio === null || !Number.isFinite(ratio)) return "n/a";
+  return `${ratio.toFixed(1)}×`;
 }

@@ -15,7 +15,15 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { GateRow } from "../api";
-  import { formatCount, formatDuration, formatPercent, formatRelative, formatTimestamp } from "../format";
+  import {
+    formatBytes,
+    formatCount,
+    formatDuration,
+    formatPercent,
+    formatRatio,
+    formatRelative,
+    formatTimestamp,
+  } from "../format";
   import { gateKey } from "../gates";
   import { clock } from "../state.svelte";
   import Badge from "./Badge.svelte";
@@ -43,6 +51,12 @@
     empty,
   }: Props = $props();
 
+  const NOT_RECORDED = "not recorded";
+
+  function notRecorded(value: number | null): string | undefined {
+    return value === null ? NOT_RECORDED : undefined;
+  }
+
   const repoColumn: Column<GateRow> = {
     key: "repo_name",
     label: "Repo",
@@ -54,15 +68,51 @@
     ...(showRepo ? [repoColumn] : []),
     { key: "runs", label: "Runs", align: "right", text: (g) => formatCount(g.runs) },
     { key: "skip_rate", label: "Skip %", align: "right", text: (g) => formatPercent(g.skip_rate) },
+    { key: "avg_run", label: "Avg run", align: "right", text: (g) => formatDuration(g.avg_run) },
     {
-      key: "avg_run",
-      label: "Avg run",
+      key: "time_spent",
+      label: "Spent",
       align: "right",
-      text: (g) => formatDuration(g.avg_run),
-      title: (g) => (g.median_run === null ? undefined : `Median ${formatDuration(g.median_run)}`),
+      text: (g) => formatDuration(g.time_spent),
+    },
+    {
+      key: "median_run",
+      label: "Median",
+      align: "right",
+      text: (g) => formatDuration(g.median_run),
+      title: (g) => notRecorded(g.median_run),
+    },
+    {
+      key: "p90_run",
+      label: "p90",
+      align: "right",
+      text: (g) => formatDuration(g.p90_run),
+      title: (g) => notRecorded(g.p90_run),
+    },
+    {
+      key: "cpu_ratio",
+      label: "CPU/wall",
+      align: "right",
+      text: (g) => formatRatio(g.cpu_ratio),
+      title: (g) =>
+        notRecorded(g.cpu_ratio) ?? "CPU seconds per wall second. Near 1× means the gate uses one core.",
+    },
+    {
+      key: "peak_rss",
+      label: "Peak memory",
+      align: "right",
+      text: (g) => formatBytes(g.peak_rss),
+      title: (g) =>
+        notRecorded(g.peak_rss) ?? (g.median_rss === null ? undefined : `Median ${formatBytes(g.median_rss)}`),
     },
     { key: "time_saved", label: "Saved", align: "right", text: (g) => formatDuration(g.time_saved) },
     { key: "failures", label: "Failures", align: "right", cell: failuresCell },
+    {
+      key: "fail_time",
+      label: "Lost to failures",
+      align: "right",
+      text: (g) => formatDuration(g.fail_time),
+    },
     {
       key: "last_run",
       label: "Last run",

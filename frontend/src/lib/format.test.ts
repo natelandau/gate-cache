@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   durationTicks,
   formatAxisDuration,
+  formatBytes,
   formatCount,
   formatDuration,
+  formatLongDay,
+  formatShortDay,
   formatSignedDuration,
   formatPercent,
+  formatRatio,
   formatRelative,
   plural,
 } from "./format";
@@ -98,5 +102,43 @@ describe("plural", () => {
     expect(plural(1, "failure", "failures")).toBe("1 failure");
     expect(plural(0, "failure", "failures")).toBe("0 failures");
     expect(plural(1200, "run", "runs")).toBe("1,200 runs");
+  });
+});
+
+describe("formatBytes", () => {
+  it("uses binary units, one decimal from MiB up", () => {
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1536)).toBe("1.5 KiB");
+    expect(formatBytes(52428800)).toBe("50.0 MiB");
+    expect(formatBytes(3 * 1024 ** 3)).toBe("3.0 GiB");
+  });
+
+  it("matches the duration text for null", () => {
+    expect(formatBytes(null)).toBe(formatDuration(null));
+  });
+});
+
+describe("formatRatio", () => {
+  it("renders one decimal with a times sign", () => {
+    expect(formatRatio(3.42)).toBe("3.4×");
+    expect(formatRatio(1)).toBe("1.0×");
+  });
+
+  it("matches the duration text for null", () => {
+    expect(formatRatio(null)).toBe(formatDuration(null));
+  });
+});
+
+describe("day formatters", () => {
+  it("name the calendar day without shifting it by the local offset", () => {
+    expect(formatShortDay("2026-11-10")).toMatch(/^(Nov 10|10 Nov)$/);
+    expect(formatShortDay("2026-01-01")).toContain("1");
+  });
+
+  it("add the weekday and year", () => {
+    const text = formatLongDay("2026-11-10");
+    expect(text).toContain("Tue");
+    expect(text).toContain("2026");
+    expect(text).toContain("10");
   });
 });

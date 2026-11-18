@@ -30,6 +30,10 @@ export function dayKey(ts: number, tz: string): string {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+export function zeroBucket(day: string): DayBucket {
+  return { day, saved: 0, failures: 0, runs: 0 };
+}
+
 /** Return the calendar day after `day`, both `YYYY-MM-DD`. */
 function nextDay(day: string): string {
   const date = new Date(`${day}T00:00:00Z`);
@@ -38,7 +42,7 @@ function nextDay(day: string): string {
 }
 
 /**
- * Return `daily` with a zero bucket for every missing day, in day order.
+ * Return `daily` with an empty bucket for every missing day, in day order.
  *
  * The series covers the day of `from` through the day before the exclusive `to`. Without
  * `from` it starts at the first recorded day. Recorded days outside the bounds are kept.
@@ -47,13 +51,15 @@ function nextDay(day: string): string {
  * @param from Inclusive lower bound in Unix seconds, or undefined for all time.
  * @param to Exclusive upper bound in Unix seconds, usually now.
  * @param tz IANA zone the days were bucketed in.
+ * @param empty Builds the bucket for a day without events.
  */
-export function fillDays(
-  daily: DayBucket[],
+export function fillDays<T extends { day: string }>(
+  daily: T[],
   from: number | undefined,
   to: number,
   tz: string,
-): DayBucket[] {
+  empty: (day: string) => T,
+): T[] {
   const byDay = new Map(daily.map((bucket) => [bucket.day, bucket]));
   const recorded = [...byDay.keys()].sort();
   const first = from === undefined ? recorded[0] : dayKey(from, tz);
@@ -62,7 +68,5 @@ export function fillDays(
   const last = dayKey(to - 1, tz);
   const days = new Set(recorded);
   for (let day = first; day <= last; day = nextDay(day)) days.add(day);
-  return [...days]
-    .sort()
-    .map((day) => byDay.get(day) ?? { day, saved: 0, failures: 0, runs: 0 });
+  return [...days].sort().map((day) => byDay.get(day) ?? empty(day));
 }

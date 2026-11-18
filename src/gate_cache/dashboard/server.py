@@ -353,6 +353,12 @@ def _breakdown(server: DashboardServer, params: dict[str, list[str]]) -> dict[st
     return _query(server, lambda c: queries.breakdown(c, filters, by=by))
 
 
+def _spent(server: DashboardServer, params: dict[str, list[str]]) -> dict[str, Any]:
+    status = _text(params, "status") or "all"
+    filters = _filters(params)
+    return _query(server, lambda c: queries.spent(c, filters, status=status))  # ty: ignore[invalid-argument-type]
+
+
 def _integer(params: dict[str, list[str]], key: str) -> int | None:
     """Return an integer query parameter, or None when absent or empty."""
     text = _text(params, key)
@@ -420,6 +426,7 @@ _ROUTES: dict[str, Callable[[DashboardServer, dict[str, list[str]]], dict[str, A
     "activity": _activity,
     "flaky": _simple(queries.flaky),
     "slowdowns": _timed(queries.slowdowns),
+    "spent": _spent,
 }
 
 

@@ -27,6 +27,10 @@ export interface Summary {
   overhead: number;
   /** Seconds runs spent waiting for a concurrent run of the same gate. */
   waited: number;
+  /** Seconds gates ran, failed runs included; overhead and waits are not counted. */
+  time_spent: number;
+  /** Seconds of `time_spent` that went to failed runs. */
+  fail_time: number;
   /** `time_saved` minus `overhead` and `waited`; negative when the cache cost more than it saved. */
   net_saved: number;
   /**
@@ -55,6 +59,7 @@ export interface Summary {
 
 export interface PreviousTotals {
   time_saved: number;
+  time_spent: number;
   /**
    * Null when either window holds runs with no recorded cost, since the two windows would then
    * subtract different costs.
@@ -142,7 +147,19 @@ export interface GateRow {
   skip_rate: number | null;
   avg_run: number | null;
   median_run: number | null;
+  /** 90th percentile passing run time; null with fewer than 5 passes. */
+  p90_run: number | null;
   time_saved: number;
+  /** Seconds the gate ran, failed runs included. */
+  time_spent: number;
+  /** Seconds of `time_spent` that went to failed runs. */
+  fail_time: number;
+  /** CPU seconds per wall second; null when no run recorded both. */
+  cpu_ratio: number | null;
+  /** Highest peak memory of any run, in bytes; null when none recorded. */
+  peak_rss: number | null;
+  /** Median peak memory over runs, in bytes; null when none recorded. */
+  median_rss: number | null;
   failures: number;
   last_run: number;
   flaky: boolean;
@@ -170,10 +187,48 @@ export interface FlakyTree {
   last: number;
 }
 
+/** Passing run times binned from the fastest to the slowest. */
+export interface GateHistogram {
+  /** Bin boundaries in seconds, one more than `counts`. */
+  edges: number[];
+  counts: number[];
+  median: number;
+  p90: number;
+}
+
+/** Failed runs, and the time they took, in one timing class. */
+export interface FailureClass {
+  runs: number;
+  time: number;
+}
+
+/** Failed run time split against a fraction of the median passing run time. */
+export interface FailureTiming {
+  /** Seconds below which a failure is early; null when the gate has no passes. */
+  threshold: number | null;
+  early: FailureClass;
+  late: FailureClass;
+  /** Failures that cannot be classified because there is no median pass. */
+  unclassified: FailureClass;
+}
+
+/** Time one gate spent per event source. */
+export interface SourceCost {
+  key: string;
+  label: string;
+  title: string | null;
+  runs: number;
+  time_spent: number;
+}
+
 export interface GateDetail {
   repo: string | null;
   repo_name: string;
   name: string;
+  /** Null with fewer than 5 passes. */
+  histogram: GateHistogram | null;
+  failure_timing: FailureTiming;
+  by_source: SourceCost[];
   /** Duration of each pass, oldest first. */
   trend: { ts: number; duration: number }[];
   /** Newest events first, at most 50. */
@@ -208,9 +263,43 @@ export interface BreakdownRow {
   runs: number;
   skip_rate: number | null;
   time_saved: number;
+  /** Seconds the row's runs took, failed runs included. */
+  time_spent: number;
+  /** Mean passing run time; null except for gate rows. */
+  avg_run: number | null;
+  /** Median passing run time; null except for gate rows. */
+  median_run: number | null;
   failures: number;
   /** Distinct gates, counting the same name in two repos twice. */
   gates: number;
+}
+
+/** Which runs the time spent chart counts. */
+export type SpentStatus = "all" | "passing" | "failing";
+
+/** One of the gates that spent the most time over the whole range. */
+export interface SpentGate {
+  repo: string | null;
+  repo_name: string;
+  name: string;
+  label: string;
+  /** Seconds over the range. */
+  total: number;
+}
+
+/** Seconds spent in one day. */
+export interface SpentDay {
+  day: string;
+  /** Seconds per gate, in the order of `Spent.gates`. */
+  gates: number[];
+  /** Seconds of every gate outside `Spent.gates`. */
+  other: number;
+}
+
+export interface Spent {
+  status: SpentStatus;
+  gates: SpentGate[];
+  daily: SpentDay[];
 }
 
 /** A page-local Activity filter to the runs of one Breakdown row. */
@@ -398,6 +487,11 @@ export function getBreakdown(
   options: RequestOptions = {},
 ): Promise<{ by: Dimension; rows: BreakdownRow[] }> {
   return request("breakdown", { ...scoped(options), by }, options.signal);
+}
+
+/** Fetch the time the top gates spent per day, counting the runs `status` selects. */
+export function getSpent(status: SpentStatus, options: RequestOptions = {}): Promise<Spent> {
+  return request("spent", { ...scoped(options), status }, options.signal);
 }
 
 /**

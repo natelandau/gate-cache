@@ -4,6 +4,8 @@ import { deltaLabel, statDeltas } from "./deltas";
 
 const current: Summary = {
   time_saved: 100,
+  time_spent: 100,
+  fail_time: 0,
   unknown_saved_skips: 0,
   overhead: 0,
   waited: 0,
@@ -22,6 +24,7 @@ const current: Summary = {
 
 const previous: PreviousTotals = {
   time_saved: 100,
+  time_spent: 100,
   net_saved: 100,
   runs: 10,
   skips: 5,
@@ -35,6 +38,11 @@ describe("statDeltas", () => {
   it("shows time saved as a percentage, up is good", () => {
     const deltas = statDeltas({ ...current, time_saved: 118 }, previous);
     expect(deltas.time_saved).toEqual({ text: "▲ 18%", tone: "good" });
+  });
+
+  it("marks more time spent as bad", () => {
+    const deltas = statDeltas({ ...current, time_spent: 150 }, previous);
+    expect(deltas.time_spent).toEqual({ text: "▲ 50%", tone: "bad" });
   });
 
   it("shows net saved as an absolute duration, even across zero", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlakyGate, GateRow } from "./api";
-import { partShares, rankGates, rankValue, topFlaky } from "./rank";
+import { gateRunText, partShares, rankGates, rankValue, topFlaky } from "./rank";
 
 function gate(name: string, overrides: Partial<GateRow> = {}): GateRow {
   return {
@@ -11,7 +11,13 @@ function gate(name: string, overrides: Partial<GateRow> = {}): GateRow {
     skip_rate: null,
     avg_run: null,
     median_run: null,
+    p90_run: null,
     time_saved: 0,
+    time_spent: 0,
+    fail_time: 0,
+    cpu_ratio: null,
+    peak_rss: null,
+    median_rss: null,
     failures: 0,
     last_run: 0,
     flaky: false,
@@ -37,7 +43,26 @@ describe("rankValue", () => {
   });
 });
 
+describe("gateRunText", () => {
+  it("joins the average and median run time", () => {
+    expect(gateRunText(gate("x", { avg_run: 3, median_run: 2 }))).toBe("avg 3s \u00b7 median 2s");
+  });
+
+  it("is empty without a median", () => {
+    expect(gateRunText(gate("x", { avg_run: 3, median_run: null }))).toBe("");
+  });
+});
+
 describe("rankGates", () => {
+  it("orders by time spent, ties by name", () => {
+    const spent = [
+      gate("b", { time_spent: 10 }),
+      gate("a", { time_spent: 10 }),
+      gate("c", { time_spent: 99 }),
+    ];
+    expect(names(rankGates(spent, "spent"))).toEqual(["c", "a", "b"]);
+  });
+
   it("ranks by time saved, ties by name", () => {
     expect(names(rankGates(rows, "saved"))).toEqual(["pytest", "e2e", "ty", "ruff"]);
   });
