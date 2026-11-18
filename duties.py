@@ -220,9 +220,18 @@ def test_tooling(ctx: Context) -> None:
     _pytest_suite(ctx, "tooling", coverage=False)
 
 
+def _frontend_deps_stale(frontend: Path) -> bool:
+    """Report whether `node_modules` is missing or older than `package-lock.json`."""
+    # npm writes this hidden lockfile on every install, so its age is the install's age.
+    installed = frontend / "node_modules" / ".package-lock.json"
+    if not installed.is_file():
+        return True
+    return installed.stat().st_mtime < (frontend / "package-lock.json").stat().st_mtime
+
+
 def _frontend_deps(ctx: Context) -> None:
-    """Install the frontend dependencies when `frontend/node_modules` is missing."""
-    if not (PROJECT_ROOT / "frontend" / "node_modules").is_dir():
+    """Install the frontend dependencies when they are missing or out of date."""
+    if _frontend_deps_stale(PROJECT_ROOT / "frontend"):
         ctx.run(["npm", "ci", "--prefix", "frontend"], title="frontend dependencies")
 
 
