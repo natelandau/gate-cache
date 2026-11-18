@@ -70,6 +70,22 @@ describe("DataTable", () => {
     expect(body).toContain(`title="${long}"`);
   });
 
+  it("explains a column from its header label, with no info icon", () => {
+    const body = html(DataTable<Row>, {
+      props: {
+        label: "Gates",
+        rows: [{ name: "lint", runs: 2 }],
+        columns: [columns[0]!, { ...columns[1]!, info: "Every call of the gate." }],
+        rowKey: (r: Row) => r.name,
+      },
+    });
+    const id = /<button[^>]*aria-describedby="([^"]+)"[^>]*>[\s\S]*?Runs/.exec(body)?.[1];
+    expect(id).toBeTruthy();
+    expect(body).toMatch(new RegExp(`id="${id}"[^>]*>[\\s\\S]*?Every call of the gate\\.`));
+    expect(body).not.toContain("lucide-info");
+    expect(body.match(/role="tooltip"/g)).toHaveLength(1);
+  });
+
   it("renders the empty snippet when there are no rows", () => {
     const body = html(DataTable<Row>, {
       props: {

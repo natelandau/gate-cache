@@ -72,7 +72,8 @@
     {#each stats as stat (stat.label)}
       <div class="card" class:linked={!!stat.href}>
         <dt>
-          <span>{stat.label}</span>{#if stat.title}<InfoTip text={stat.title} label="About {stat.label}" />{/if}
+          {#if stat.title}<InfoTip text={stat.title} label="About {stat.label}"><span>{stat.label}</span></InfoTip
+            >{:else}<span>{stat.label}</span>{/if}
           {#if stat.href}<span class="go"><Icon name="arrow-up-right" size={14} /></span>{/if}
         </dt>
         <dd class="value" class:danger={stat.tone === "danger"} class:flaky={stat.tone === "flaky"}>

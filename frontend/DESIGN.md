@@ -44,6 +44,8 @@ Use the type tokens, never a pixel size in a component. Weights are 400, 500, an
 | `--text-kpi`      | 28 / 32            | 600      | `--track-kpi`              | Headline card values                                      |
 | `--text-headline` | 30 / 32            | 600      | `--track-kpi`              | The value above a featured chart, such as the daily chart |
 
+Every table column header takes the `col-head` class from `src/app.css`: one step larger than the cells (`--text-md` against `--text-sm`) and weight 600. Change header type there, never in a table component.
+
 In a headline value, set units such as `h`, `m`, `s`, and `%` smaller and muted. Render the value with `UnitValue`, which splits it with `valueParts` in `src/lib/format.ts`.
 
 ## Surfaces and space
@@ -133,7 +135,7 @@ Use an existing component before you write markup of your own. If a page needs a
 | ----------------------------------------------------- | --------------------------------- |
 | A page title, subtitle, and page filter chips         | `PageHeader`                      |
 | A Lucide icon                                         | `Icon` (add the name to its `ICONS` map first) |
-| An info icon that explains a label on hover, focus, or click | `InfoTip`                  |
+| An explanation of a label on hover, focus, or click: an info icon on cards, or the label itself with a dotted underline (`explained` class) on table headers through a column's `info` | `InfoTip`  |
 | A table of rows, sortable, with optional row clicks   | `DataTable`                       |
 | The table of gates on the Gates page                  | `GateTable`                       |
 | Headline numbers as cards with deltas and sparklines  | `StatStrip`, with stats from `summaryStats` |
@@ -141,7 +143,7 @@ Use an existing component before you write markup of your own. If a page needs a
 | Time saved and failures per day                       | `DailyChart`                      |
 | Time spent per day, stacked by gate                   | `SpentChart`                      |
 | Run time of one gate over time                        | `TrendChart`                      |
-| The body of any chart tooltip                         | `ChartTooltip`, inside a LayerChart `Tooltip.Root` with `variant="none"` |
+| Any tooltip: a chart's values or a plain explanation  | `Tooltip`, the one tooltip surface; a chart renders it inside a LayerChart `Tooltip.Root` with `variant="none"` |
 | The outcome of one run                                | `OutcomeBadge`                    |
 | A run's time in a table cell                          | `TimeValue`, with `ranText` or `savedText` from `src/lib/events.ts` |
 | Any other short label, such as "flaky"                | `Badge` (pick the tone by role)   |

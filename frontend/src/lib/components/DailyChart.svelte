@@ -25,7 +25,8 @@
   import type { DayBucket } from "../fill";
   import { formatCount, formatDuration, formatLongDay, formatShortDay } from "../format";
   import { createDayPick } from "../daypick.svelte";
-  import ChartTooltip from "./ChartTooltip.svelte";
+  // The shared tooltip surface; `Tooltip` here is LayerChart's positioning layer.
+  import TooltipSurface from "./Tooltip.svelte";
   import DayPicker from "./DayPicker.svelte";
   import { PICK_DAY_HINT, type DaySpan } from "../selection";
 
@@ -76,7 +77,7 @@
 {#snippet dayTooltip(context: ChartState<Row>)}
   <Tooltip.Root {context} variant="none" motion="none">
     {#snippet children({ data }: { data: Row })}
-      <ChartTooltip
+      <TooltipSurface
         title={formatLongDay(data.day)}
         rows={[
           { color: runsColor, label: TERMS.calls.label, value: formatCount(data.runs) },

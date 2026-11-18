@@ -22,7 +22,8 @@
   import { durationTicks, formatAxisDuration, formatDuration, formatLongDay, formatShortDay } from "../format";
   import { PICK_DAY_HINT, type DaySpan } from "../selection";
   import { spentTotals, type SpentRow, type SpentSeries } from "../spent";
-  import ChartTooltip from "./ChartTooltip.svelte";
+  // The shared tooltip surface; `Tooltip` here is LayerChart's positioning layer.
+  import TooltipSurface from "./Tooltip.svelte";
   import DayPicker from "./DayPicker.svelte";
 
   interface Props {
@@ -94,7 +95,7 @@
 {#snippet dayTooltip(context: ChartState<SpentRow>)}
   <Tooltip.Root {context} variant="none" motion="none">
     {#snippet children({ data }: { data: SpentRow })}
-      <ChartTooltip
+      <TooltipSurface
         title={formatLongDay(data.day)}
         rows={[
           ...parts(data).map((part) => ({

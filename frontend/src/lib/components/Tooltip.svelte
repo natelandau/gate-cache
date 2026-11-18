@@ -1,39 +1,51 @@
 <!--
   @component
-  The body of every chart tooltip: a bold title such as the day, one row per series with its
-  color bar and value, and an optional hint about what a click does. Render it inside a
-  LayerChart `Tooltip.Root` with `variant="none"`.
+  The one tooltip surface in the app. Every tooltip renders through it, so its look (surface,
+  shadow, corners, padding, type, left-aligned text, fade-in) changes in one place. The caller
+  decides where it shows and when: an info tip anchors it under its icon, and a chart hands it
+  to LayerChart's `Tooltip.Root` with `variant="none"`.
+
+  Give it either `text` for a plain explanation, or a `title` with `rows` of series values and
+  an optional `hint` about what a click does.
 
   Props:
-  - `title`: the first line, such as "Tue, Nov 4"
+  - `text`: a plain explanation, such as what a column measures
+  - `title`: the first line of a data tooltip, such as "Tue, Nov 4"
   - `rows`: one entry per series, each `{ color, label, value }` with `color` a CSS color
   - `hint`: optional muted line under a hairline
+  - `id`: element id, so a control can point `aria-describedby` at it
+  - `role`: ARIA role, such as "tooltip" for an info tip
 -->
 <script lang="ts">
   interface Props {
-    title: string;
-    rows: { color?: string; label: string; value: string }[];
+    text?: string;
+    title?: string;
+    rows?: { color?: string; label: string; value: string }[];
     hint?: string;
+    id?: string;
+    role?: "tooltip";
   }
 
-  let { title, rows, hint }: Props = $props();
+  let { text, title, rows = [], hint, id, role }: Props = $props();
 </script>
 
-<div class="tip">
-  <p class="title">{title}</p>
+<span class="tooltip" class:data={title !== undefined} {id} {role}>
+  {#if text}<span class="text">{text}</span>{/if}
+  {#if title}<span class="title">{title}</span>{/if}
   {#each rows as row, i (i)}
-    <p class="row">
+    <span class="row">
       <i class="bar" style:background={row.color ?? "transparent"}></i>
       <span class="label">{row.label}</span>
       <span class="value">{row.value}</span>
-    </p>
+    </span>
   {/each}
-  {#if hint}<p class="hint">{hint}</p>{/if}
-</div>
+  {#if hint}<span class="hint">{hint}</span>{/if}
+</span>
 
 <style>
-  .tip {
-    min-width: 168px;
+  .tooltip {
+    display: block;
+    width: max-content;
     max-width: 280px;
     padding: var(--space-2) 10px;
     border-radius: var(--radius-popover);
@@ -41,12 +53,22 @@
     box-shadow: var(--shadow-popover);
     color: var(--text);
     font-size: var(--text-xs);
+    font-weight: 400;
     line-height: 16px;
+    letter-spacing: 0;
+    text-align: left;
+    white-space: normal;
     animation: fade-in var(--dur-fast) var(--ease-in);
   }
 
-  p {
-    margin: 0;
+  .data {
+    min-width: 168px;
+  }
+
+  .text,
+  .title,
+  .hint {
+    display: block;
   }
 
   .title {

@@ -75,10 +75,10 @@
     </colgroup>
     <thead>
       <tr>
-        <th scope="col" aria-sort={ariaSort(sort, "name")}>{@render header("name", heading, "left")}</th>
+        <th scope="col" class="col-head" aria-sort={ariaSort(sort, "name")}>{@render header("name", heading, "left")}</th>
         <th class="bar-cell" aria-hidden="true"></th>
         {#each columns as column (column.key)}
-          <th scope="col" class="num" aria-sort={ariaSort(sort, column.key)}>{@render header(column.key, column.label, "right")}</th>
+          <th scope="col" class="col-head num" aria-sort={ariaSort(sort, column.key)}>{@render header(column.key, column.label, "right")}</th>
         {/each}
       </tr>
     </thead>
@@ -118,7 +118,6 @@
     height: var(--row-height);
     padding: 0 10px;
     border-bottom: 1px solid var(--border-row);
-    font-size: var(--text-sm);
     white-space: nowrap;
     text-align: left;
   }
@@ -127,9 +126,6 @@
     height: auto;
     vertical-align: bottom;
     border-bottom-color: var(--border);
-    font-size: var(--text-xs);
-    font-weight: 500;
-    color: var(--text-muted);
   }
 
   th:first-child,
@@ -186,5 +182,9 @@
 
   td.sorted {
     font-weight: 500;
+  }
+  td,
+  tbody th {
+    font-size: var(--text-sm);
   }
 </style>

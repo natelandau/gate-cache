@@ -295,6 +295,23 @@ code {
 }
 
 
+/* Every table's column header: a step larger than the cells and bold, so it reads as a label
+   for the numbers below. Tables add only their own spacing and borders. */
+.col-head {
+  color: var(--text-muted);
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: var(--track-md);
+}
+
+/* A label that opens an explanation on hover or focus: a quiet dotted underline marks it, in
+   place of an info icon where the icon would crowd the text, such as a column header. */
+.explained {
+  text-decoration: underline dotted var(--border-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
 /* A heading above a block inside a card or panel. */
 .section-title {
   font-size: var(--text-md);

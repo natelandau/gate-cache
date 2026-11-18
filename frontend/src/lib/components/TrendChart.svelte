@@ -11,7 +11,8 @@
   import type { GateDetail } from "../api";
   import { durationTicks, formatAxisDuration, formatDuration, formatTimestamp } from "../format";
   import { trendStats } from "../gates";
-  import ChartTooltip from "./ChartTooltip.svelte";
+  // The shared tooltip surface; `Tooltip` here is LayerChart's positioning layer.
+  import TooltipSurface from "./Tooltip.svelte";
 
   interface Props {
     trend: GateDetail["trend"];
@@ -44,7 +45,7 @@
 {#snippet pointTooltip(context: ChartState<Point>)}
   <Tooltip.Root {context} variant="none" motion="none">
     {#snippet children({ data }: { data: Point })}
-      <ChartTooltip
+      <TooltipSurface
         title={formatTimestamp(data.date.getTime() / 1000)}
         rows={[{ color, label: "Ran for", value: formatDuration(data.duration) }]}
       />

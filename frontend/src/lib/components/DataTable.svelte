@@ -4,7 +4,7 @@
 
   Props:
   - `rows`: the data
-  - `columns`: column definitions, see `Column` below
+  - `columns`: column definitions, see `Column` below; `info` adds an info tip to a header
   - `rowKey`: a stable unique key per row
   - `label`: accessible name of the table (rendered as a hidden caption)
   - `sort`: initial sort `{ key, direction }`; bindable to read or drive it from outside
@@ -45,6 +45,7 @@
 <script lang="ts" generics="T">
   import type { Snippet } from "svelte";
   import { ariaSort, nextSort, raw, sortRows, type Column, type SortState } from "../table";
+  import InfoTip from "./InfoTip.svelte";
   import SortHeader from "./SortHeader.svelte";
 
   interface Props {
@@ -77,6 +78,9 @@
     bare = false,
   }: Props = $props();
 
+  // True once the table scrolls sideways, which shows the pinned first column's edge.
+  let scrolled = $state(false);
+
   const sorted = $derived(sortRows(rows, columns, sort));
 
   function toggle(column: Column<T>): void {
@@ -103,7 +107,13 @@
   }
 </script>
 
-<div class="table-wrap" class:bare aria-busy={busy}>
+<div
+  class="table-wrap"
+  class:bare
+  class:scrolled
+  aria-busy={busy}
+  onscroll={(event) => (scrolled = event.currentTarget.scrollLeft > 0)}
+>
   <table class:busy>
     <caption class="visually-hidden">{label}</caption>
     <colgroup>
@@ -114,17 +124,31 @@
     <thead>
       <tr>
         {#each columns as column (column.key)}
-          <th scope="col" class={column.align ?? "left"} aria-sort={ariaSort(sort, column.key)}>
-            {#if column.sortable ?? true}
-              <SortHeader
-                label={column.label}
-                direction={sort?.key === column.key ? sort.direction : null}
-                align={column.align}
-                onclick={() => toggle(column)}
-              />
-            {:else}
-              {column.label}
-            {/if}
+          <th scope="col" class="col-head {column.align ?? 'left'}" aria-sort={ariaSort(sort, column.key)}>
+            {#snippet heading(describedby?: string)}
+              {#if column.sortable ?? true}
+                <SortHeader
+                  label={column.label}
+                  direction={sort?.key === column.key ? sort.direction : null}
+                  align={column.align}
+                  onclick={() => toggle(column)}
+                  {describedby}
+                />
+              {:else}
+                <span class:explained={!!describedby} aria-describedby={describedby}>{column.label}</span>
+              {/if}
+            {/snippet}
+            <!-- One centered row, so a header with an explanation lines up with one without. Its
+                 label opens the explanation on hover or focus; a dotted underline marks it. -->
+            <span class="head">
+              {#if column.info}
+                <InfoTip text={column.info} label="About {column.label}">
+                  {#snippet trigger(id)}{@render heading(id)}{/snippet}
+                </InfoTip>
+              {:else}
+                {@render heading()}
+              {/if}
+            </span>
           </th>
         {/each}
       </tr>
@@ -174,6 +198,25 @@
     overflow-x: auto;
   }
 
+  /* The first column stays in view while the rest of a wide table scrolls under it. Its cells
+     need an opaque background, and row hover and the active row repaint it like any cell. */
+  th:first-child,
+  td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--surface);
+  }
+
+  th:first-child {
+    z-index: 2;
+  }
+
+  .scrolled th:first-child,
+  .scrolled td:first-child {
+    box-shadow: inset -1px 0 0 var(--border);
+  }
+
   .table-wrap.bare {
     border-radius: 0;
     background: none;
@@ -191,19 +234,24 @@
   td {
     height: var(--row-height);
     padding: 0 10px;
-    font-size: var(--text-sm);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 420px;
   }
 
+  .head {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    vertical-align: middle;
+  }
+
+  /* Headers never cut their text, and an info tip must show past the cell. */
   th {
-    height: 32px;
+    overflow: visible;
+    height: 34px;
     border-bottom: 1px solid var(--border);
-    font-size: var(--text-xs);
-    font-weight: 500;
-    color: var(--text-muted);
     text-align: left;
   }
 
@@ -255,5 +303,8 @@
 
   .busy tbody {
     opacity: 0.55;
+  }
+  td {
+    font-size: var(--text-sm);
   }
 </style>

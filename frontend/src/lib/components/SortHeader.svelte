@@ -18,13 +18,15 @@
     direction: SortDirection | null;
     align?: "left" | "right";
     onclick: () => void;
+    /** Id of an element that explains the column, such as an info tip. */
+    describedby?: string;
   }
 
-  let { label, direction, align = "left", onclick }: Props = $props();
+  let { label, direction, align = "left", onclick, describedby }: Props = $props();
 </script>
 
-<button type="button" class="sort {align}" class:on={direction !== null} {onclick}>
-  <span>{label}</span>
+<button type="button" class="sort {align}" class:on={direction !== null} aria-describedby={describedby} {onclick}>
+  <span class:explained={!!describedby}>{label}</span>
   <span class="arrow"
     >{#if direction}<Icon name={direction === "asc" ? "arrow-up" : "arrow-down"} size={12} />{/if}</span
   >

@@ -134,7 +134,7 @@ describe("Overview", () => {
       expect(body).toMatch(new RegExp(`<h2[^>]*>${title}</h2>`));
     }
     for (const label of ["Gate calls", "Time gates ran", "Gate failures", "Flaky gates", "Cache skip rate", "Time saved by cache", "Net saved by cache"]) {
-      expect(body).toMatch(new RegExp(`<dt[^>]*><span>${label}</span>`));
+      expect(body).toMatch(new RegExp(`<dt[^>]*>[\\s\\S]*?<span>${label}</span>`));
     }
   });
 
