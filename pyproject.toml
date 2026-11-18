@@ -10,12 +10,17 @@
     dependencies = [
         "platformdirs>=4.14.5,<5.0.0",
 ]
-    description = "Skip lint and test gates that already passed on the exact same git tree."
+    description = "Skip lint and test runs that already passed, and see what your checks cost."
     license = { file = "LICENSE" }
     name = "gate-cache"
     readme = "README.md"
     requires-python = ">=3.11"
     version = "0.9.0"
+
+    [project.urls]
+        Changelog     = "https://github.com/natelandau/gate-cache/blob/main/CHANGELOG.md"
+        Documentation = "https://natelandau.github.io/gate-cache/"
+        Repository    = "https://github.com/natelandau/gate-cache"
 
     [project.scripts]
         gate-cache = "gate_cache.cli:main"
@@ -49,7 +54,10 @@
         "ty>=0.0.104",
         "typos>=1.52.2",
         "yamllint>=1.38.0",
-    ]
+]
+docs = [
+    "zensical>=0.1.2",
+]
 
 [tool.commitizen]
     annotated_tag              = true
@@ -58,7 +66,7 @@
     major_version_zero         = true
     tag_format                 = "v$version"
     update_changelog_on_bump   = true
-    version_files              = ["README.md:rev: v", "src/gate_cache/__init__.py:__version__"]
+    version_files              = ["README.md:rev: v", "docs/guides/git-hooks.md:rev: v", "src/gate_cache/__init__.py:__version__"]
     version_provider           = "uv"
 
 [tool.coverage.report] # https://coverage.readthedocs.io/en/latest/config.html#report

@@ -22,7 +22,7 @@ _site/
 docs/plans/
 docs/superpowers/
 .superpowers/
-reference/
+/reference/
 
 # Global ignore rules match *_cache/
 !src/gate_cache/
@@ -30,3 +30,6 @@ reference/
 # Dashboard frontend dependencies and build output
 frontend/node_modules/
 src/gate_cache/dashboard/static/
+
+# Generated from src/gate_cache/agent/skill.md by `duty docs`
+docs/reference/agent-guide.md

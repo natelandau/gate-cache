@@ -37,7 +37,7 @@ SUITES: dict[str, tuple[str, ...]] = {
         "src/gate_cache/",
         ":(exclude)src/gate_cache/dashboard/",
         ".pre-commit-hooks.yaml",
-        "docs/how-it-works.md",
+        "docs/reference/marker-format.md",
         "tests/core/",
         ".github/workflows/tests-core.yml",
         *PY_SHARED,
@@ -170,7 +170,51 @@ def prek(ctx: Context) -> None:
     )
 
 
-@duty(pre=[ruff, format, ty, typos, prek], capture=CI)
+AGENT_GUIDE_PAGE = PROJECT_ROOT / "docs" / "reference" / "agent-guide.md"
+# The site build reads these, plus the skill guide and version that the agent guide page renders
+DOCS_PATHS = (
+    "docs/",
+    "zensical.toml",
+    "src/gate_cache/agent/skill.md",
+    "src/gate_cache/__init__.py",
+    "duties.py",
+)
+
+
+def write_agent_guide() -> None:
+    """Render the `gate-cache --skill` guide as a docs page, so the site shows what agents read."""
+    from gate_cache import __version__
+    from gate_cache.cli import agent_text
+
+    text = agent_text("skill.md")
+    if text.startswith("---\n"):
+        text = text.split("\n---\n", 1)[1]
+    body = re.sub(r"\A\s*# [^\n]*\n", "", text)
+    header = (
+        "---\nicon: lucide/bot-message-square\n---\n\n"
+        "# Agent guide\n\n"
+        "A coding agent reads this guide when it runs `gate-cache --skill`. The guide tells the "
+        "agent what the messages of gate-cache mean, how to write and check a gate, and which "
+        f"actions to leave to you. This copy matches gate-cache {__version__}.\n"
+    )
+    AGENT_GUIDE_PAGE.write_text(header + body, encoding="utf-8")
+
+
+@duty
+def docs_check(ctx: Context) -> None:
+    """Build the documentation site in strict mode, so a broken link or page fails."""
+    write_agent_guide()
+    ctx.run(
+        gated(
+            "docs",
+            ["uv", "run", "--group", "docs", "zensical", "build", "--strict", "--clean"],
+            paths=DOCS_PATHS,
+        ),
+        title="docs build",
+    )
+
+
+@duty(pre=[ruff, format, ty, typos, prek, docs_check], capture=CI)
 def lint(ctx: Context) -> None:
     """Run all linting duties."""
 
@@ -281,6 +325,22 @@ def frontend_build(ctx: Context) -> None:
     _frontend_deps(ctx)
     # Never gated: the output is git-ignored, so a marker cannot tell which tree built it
     ctx.run(["npm", "--prefix", "frontend", "run", "build"], title="frontend build")
+
+
+@duty
+def docs(ctx: Context, addr: str = "localhost:8010") -> None:
+    """Serve the documentation site with live reload.
+
+    Args:
+        ctx (Context): Duty context.
+        addr (str): Address and port to serve on.
+    """
+    write_agent_guide()
+    ctx.run(
+        ["uv", "run", "--group", "docs", "zensical", "serve", "--dev-addr", addr],
+        title=f"serve docs at http://{addr}",
+        capture=False,
+    )
 
 
 @duty
