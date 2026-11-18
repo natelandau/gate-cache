@@ -277,11 +277,12 @@ def test_skill_quotes_messages_the_code_prints(quoted: str, source_fragments: li
 def test_prompt_flag_points_agent_to_skill(
     monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    """Verify --prompt prints the setup task and sends the agent to --skill."""
+    """Verify --prompt prints the setup and review tasks and sends the agent to --skill."""
     assert invoke(monkeypatch, "--prompt") == 0
     out = capfd.readouterr().out
-    assert out.startswith("# Add gate-cache to this repository")
+    assert out.startswith("# Set up gate-cache in this repository")
     assert "gate-cache --skill" in out
+    assert "## Review an existing setup" in out
     assert "{{" not in out
 
 

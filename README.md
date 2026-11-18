@@ -38,9 +38,11 @@ Run `uvx gate-cache --prompt` and follow the instructions that it prints.
 
 The agent reads the guide that gate-cache prints and asks you which commands to wrap, how to install gate-cache, which gates to scope to their paths, and whether git hooks run the gates. Then it wraps the commands, makes sure that each gate works, and stops before it commits. The instructions always match the version of gate-cache that the agent runs.
 
+If the repository already uses gate-cache, the agent reviews the setup instead. It compares each gate with the guide of the latest gate-cache release, and reports any defects and any features that the setup does not use. It changes nothing until you choose which recommendations to apply.
+
 Two flags print text for agents:
 
-- `gate-cache --prompt` prints the setup task that the agent follows.
+- `gate-cache --prompt` prints the setup and review task that the agent follows.
 - `gate-cache --skill` prints the guide for an agent that works in a repository that uses gate-cache. The output is a `SKILL.md` file. To give it to Claude Code in every session, save it as a skill:
 
 ```sh

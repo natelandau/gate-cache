@@ -315,7 +315,7 @@ def _main_parser() -> argparse.ArgumentParser:
         action="store_const",
         dest="guide",
         const="prompt.md",
-        help="Print a prompt that has a coding agent add gate-cache to a repository.",
+        help="Print a prompt that has a coding agent add gate-cache to a repository or review its setup.",
     )
     parser.add_argument(
         "--name",
