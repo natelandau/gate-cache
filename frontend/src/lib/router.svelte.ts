@@ -4,14 +4,16 @@
  *
  * - `#/overview` (also the default for an empty or unknown hash)
  * - `#/gates`, `#/gates/<repo>/<name>` with each part URI-encoded and `-` for the unknown repo
- * - `#/activity`, with optional `?outcome=<outcome>&reason=<reason>` filters, URI-encoded
+ * - `#/activity`, with optional `?outcome=<outcome>&reason=<reason>` filters, URI-encoded, and
+ *   an optional Breakdown row as `group=<dimension>&key=<key>&label=<chip text>`
  * - `#/flaky`
  *
  * Old `#/repos/<repo>` links parse as the overview with `selectRepo` set; `startRouter` turns
  * that into a repo filter. `startRouter` replaces any old `#/repos` hash with `#/overview`.
  */
 
-import type { Outcome } from "./api";
+import type { ActivityFilter, Outcome } from "./api";
+import { dimension, isDimension } from "./dimensions";
 import { OUTCOMES } from "./events";
 import { setRepos } from "./state.svelte";
 
@@ -19,7 +21,7 @@ export type Route =
   | { page: "overview"; selectRepo?: string }
   | { page: "gates" }
   | { page: "gate"; repo: string | null; name: string }
-  | { page: "activity"; outcome?: Outcome; reason?: string }
+  | ({ page: "activity" } & ActivityFilter)
   | { page: "flaky" };
 
 export type Page = Route["page"];
@@ -48,10 +50,13 @@ function activityRoute(query: string): Route {
   const params = new URLSearchParams(query);
   const outcome = params.get("outcome");
   const reason = params.get("reason");
+  const by = params.get("group");
+  const key = params.get("key");
   return {
     page: "activity",
     ...(isOutcome(outcome) ? { outcome } : {}),
     ...(reason ? { reason } : {}),
+    ...(isDimension(by) && key ? { group: { by, key, label: params.get("label") || dimension(by).label } } : {}),
   };
 }
 
@@ -88,6 +93,10 @@ export function href(route: Route): string {
     const params: string[] = [];
     if (route.outcome) params.push(`outcome=${encodeURIComponent(route.outcome)}`);
     if (route.reason) params.push(`reason=${encodeURIComponent(route.reason)}`);
+    if (route.group) {
+      const { by, key, label } = route.group;
+      params.push(`group=${by}`, `key=${encodeURIComponent(key)}`, `label=${encodeURIComponent(label)}`);
+    }
     return params.length ? `#/activity?${params.join("&")}` : "#/activity";
   }
   return `#/${route.page}`;

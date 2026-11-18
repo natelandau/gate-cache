@@ -7,7 +7,7 @@
  * events instead, and the user reloads from the top.
  */
 
-import type { ActivityPage, EventRow, Outcome } from "./api";
+import type { ActivityFilter, ActivityPage, EventRow } from "./api";
 import { OUTCOMES } from "./events";
 import { emptyHint, type ScopeText } from "./scope";
 
@@ -65,26 +65,29 @@ export function feedView(
 
 /**
  * Return what the feed lists under the page-local filters, for empty-state copy: "runs",
- * '"Fail" runs', or '"Uncached" runs with reason "..."'.
+ * '"Fail" runs', '"Uncached" runs with reason "..."', or 'runs in "Branch: main"'.
  */
-export function activitySubject(filter: { outcome?: Outcome; reason?: string }): string {
-  const runs = filter.outcome ? `"${OUTCOMES[filter.outcome].label}" runs` : "runs";
+export function activitySubject(filter: ActivityFilter): string {
+  let runs = filter.outcome ? `"${OUTCOMES[filter.outcome].label}" runs` : "runs";
+  if (filter.group) runs = `${runs} in "${filter.group.label}"`;
   return filter.reason ? `${runs} with reason "${filter.reason}"` : runs;
 }
 
 /**
- * Return the next step for an empty feed. Under an outcome or reason filter it names the filter
- * to clear, since loosening the global filters may not help; otherwise it is the generic hint.
+ * Return the next step for an empty feed. Under a page-local filter it names the filter to
+ * clear, since loosening the global filters may not help; otherwise it is the generic hint.
  */
 export function activityHint(
-  filter: { outcome?: Outcome; reason?: string },
+  filter: ActivityFilter,
   scope: ScopeText & { recording: boolean | null },
 ): string {
-  if (scope.recording === false || (!filter.outcome && !filter.reason)) return emptyHint(scope);
   const steps: string[] = [];
-  if (filter.outcome) steps.push("Pick All outcomes");
-  if (filter.reason) steps.push(steps.length ? "remove the reason filter" : "Remove the reason filter");
-  const clear = steps.join(" and ");
+  if (filter.outcome) steps.push("pick All outcomes");
+  if (filter.reason) steps.push("remove the reason filter");
+  if (filter.group) steps.push(`remove the "${filter.group.label}" filter`);
+  if (scope.recording === false || steps.length === 0) return emptyHint(scope);
+  const text = steps.join(" and ");
+  const clear = text.charAt(0).toUpperCase() + text.slice(1);
   const allTime = scope.range.kind === "preset" && scope.range.preset === "all";
   return allTime ? `${clear}.` : `${clear}, or pick a longer range.`;
 }

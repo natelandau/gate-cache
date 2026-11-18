@@ -7,7 +7,7 @@ Read this page before you add or change anything in the dashboard UI. It gives t
 The dashboard is an operations tool that people open many times a day. These principles decide most design questions:
 
 - Data comes first. Use dense rows (28px), tabular numbers, and small type. Do not add large cards, hero sections, or decorative motion.
-- Freshness and filters are always visible. Every page reads the global date range and the global repo filter, and the top bar shows when the data last updated. Page-local filters, such as the Activity outcome and reason, live only in the hash route. They are not saved, and other pages ignore them.
+- Freshness and filters are always visible. Every page reads the global date range and the global repo filter, and the top bar shows when the data last updated. Page-local filters, such as the Activity outcome, reason, and Breakdown row, live only in the hash route. They are not saved, and other pages ignore them.
 - Familiar controls win over new ones. Use native `<select>`, radio buttons, and buttons, styled with tokens.
 - Every control is reachable with the keyboard and shows a visible focus ring. Motion respects `prefers-reduced-motion`.
 - Light and dark themes are equal. Check every change in both. The theme button in the top bar switches between System (the default), Light, and Dark.
@@ -75,7 +75,7 @@ Use an existing component before you write markup of your own. If a page needs a
 | A numbered top-N list, such as Top gates             | `RankedList`                      |
 | The share of each outcome as one stacked bar         | `OutcomeMix`                      |
 | The share of each part of another whole, such as how waits ended | `ShareMix`             |
-| A bar per repo with numeric columns, such as Repos   | `BarList`                         |
+| A bar per named row with numeric columns, such as Breakdown | `BarList`, with rows from `breakdownBars` |
 | The repo filter, the date range, and freshness        | `TopBar` (already in the app shell), with `RepoPicker` and `RangePicker` |
 
 ## Pages

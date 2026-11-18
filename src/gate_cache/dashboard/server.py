@@ -278,12 +278,27 @@ def _activity(server: DashboardServer, params: dict[str, list[str]]) -> dict[str
     before = _text(params, "before")
     outcome = _text(params, "outcome")
     reason = _text(params, "reason")
+    group_by = _text(params, "group")
+    key = _text(params, "key")
+    if (group_by is None) != (key is None):
+        msg = "group and key must be given together"
+        raise _BadRequestError(msg)
+    group = (group_by, key) if group_by is not None and key is not None else None
     return _query(
         server,
         lambda c: queries.activity(
-            c, filters, limit=limit, before=before, outcome=outcome, reason=reason
+            c, filters, limit=limit, before=before, outcome=outcome, reason=reason, group=group
         ),
     )
+
+
+def _breakdown(server: DashboardServer, params: dict[str, list[str]]) -> dict[str, Any]:
+    by = _text(params, "by")
+    if by is None:
+        msg = "by is required"
+        raise _BadRequestError(msg)
+    filters = _filters(params)
+    return _query(server, lambda c: queries.breakdown(c, filters, by=by))
 
 
 def _simple(
@@ -326,6 +341,7 @@ _ROUTES: dict[str, Callable[[DashboardServer, dict[str, list[str]]], dict[str, A
     "gates": _simple(queries.gates),
     "gate": _gate_detail,
     "repos": _simple(queries.repos),
+    "breakdown": _breakdown,
     "activity": _activity,
     "flaky": _simple(queries.flaky),
     "slowdowns": _timed(queries.slowdowns),

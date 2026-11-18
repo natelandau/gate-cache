@@ -60,14 +60,15 @@ describe("Overview", () => {
     expect(body).toMatch(/Skip<\/span>\s*<span[^>]*>6<\/span>\s*<span[^>]*>50%</);
   });
 
-  it("shows the reasons, recent failures, slowdowns, and repos modules", () => {
+  it("shows the reasons, recent failures, slowdowns, and breakdown modules", () => {
     const { body } = render(Overview, {
       props: { query: query({ summary, days }), repoLabel: null },
     });
     expect(body).toMatch(/<h2[^>]*id="reasons-title"[^>]*>Why gates ran uncached<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="failures-title"[^>]*>Recent failures<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="slowdowns-title"[^>]*>Gates getting slower<\/h2>/);
-    expect(body).toMatch(/<h2[^>]*id="repos-title"[^>]*>Repos<\/h2>/);
+    expect(body).toMatch(/<h2[^>]*id="breakdown-title"[^>]*>Breakdown<\/h2>/);
+    expect(body).toMatch(/<select[^>]*>[\s\S]*Repo[\s\S]*Gate[\s\S]*Source[\s\S]*Branch[\s\S]*Machine/);
     expect(body).toContain("All repos, click a name to filter");
   });
 

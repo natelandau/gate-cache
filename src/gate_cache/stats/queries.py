@@ -7,7 +7,7 @@ import math
 import re
 import statistics
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +19,7 @@ from gate_cache.stats.recorder import Outcome
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
 _RAN = "('skip', 'pass', 'pass_unrecorded', 'fail')"
 _GOOD = "('pass', 'pass_unrecorded')"
@@ -614,29 +614,233 @@ def gate_detail(
 
 def repos(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     """Return per-repo rollups ordered by time saved."""
+    return {
+        "repos": [
+            {
+                "repo": row["repo"],
+                "repo_name": row["label"],
+                **{k: row[k] for k in ("runs", "skip_rate", "time_saved", "failures", "gates")},
+            }
+            for row in breakdown(conn, filters, by="repo")["rows"]
+        ]
+    }
+
+
+def _raw_text(field: str) -> str:
+    """Return SQL for one field of the raw line as text, NULL when the line or field is absent."""
+    # Read at query time rather than promoted to columns: the breakdown groups every row in
+    # the range, so a column index would go unused, and no migration rewrites the archive.
+    return f"CASE WHEN json_valid(raw) THEN CAST(json_extract(raw, '$.{field}') AS TEXT) END"
+
+
+_TRIGGER = _raw_text("trigger")
+TRIGGER_LABELS = {
+    "agent": "Agent",
+    "hook": "Git hook",
+    "ci": "CI",
+    "terminal": "Terminal",
+    "other": "Other",
+}
+_MACHINE_PREFIX = 8
+
+
+@dataclass(frozen=True)
+class _Label:
+    """How one breakdown row reads: its name, hover text, and whether it holds runs with no value."""
+
+    label: str
+    title: str | None = None
+    missing: bool = False
+    gate: str | None = None
+
+
+# One group's key values and its `extra` value, which is SQL from the newest run in the group.
+_Group = tuple[tuple[str | None, ...], str | None]
+
+
+def _repo_labels(groups: list[_Group], names: _RepoNames) -> list[_Label]:
+    return [_Label(names[g[0]], title=g[0], missing=g[0] is None) for g, _ in groups]
+
+
+def _gate_labels(groups: list[_Group], _names: _RepoNames) -> list[_Label]:
+    return [_Label(str(g[1]), title=g[0], gate=g[1]) for g, _ in groups]
+
+
+def _source_labels(groups: list[_Group], _names: _RepoNames) -> list[_Label]:
+    def one(trigger: str | None, agent: str | None) -> _Label:
+        if trigger is None:
+            return _Label(
+                "No source recorded",
+                title="Runs that recorded no source, such as runs from older gate-cache versions",
+                missing=True,
+            )
+        if trigger == "agent" and agent:
+            return _Label(f"Agent: {agent}")
+        return _Label(TRIGGER_LABELS.get(trigger, trigger))
+
+    return [one(g[0], g[1]) for g, _ in groups]
+
+
+def _branch_labels(groups: list[_Group], _names: _RepoNames) -> list[_Label]:
+    missing = _Label(
+        "No branch recorded",
+        title="Runs on a detached HEAD, or runs from older gate-cache versions",
+        missing=True,
+    )
+    return [missing if g[1] is None else _Label(g[1], title=g[0]) for g, _ in groups]
+
+
+def _machine_labels(groups: list[_Group], _names: _RepoNames) -> list[_Label]:
+    """Label machines by their latest host name, adding an ID prefix where two share one."""
+    base = [
+        None if m is None else host or f"Machine {m[:_MACHINE_PREFIX]}" for (m,), host in groups
+    ]
+    counts = Counter(base)
+    out: list[_Label] = []
+    for ((machine,), _), label in zip(groups, base, strict=True):
+        if machine is None or label is None:
+            out.append(
+                _Label(
+                    "No machine recorded",
+                    title="Runs that recorded no machine, such as runs from older gate-cache versions",
+                    missing=True,
+                )
+            )
+        else:
+            shared = counts[label] > 1
+            out.append(
+                _Label(f"{label} ({machine[:_MACHINE_PREFIX]})" if shared else label, title=machine)
+            )
+    return out
+
+
+@dataclass(frozen=True)
+class _Grouping:
+    """How the breakdown groups and names runs for one dimension.
+
+    Attributes:
+        columns: SQL for the group key, each value a column or a raw-line field.
+        labels: Names every row at once, so a label can depend on the other rows.
+        in_repo: Whether `columns[0]` is the repo. Rows keyed by more than the repo add
+            the repo name to their label when they come from several repos.
+        extra: SQL whose value from each group's newest run reaches `labels`.
+    """
+
+    columns: tuple[str, ...]
+    labels: Callable[[list[_Group], _RepoNames], list[_Label]]
+    in_repo: bool = False
+    extra: str | None = None
+
+
+# One entry here adds a grouping; the dashboard lists its choices in frontend/src/lib/dimensions.ts.
+_GROUPINGS: dict[str, _Grouping] = {
+    "repo": _Grouping(("repo",), _repo_labels, in_repo=True),
+    "gate": _Grouping(("repo", "name"), _gate_labels, in_repo=True),
+    "source": _Grouping(
+        (_TRIGGER, f"CASE WHEN {_TRIGGER} = 'agent' THEN NULLIF({_raw_text('agent')}, '') END"),
+        _source_labels,
+    ),
+    "branch": _Grouping(("repo", _raw_text("branch")), _branch_labels, in_repo=True),
+    "machine": _Grouping((_raw_text("machine"),), _machine_labels, extra=_raw_text("host")),
+}
+DIMENSIONS: tuple[str, ...] = tuple(_GROUPINGS)
+
+
+def _grouping(by: str) -> _Grouping:
+    """Return a dimension's grouping or raise ValueError."""
+    try:
+        return _GROUPINGS[by]
+    except KeyError:
+        msg = f"unknown breakdown: {by!r}; expected one of {', '.join(DIMENSIONS)}"
+        raise ValueError(msg) from None
+
+
+def group_filter(by: str, key: str) -> tuple[str, list[str | None]]:
+    """Return a WHERE condition and its parameters that select one breakdown row's runs.
+
+    Args:
+        by: The dimension the key came from.
+        key: A row's opaque `key` from `breakdown`.
+
+    Returns:
+        The condition, to append with AND, and the values it binds.
+
+    Raises:
+        ValueError: If the dimension is unknown or the key does not fit it.
+    """
+    columns = _grouping(by).columns
+    try:
+        values = json.loads(key)
+    except (ValueError, RecursionError):
+        values = None
+    if not (
+        isinstance(values, list)
+        and len(values) == len(columns)
+        and all(v is None or isinstance(v, str) for v in values)
+    ):
+        msg = f"malformed {by} key: {key!r}"
+        raise ValueError(msg)
+    condition = " AND ".join(f"({column}) IS ?" for column in columns)
+    return f"({condition})", values
+
+
+def breakdown(conn: sqlite3.Connection, filters: Filters, *, by: str) -> dict[str, Any]:
+    """Return per-group rollups of the filtered runs, ordered by time saved.
+
+    Runs with no value for the dimension, such as runs recorded before gate-cache kept a
+    branch, form their own labeled row.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters.
+        by: The dimension to group by, one of DIMENSIONS.
+
+    Returns:
+        The dimension and its rows. Each row's `key` is opaque; pass it to `activity` as
+        `group` to list that row's runs.
+
+    Raises:
+        ValueError: If the dimension is unknown.
+    """
+    grouping = _grouping(by)
+    width = len(grouping.columns)
     where, params = _where(filters)
     names = _all_repo_names(conn)
+    # With exactly one MAX aggregate, SQLite takes the bare `extra` value from that newest row.
     rows = conn.execute(
-        "SELECT repo, COUNT(*), SUM(outcome = 'skip'), SUM(outcome IN " + _RAN + "),"  # noqa: S608
+        "SELECT " + ", ".join(grouping.columns) + ","  # noqa: S608
+        f" {grouping.extra or 'NULL'}, MAX(ts),"
+        " COUNT(*), SUM(outcome = 'skip'), SUM(outcome IN " + _RAN + "),"
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
-        " SUM(outcome = 'fail'), COUNT(DISTINCT name)"
-        " FROM events" + where + " GROUP BY repo",
+        " SUM(outcome = 'fail'), COUNT(DISTINCT json_array(repo, name))"
+        " FROM events" + where + " GROUP BY " + ", ".join(str(i) for i in range(1, width + 1)),
         params,
     ).fetchall()
-    out: list[dict[str, Any]] = [
-        {
-            "repo": repo,
-            "repo_name": names[repo],
-            "runs": runs,
-            "skip_rate": _skip_rate(skips, ran),
-            "time_saved": float(saved),
-            "failures": failures,
-            "gates": n_gates,
-        }
-        for repo, runs, skips, ran, saved, failures, n_gates in rows
-    ]
-    out.sort(key=lambda r: (-r["time_saved"], r["repo_name"]))
-    return {"repos": out}
+    labels = grouping.labels([(tuple(row[:width]), row[width]) for row in rows], names)
+    # Gate and branch names repeat across repos, so they name the repo only when rows mix repos.
+    with_repo = grouping.in_repo and width > 1 and len({row[0] for row in rows}) > 1
+    out: list[dict[str, Any]] = []
+    for row, label in zip(rows, labels, strict=True):
+        group = row[:width]
+        runs, skips, ran, saved, failures, n_gates = row[width + 2 :]
+        repo = group[0] if grouping.in_repo else None
+        out.append(
+            {
+                "key": json.dumps(list(group)),
+                "label": f"{label.label} · {names[repo]}" if with_repo else label.label,
+                "title": label.title,
+                "missing": label.missing,
+                "repo": repo,
+                "name": label.gate,
+                "runs": runs,
+                "skip_rate": _skip_rate(skips, ran),
+                "time_saved": float(saved),
+                "failures": failures,
+                "gates": n_gates,
+            }
+        )
+    out.sort(key=lambda r: (-r["time_saved"], r["label"]))
+    return {"by": by, "rows": out}
 
 
 def _parse_cursor(cursor: str) -> tuple[float, int]:
@@ -660,6 +864,7 @@ def activity(
     before: str | None = None,
     outcome: str | None = None,
     reason: str | None = None,
+    group: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Return one page of events, newest first.
 
@@ -670,12 +875,13 @@ def activity(
         before: Opaque cursor from a previous page's next_before.
         outcome: Keep only events with this outcome, or every event when None.
         reason: Keep only events with exactly this reason, or every event when None.
+        group: Keep only the events of one breakdown row, as its dimension and key.
 
     Returns:
         The events and the cursor for the next page, or None on the last page.
 
     Raises:
-        ValueError: If the cursor is malformed or the outcome is unknown.
+        ValueError: If the cursor or group is malformed or the outcome is unknown.
     """
     limit = max(1, min(limit, _MAX_PAGE))
     where, params = _where(filters)
@@ -688,6 +894,10 @@ def activity(
     if reason is not None:
         where = _and(where, "reason = ?")
         params = [*params, reason]
+    if group is not None:
+        condition, values = group_filter(by=group[0], key=group[1])
+        where = _and(where, condition)
+        params = [*params, *values]
     if before is not None:
         ts, event_id = _parse_cursor(before)
         where = _and(where, "(ts < ? OR (ts = ? AND id < ?))")

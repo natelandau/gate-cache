@@ -4,11 +4,13 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
 from gate_cache.stats import queries
 from gate_cache.stats.archive import Archive
+from gate_cache.stats.context import Trigger
 from gate_cache.stats.queries import (
     Filters,
     activity,
@@ -815,3 +817,148 @@ def test_coalescing_empty(empty_conn: sqlite3.Connection) -> None:
     """No waits gives zero counts and no median."""
     c = coalescing(empty_conn, Filters())
     assert (c["waited"], c["ran"], c["median_wait"], c["total_wait"]) == (0, 0, None, 0.0)
+
+
+def insert_raw(
+    conn: sqlite3.Connection,
+    ts: float,
+    outcome: str = "pass",
+    *,
+    repo: str | None = REPO_A,
+    name: str = "lint",
+    saved: float | None = None,
+    raw: dict[str, object] | str | None = None,
+) -> None:
+    """Insert one event whose raw line holds the given fields."""
+    conn.execute(
+        "INSERT INTO events (line_hash, ts, repo, name, paths, outcome, saved, raw)"
+        " VALUES (?, ?, ?, ?, '[]', ?, ?, ?)",
+        (
+            f"r{conn.total_changes}-{ts}",
+            ts,
+            repo,
+            name,
+            outcome,
+            saved,
+            json.dumps(raw) if isinstance(raw, dict) else raw,
+        ),
+    )
+    conn.commit()
+
+
+def _labels(conn: sqlite3.Connection, by: str, filters: Filters | None = None) -> list[str]:
+    return [r["label"] for r in queries.breakdown(conn, filters or Filters(), by=by)["rows"]]
+
+
+def test_breakdown_repo_keys_rows_by_repo(conn: sqlite3.Connection) -> None:
+    """Repo rows carry the repo, its display name, and a key that holds only the repo."""
+    rows = queries.breakdown(conn, Filters(), by="repo")["rows"]
+    assert [(r["repo"], r["label"], json.loads(r["key"])) for r in rows] == [
+        (REPO_A, "proj", [REPO_A]),
+        (REPO_B, "other", [REPO_B]),
+    ]
+
+
+def test_trigger_labels_cover_every_trigger() -> None:
+    """Every trigger the recorder writes has a display name."""
+    assert set(queries.TRIGGER_LABELS) == set(get_args(Trigger))
+
+
+def test_breakdown_gate_names_repo_only_when_rows_mix_repos(
+    empty_conn: sqlite3.Connection,
+) -> None:
+    """Gate labels add the repo name only when the rows come from more than one repo."""
+    insert_raw(empty_conn, BASE + 1, "skip", saved=10.0)
+    insert_raw(empty_conn, BASE + 2, repo=REPO_B)
+    assert _labels(empty_conn, "gate") == ["lint · proj", "lint · other"]
+    assert _labels(empty_conn, "gate", Filters(repos=(REPO_A,))) == ["lint"]
+    row = queries.breakdown(empty_conn, Filters(), by="gate")["rows"][0]
+    assert (row["repo"], row["name"], row["title"]) == (REPO_A, "lint", REPO_A)
+
+
+def test_breakdown_source_names_agents_and_buckets_missing(
+    empty_conn: sqlite3.Connection,
+) -> None:
+    """Sources split agent runs by agent and group runs with no trigger under a labeled row."""
+    insert_raw(empty_conn, BASE + 1, "skip", saved=30.0, raw={"trigger": "agent", "agent": "codex"})
+    insert_raw(empty_conn, BASE + 2, "skip", saved=20.0, raw={"trigger": "hook"})
+    insert_raw(empty_conn, BASE + 3, "skip", saved=10.0, raw={"trigger": "agent"})
+    insert_raw(empty_conn, BASE + 7, raw={"trigger": "agent", "agent": ""})
+    insert_raw(empty_conn, BASE + 4, raw={"trigger": "nightly"})
+    insert_raw(empty_conn, BASE + 5, raw=None)
+    insert_raw(empty_conn, BASE + 6, raw="not json")
+    rows = queries.breakdown(empty_conn, Filters(), by="source")["rows"]
+    assert [(r["label"], r["runs"], r["missing"]) for r in rows] == [
+        ("Agent: codex", 1, False),
+        ("Git hook", 1, False),
+        ("Agent", 2, False),
+        ("No source recorded", 2, True),
+        ("nightly", 1, False),
+    ]
+
+
+def test_breakdown_branch_groups_per_repo_and_buckets_missing(
+    empty_conn: sqlite3.Connection,
+) -> None:
+    """Branches group within each repo, and runs without a branch form their own row."""
+    insert_raw(empty_conn, BASE + 1, "skip", saved=5.0, raw={"branch": "main"})
+    insert_raw(empty_conn, BASE + 2, raw={"branch": "main"})
+    insert_raw(empty_conn, BASE + 3, raw={"branch": None})
+    insert_raw(empty_conn, BASE + 4, repo=REPO_B, raw={"branch": "main"})
+    rows = queries.breakdown(empty_conn, Filters(repos=(REPO_A,)), by="branch")["rows"]
+    assert [(r["label"], r["runs"], r["missing"]) for r in rows] == [
+        ("main", 2, False),
+        ("No branch recorded", 1, True),
+    ]
+    assert sorted(_labels(empty_conn, "branch")) == [
+        "No branch recorded · proj",
+        "main · other",
+        "main · proj",
+    ]
+
+
+def test_breakdown_machine_labels_by_latest_host(empty_conn: sqlite3.Connection) -> None:
+    """Machines show their newest host, with an ID prefix when two machines share a host."""
+    m1, m2, m3 = "a" * 32, "b" * 32, "c" * 32
+    insert_raw(empty_conn, BASE + 1, raw={"machine": m1, "host": "old"})
+    insert_raw(empty_conn, BASE + 2, raw={"machine": m1, "host": "laptop"})
+    insert_raw(empty_conn, BASE + 3, raw={"machine": m2, "host": "laptop"})
+    insert_raw(empty_conn, BASE + 4, raw={"machine": m3, "host": "desk"})
+    insert_raw(empty_conn, BASE + 5, raw={"machine": m3})
+    insert_raw(empty_conn, BASE + 6, raw={})
+    rows = queries.breakdown(empty_conn, Filters(), by="machine")["rows"]
+    assert sorted((r["label"], r["runs"], r["missing"]) for r in rows) == [
+        ("Machine cccccccc", 2, False),
+        ("No machine recorded", 1, True),
+        ("laptop (aaaaaaaa)", 2, False),
+        ("laptop (bbbbbbbb)", 1, False),
+    ]
+    missing = next(r for r in rows if r["missing"])
+    assert "older gate-cache versions" in missing["title"]
+
+
+def test_breakdown_rejects_unknown_dimension(conn: sqlite3.Connection) -> None:
+    """An unknown dimension is a ValueError naming the choices."""
+    with pytest.raises(ValueError, match="expected one of repo, gate"):
+        queries.breakdown(conn, Filters(), by="tool")
+
+
+def test_activity_group_lists_one_breakdown_row(empty_conn: sqlite3.Connection) -> None:
+    """A breakdown row's key filters activity to exactly that row's runs."""
+    insert_raw(empty_conn, BASE + 1, raw={"branch": "main"})
+    insert_raw(empty_conn, BASE + 2, raw={"branch": "dev"})
+    insert_raw(empty_conn, BASE + 3, raw={"branch": None})
+    insert_raw(empty_conn, BASE + 4, repo=REPO_B, raw={"branch": "main"})
+    for row in queries.breakdown(empty_conn, Filters(), by="branch")["rows"]:
+        events = activity(empty_conn, Filters(), group=("branch", row["key"]))["events"]
+        assert len(events) == row["runs"]
+        assert {e["repo"] for e in events} == {row["repo"]}
+
+
+@pytest.mark.parametrize(
+    "key", ["nope", "[]", '["a"]', '[1, "main"]', '{"a": 1}', '["/x/.git", "main", null]']
+)
+def test_group_filter_rejects_keys_that_do_not_fit(key: str) -> None:
+    """A key that is not a JSON list of one text or null per group column is a ValueError."""
+    with pytest.raises(ValueError, match="malformed branch key"):
+        queries.group_filter("branch", key)
