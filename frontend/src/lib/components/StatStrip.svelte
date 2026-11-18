@@ -3,7 +3,7 @@
   A row of headline numbers separated by hairlines. Wraps on narrow screens.
 
   Props:
-  - `stats`: the cells, each `{ label, value, hint?, title?, tone?, href?, delta? }`. `tone` "danger" or
+  - `stats`: the cells, each `{ label, value, hint?, title?, tone?, href?, delta?, spark? }`. `tone` "danger" or
     "flaky" colors a non-zero problem count; `href` turns the value into a link (for example to the
     Flaky page); `delta` adds a line with the change against the previous window, from
     `statDeltas` in `src/lib/deltas.ts`; `spark` adds a sparkline, from `summaryStats` in

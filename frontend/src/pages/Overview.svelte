@@ -101,7 +101,7 @@
 
   @media (max-width: 1100px) {
     .grid > div {
-      --span: 12;
+      grid-column: span 12;
     }
   }
 </style>

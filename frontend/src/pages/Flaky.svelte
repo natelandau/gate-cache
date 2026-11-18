@@ -64,7 +64,7 @@
                 {@const counts = tally(tree.runs)}
                 <li class="tree">
                   <div class="tree-head">
-                    <span class="tree-hash" title={tree.tree}>{shortTree(tree.tree)}</span>
+                    <span title={tree.tree}>{shortTree(tree.tree)}</span>
                     <span class="muted">
                       {plural(counts.fails, "fail", "fails")}, {plural(counts.passes, "pass", "passes")}
                     </span>

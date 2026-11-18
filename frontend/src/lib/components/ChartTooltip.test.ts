@@ -25,4 +25,17 @@ describe("ChartTooltip", () => {
     const { body } = render(ChartTooltip, { props: { title: "x", rows: [] } });
     expect(body).not.toContain('class="hint');
   });
+
+  it("shows rows that share a label, such as a gate named Total", () => {
+    const { body } = render(ChartTooltip, {
+      props: {
+        title: "Tue, Nov 4",
+        rows: [
+          { color: "var(--chart-series-1)", label: "Total", value: "1m" },
+          { label: "Total", value: "2m" },
+        ],
+      },
+    });
+    expect(body.match(/class="row[^"]*"/g)).toHaveLength(2);
+  });
 });

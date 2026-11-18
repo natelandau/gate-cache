@@ -24,6 +24,8 @@ export function sparkPath(
   const step = values.length > 1 ? width / (values.length - 1) : 0;
   const bottom = height - PAD_BOTTOM;
   const y = (v: number) => (max > min ? bottom - ((v - min) / (max - min)) * (bottom - PAD_TOP) : bottom);
+  // With negative values the fill closes at zero, so it shades each value's distance from zero.
+  const base = min < 0 ? round(y(0)) : height;
   const runs: [number, number][][] = [];
   let current: [number, number][] | null = null;
   values.forEach((v, i) => {
@@ -41,7 +43,7 @@ export function sparkPath(
     .map((points) => {
       const first = points[0]!;
       const last = points[points.length - 1]!;
-      return `${segment(points)} L${last[0]} ${height} L${first[0]} ${height} Z`;
+      return `${segment(points)} L${last[0]} ${base} L${first[0]} ${base} Z`;
     })
     .join(" ");
   return { line, area };

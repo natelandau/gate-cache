@@ -21,7 +21,7 @@
 
 <div class="tip">
   <p class="title">{title}</p>
-  {#each rows as row (row.label)}
+  {#each rows as row, i (i)}
     <p class="row">
       <i class="bar" style:background={row.color ?? "transparent"}></i>
       <span class="label">{row.label}</span>

@@ -48,7 +48,7 @@ export function savedText(event: EventRow): string | null {
 
 /** Return "saved 1m 31s" for a skip, "ran 54s" for a run, or "not rerun" for a reported failure, as one phrase for hover text. */
 export function timeText(event: EventRow): string {
-  if (event.reported) return "not rerun";
+  if (event.reported) return NOT_RERUN;
   const skip = event.outcome === "skip";
   const seconds = skip ? event.saved : event.duration;
   const verb = skip ? "saved" : "ran";

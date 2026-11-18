@@ -38,4 +38,11 @@ describe("sparkPath", () => {
     expect(points[2]).toBeLessThan(points[1]!);
     expect(points[1]).toBeLessThan(points[0]!);
   });
+
+  it("closes the area at zero when the series goes negative", () => {
+    // Zero sits halfway between -10 and 10, so the area closes there, not at the bottom.
+    const { area } = sparkPath([-10, 10], 200, 34);
+    expect(area).not.toContain(" 34 ");
+    expect(area).not.toMatch(/L\d+ 34\b/);
+  });
 });
