@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.8.0 (2026-11-17)
+
+### Feat
+
+- **dashboard**: drill down from overview charts into runs (#24)
+- **dashboard**: group overview runs by source, branch, or machine (#23)
+- **dashboard**: show net time saved and waits for concurrent runs (#22)
+- **dashboard**: send browser security headers (#21)
+- **dashboard**: tell apart repos that share a folder name (#19)
+- **gate**: wait for a concurrent run of the same gate, then skip
+- **stats**: let GATE_CACHE_DATA_DIR and data_dir move stats data
+- **dashboard**: turn the overview into a homepage of modules
+- **cli**: look up a gate in status by its command
+- **cli**: add --skill and --prompt guides for coding agents (#16)
+- **cli**: confirm before clearing markers or stats (#14)
+- **dashboard**: add opt-in run stats and a local dashboard (#12)
+
+### Fix
+
+- **dashboard**: explain how to get the UI when an install lacks it
+
+### Perf
+
+- **dashboard**: cache hashed UI assets in the browser (#20)
+- **snapshot**: cut the git calls a gate run makes (#13)
+
 ## v0.7.0 (2026-11-16)
 
 ### Feat

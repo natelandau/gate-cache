@@ -116,7 +116,7 @@ gate-cache works with [prek](https://github.com/j178/prek) and with [pre-commit]
 ```yaml
 repos:
   - repo: https://github.com/natelandau/gate-cache
-    rev: v0.7.0
+    rev: v0.8.0
     hooks:
       - id: gate-cache
         name: pytest
