@@ -72,7 +72,6 @@
     color: var(--text);
     font-weight: 600;
     text-decoration: none;
-    font-family: var(--font-mono);
     font-size: var(--text-md);
   }
 

@@ -47,10 +47,11 @@ _HASHED_ASSETS = "assets"
 _IMMUTABLE = "public, max-age=31536000, immutable"
 # Files without a hash in the name, such as index.html, revalidate so a new release loads.
 _REVALIDATE = "no-cache"
-# The built UI loads every script, style, image, and API call from its own origin.
+# The built UI loads every script, style, image, and API call from its own origin. Its one
+# font comes from a pinned jsDelivr file; without it the page falls back to the system font.
 CONTENT_SECURITY_POLICY = (
-    "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
-    "form-action 'none'; object-src 'none'"
+    "default-src 'self'; font-src 'self' https://cdn.jsdelivr.net; base-uri 'none'; "
+    "frame-ancestors 'none'; form-action 'none'; object-src 'none'"
 )
 _PAGE_HEADERS = (
     ("Content-Security-Policy", CONTENT_SECURITY_POLICY),

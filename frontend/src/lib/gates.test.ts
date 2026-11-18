@@ -68,8 +68,8 @@ describe("sourceParts", () => {
       time_spent: 10.6 + i,
     }));
     const parts = sourceParts(rows);
-    expect(parts[0]).toMatchObject({ key: "k0", label: "L0", count: 11, color: "var(--chart-runs-1)", title: "T" });
-    expect(parts[4]!.color).toBe("var(--chart-runs-5)");
+    expect(parts[0]).toMatchObject({ key: "k0", label: "L0", count: 11, color: "var(--chart-series-1)", title: "T" });
+    expect(parts[4]!.color).toBe("var(--chart-series-5)");
     expect(parts).toHaveLength(6);
     expect(parts[5]).toMatchObject({ key: "other", label: "Other", count: 32, color: "var(--chart-neutral)", title: "L5, L6" });
   });

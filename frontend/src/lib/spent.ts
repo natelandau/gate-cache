@@ -4,13 +4,13 @@ import { currentScope, getSpent, type Spent, type SpentDay, type SpentGate, type
 import { fillDays } from "./fill";
 import { nowSeconds } from "./state.svelte";
 
-/** One color per ranked gate, darkest for the gate that spent the most. */
+/** One distinct hue per ranked gate, in rank order. */
 export const SPENT_COLORS = [
-  "var(--chart-runs-1)",
-  "var(--chart-runs-2)",
-  "var(--chart-runs-3)",
-  "var(--chart-runs-4)",
-  "var(--chart-runs-5)",
+  "var(--chart-series-1)",
+  "var(--chart-series-2)",
+  "var(--chart-series-3)",
+  "var(--chart-series-4)",
+  "var(--chart-series-5)",
 ];
 export const OTHER_COLOR = "var(--chart-neutral)";
 
