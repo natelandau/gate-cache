@@ -18,6 +18,18 @@ describe("HourHeatmap", () => {
     expect(styles[1 * 24 + 9]).toBe("var(--heat-empty)");
   });
 
+  it("shows a total bar per hour and a total per weekday", () => {
+    const { body } = render(HourHeatmap, { props: { cells, metric: "runs" } });
+    expect(body.match(/class="hour-total[^"]*"/g)).toHaveLength(24);
+    expect(body.match(/class="day-total[^"]*"/g)).toHaveLength(7);
+    expect(body).toMatch(/class="day-total[^"]*"[\s\S]*?>8</);
+  });
+
+  it("names the peak hour", () => {
+    const { body } = render(HourHeatmap, { props: { cells, metric: "runs" } });
+    expect(body).toMatch(/Peak:[\s\S]*?09:00[\s\S]*?8/);
+  });
+
   it("labels every third hour", () => {
     const { body } = render(HourHeatmap, { props: { cells, metric: "runs" } });
     const labels = [...body.matchAll(/class="hour[^"]*"[^>]*>(\d*)</g)].map((m) => m[1]).filter(Boolean);
