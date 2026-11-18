@@ -81,7 +81,7 @@ def _serve(lock: InstanceLock, *, state: Path, port: int | None, open_browser: b
     """Run the server on the locked data directory while holding the instance lock."""
     static_dir = static_root()
     if static_dir is None:
-        say(server_module.NO_UI_MESSAGE)
+        say(server_module.no_ui_message())
         return 1
     try:
         with Archive.open(state / ARCHIVE_NAME) as archive:

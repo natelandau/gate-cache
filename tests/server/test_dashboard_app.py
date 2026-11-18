@@ -192,7 +192,7 @@ def test_no_ui_exit_1(
     """Without a built frontend the dashboard refuses to start."""
     monkeypatch.setattr(app, "static_root", lambda: None)
     assert app.run_dashboard(port=0, open_browser=False) == 1
-    assert "no dashboard UI" in capsys.readouterr().err
+    assert "dashboard UI" in capsys.readouterr().err
     assert InstanceLock.acquire(stats_dirs[1]) is not None
 
 

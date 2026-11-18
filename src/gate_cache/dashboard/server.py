@@ -7,9 +7,12 @@ import errno
 import json
 import math
 import mimetypes
+import os
 import re
+import shutil
 import socket
 import sqlite3
+import sys
 import threading
 import time
 from datetime import UTC, datetime
@@ -29,10 +32,6 @@ if TYPE_CHECKING:
 
 HOST = "127.0.0.1"
 UNKNOWN_REPO = "-"
-NO_UI_MESSAGE = (
-    "This install has no dashboard UI. Install a release with `uv tool install gate-cache`, "
-    "or build the UI in a source checkout with `uv run duty frontend_build`."
-)
 
 _MAX_LIMIT = 500
 _OK = 200
@@ -74,6 +73,48 @@ def static_root() -> Path | None:
     """Return the packaged frontend directory, or None when this install has no UI."""
     root = Path(str(resources.files("gate_cache.dashboard") / "static"))
     return root if (root / "index.html").is_file() else None
+
+
+def _source_checkout() -> Path | None:
+    """Return the repository root when gate-cache runs from a source checkout, else None."""
+    root = Path(__file__).resolve().parents[3]
+    return root if (root / "frontend" / "package.json").is_file() else None
+
+
+def _other_installs() -> list[str]:
+    """Return the gate-cache executables on PATH that belong to another install."""
+    running = Path(sys.prefix).resolve()
+    found: list[str] = []
+    seen: set[Path] = set()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        exe = shutil.which("gate-cache", path=directory) if directory else None
+        if exe is None:
+            continue
+        target = Path(exe).resolve()
+        if target.is_relative_to(running) or target in seen:
+            continue
+        seen.add(target)
+        found.append(exe)
+    return found
+
+
+def no_ui_message() -> str:
+    """Explain why this install has no dashboard UI and how to get one."""
+    checkout = _source_checkout()
+    if checkout is None:
+        message = (
+            "This gate-cache was built from source and has no dashboard UI. "
+            "Install a release with `uv tool install gate-cache`."
+        )
+    else:
+        message = (
+            f"This gate-cache runs from the source checkout at {checkout}, which has no built "
+            "dashboard UI. Build it with `uv run duty frontend_build`."
+        )
+    others = _other_installs()
+    if others:
+        message += f" Or run another gate-cache on your PATH by its full path: {', '.join(others)}"
+    return message
 
 
 def _time(params: dict[str, list[str]], key: str) -> float | None:
@@ -204,7 +245,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _static(self, path: str) -> None:
         root = self.server.static_dir
         if root is None:
-            self._send(_UNAVAILABLE, NO_UI_MESSAGE.encode(), "text/plain; charset=utf-8")
+            self._send(_UNAVAILABLE, no_ui_message().encode(), "text/plain; charset=utf-8")
             return
         base = root.resolve()
         assets = base / _HASHED_ASSETS

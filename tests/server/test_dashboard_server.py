@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import os
 import socket
 import threading
 import time
@@ -504,7 +505,7 @@ def test_no_ui_503(bare_server: DashboardServer) -> None:
     """Without a frontend, non-API paths explain how to install one."""
     status, headers, body = fetch(bare_server, "/")
     assert status == 503
-    assert b"no dashboard UI" in body
+    assert b"dashboard UI" in body
     assert headers["Cache-Control"] == "no-store"
     assert headers["Content-Security-Policy"] == server_module.CONTENT_SECURITY_POLICY
     assert get(bare_server, "/api/v1/summary")[0] == 200
@@ -690,3 +691,56 @@ def test_activity_flaky_filter(server: DashboardServer, archive: Archive) -> Non
     status, body = get(server, "/api/v1/activity?flaky=1")
     assert status == 200
     assert [e["ts"] for e in body["events"]] == [2.0, 1.0]
+
+
+def _fake_exe(directory: Path) -> Path:
+    directory.mkdir(parents=True)
+    exe = directory / "gate-cache"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    return exe
+
+
+def test_no_ui_message_source_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """From a source checkout, the message names the checkout and the build duty."""
+    monkeypatch.setattr(server_module, "_source_checkout", lambda: tmp_path)
+    monkeypatch.setenv("PATH", "")
+    message = server_module.no_ui_message()
+    assert f"source checkout at {tmp_path}" in message
+    assert "uv run duty frontend_build" in message
+    assert "full path" not in message
+
+
+def test_no_ui_message_source_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Outside a checkout, the message points to a release install."""
+    monkeypatch.setattr(server_module, "_source_checkout", lambda: None)
+    monkeypatch.setenv("PATH", "")
+    message = server_module.no_ui_message()
+    assert "built from source" in message
+    assert "uv tool install gate-cache" in message
+
+
+def test_no_ui_message_names_other_installs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Executables of other installs are listed once; the running install's own is not."""
+    prefix = tmp_path / "venv"
+    own = _fake_exe(prefix / "bin")
+    other = _fake_exe(tmp_path / "tool" / "bin")
+    link_dir = tmp_path / "links"
+    link_dir.mkdir()
+    (link_dir / "gate-cache").symlink_to(other)
+    monkeypatch.setattr(server_module.sys, "prefix", str(prefix))
+    monkeypatch.setattr(server_module, "_source_checkout", lambda: None)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(own.parent), str(link_dir), str(other.parent)]))
+    message = server_module.no_ui_message()
+    assert str(own) not in message
+    assert f"by its full path: {link_dir / 'gate-cache'}" in message
+    assert str(other) not in message
+
+
+def test_source_checkout_detected() -> None:
+    """The tests run from the source checkout, which holds the frontend."""
+    root = server_module._source_checkout()
+    assert root is not None
+    assert (root / "frontend" / "package.json").is_file()
