@@ -14,6 +14,11 @@ export const SPENT_COLORS = [
 ];
 export const OTHER_COLOR = "var(--chart-neutral)";
 
+/** Return the color of the gate at `rank` (0 first), or gray for ranks past the palette. */
+export function seriesColor(rank: number): string {
+  return SPENT_COLORS[rank] ?? OTHER_COLOR;
+}
+
 /** One stacked part of the chart: a top gate, or every other gate together. */
 export interface SpentSeries {
   key: string;
@@ -35,7 +40,7 @@ export function spentSeries(body: Spent): SpentSeries[] {
   const series: SpentSeries[] = body.gates.slice(0, SPENT_COLORS.length).map((gate, index) => ({
     key: String(index),
     label: gate.label,
-    color: SPENT_COLORS[index] as string,
+    color: seriesColor(index),
     gate,
   }));
   const shown = series.length;
@@ -84,4 +89,30 @@ export async function loadSpent(signal: AbortSignal, status: SpentStatus): Promi
   const series = spentSeries(body);
   const days = fillDays(body.daily, scope.from, scope.to ?? now, scope.tz, emptySpentDay(body.gates.length));
   return { series, rows: spentRows(days, series) };
+}
+
+/** One series' share of the range, for the legend beside the chart. */
+export interface SpentTotal {
+  key: string;
+  name: string;
+  repo: string;
+  color: string;
+  gate: SpentGate | null;
+  total: number;
+}
+
+/** Return each series' seconds over the range, in series order, and their sum. */
+export function spentTotals(series: SpentSeries[], rows: SpentRow[]): { items: SpentTotal[]; total: number } {
+  const items = series.map((s) => ({
+    key: s.key,
+    name: s.gate ? s.gate.name : s.label,
+    repo: s.gate ? s.gate.repo_name : "",
+    color: s.color,
+    gate: s.gate,
+    total: rows.reduce((sum, row) => {
+      const segment = row.segments.find((g) => g.key === s.key);
+      return sum + (segment ? segment.end - segment.start : 0);
+    }, 0),
+  }));
+  return { items, total: items.reduce((sum, i) => sum + i.total, 0) };
 }
