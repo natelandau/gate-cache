@@ -306,8 +306,8 @@ def test_status_listing_includes_scoped_misses(
 
 
 def _doc_snippet(marker_text: str) -> str:
-    """Return the bash block in how-it-works.md that contains marker_text."""
-    doc = (ROOT / "docs" / "how-it-works.md").read_text()
+    """Return the bash block in the marker format page that contains marker_text."""
+    doc = (ROOT / "docs" / "reference" / "marker-format.md").read_text()
     blocks = re.findall(r"```bash\n(.*?)```", doc, flags=re.DOTALL)
     (block,) = [b for b in blocks if marker_text in b]
     return block
@@ -316,7 +316,7 @@ def _doc_snippet(marker_text: str) -> str:
 def test_documented_shell_snippet_finds_the_scoped_marker(
     scoped_repo: Path, counter: Counter
 ) -> None:
-    """Verify the how-it-works snippet computes the marker path of a scoped gate."""
+    """Verify the marker format snippet computes the marker path of a scoped gate."""
     (scoped_repo / "tests").mkdir()
     (scoped_repo / "tests" / "test_app.py").write_text("def test_app(): pass\n")
     run_gate("pytest", counter.argv(), paths=["tests", "src"])

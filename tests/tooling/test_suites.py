@@ -76,7 +76,7 @@ ALL = {"core", "server", "frontend", "tooling"}
         ("src/gate_cache/git.py", {"core", "tooling"}),
         ("tests/core/test_cli.py", {"core", "tooling"}),
         # A core test runs the shell snippets in this page
-        ("docs/how-it-works.md", {"core"}),
+        ("docs/reference/marker-format.md", {"core"}),
         ("frontend/package.json", {"frontend"}),
         ("tests/conftest.py", {"core", "server", "tooling"}),
         # These change how every suite runs

@@ -1,0 +1,114 @@
+[project]
+    copyright = "Copyright &copy; 2026 Nathaniel Landau"
+    dev_addr  = "localhost:8010"
+    docs_dir  = "docs"
+    repo_name = "natelandau/gate-cache"
+    repo_url  = "https://github.com/natelandau/gate-cache"
+    site_dir  = "_site"
+    site_name = "gate-cache"
+    site_description = "Skip lint and test runs that already passed, and see what your checks cost."
+    site_url  = "https://natelandau.github.io/gate-cache/"
+
+    # Keep this order. Do not let a formatter sort the nav.
+    nav = [
+        { "Home" = "index.md" },
+        { "Get started" = [
+            { "Install" = "get-started/install.md" },
+            { "Quick start" = "get-started/quick-start.md" },
+            { "Your first gate" = "get-started/first-gate.md" },
+        ] },
+        { "Guides" = [
+            { "Write a gate" = "guides/write-a-gate.md" },
+            { "Scope a gate to paths" = "guides/scope-to-paths.md" },
+            { "Git hooks" = "guides/git-hooks.md" },
+            { "CI" = "guides/ci.md" },
+            { "Coding agents" = "guides/coding-agents.md" },
+            { "Recipes" = "guides/recipes.md" },
+        ] },
+        { "Stats" = [
+            { "Record stats" = "stats/record-stats.md" },
+            { "The dashboard" = "stats/dashboard.md" },
+            { "Find flaky gates" = "stats/flaky-gates.md" },
+            { "Cut what your checks cost" = "stats/cost.md" },
+            { "Metrics" = "stats/metrics.md" },
+        ] },
+        { "Reference" = [
+            { "Commands" = "reference/commands.md" },
+            { "Configuration" = "reference/configuration.md" },
+            { "File locations" = "reference/file-locations.md" },
+            { "How it works" = "reference/how-it-works.md" },
+            { "Agent guide" = "reference/agent-guide.md" },
+            { "Marker format" = "reference/marker-format.md" },
+            { "Privacy" = "privacy.md" },
+        ] },
+        { "Troubleshooting" = "troubleshooting.md" },
+        { "Changelog" = "https://github.com/natelandau/gate-cache/blob/main/CHANGELOG.md" },
+        { "Contributing" = "https://github.com/natelandau/gate-cache/blob/main/CONTRIBUTING.md" },
+    ]
+
+    [project.theme]
+        features = [
+            "content.code.annotate",
+            "content.code.copy",
+            "content.tabs.link",
+            "navigation.footer",
+            "navigation.indexes",
+            "navigation.sections",
+            "navigation.tabs",
+            "navigation.tabs.sticky",
+            "navigation.top",
+            "search.highlight",
+        ]
+        language = "en"
+        [project.theme.icon]
+            logo = "lucide/circle-check-big"
+
+        [[project.theme.palette]]
+            media       = "(prefers-color-scheme)"
+            toggle.icon = "lucide/sun-moon"
+            toggle.name = "Switch to light mode"
+
+        [[project.theme.palette]]
+            media       = "(prefers-color-scheme: light)"
+            scheme      = "default"
+            toggle.icon = "lucide/sun"
+            toggle.name = "Switch to dark mode"
+
+        [[project.theme.palette]]
+            media       = "(prefers-color-scheme: dark)"
+            scheme      = "slate"
+            toggle.icon = "lucide/moon"
+            toggle.name = "Switch to system preference"
+
+    [project.extra]
+        generator = false
+        [[project.extra.social]]
+            icon = "fontawesome/brands/github"
+            link = "https://github.com/natelandau/gate-cache"
+
+    [project.markdown_extensions.abbr]
+    [project.markdown_extensions.admonition]
+    [project.markdown_extensions.attr_list]
+    [project.markdown_extensions.def_list]
+    [project.markdown_extensions.footnotes]
+    [project.markdown_extensions.md_in_html]
+    [project.markdown_extensions.tables]
+    [project.markdown_extensions.toc]
+        permalink = true
+    [project.markdown_extensions.pymdownx.details]
+    [project.markdown_extensions.pymdownx.emoji]
+        emoji_generator = "zensical.extensions.emoji.to_svg"
+        emoji_index     = "zensical.extensions.emoji.twemoji"
+    [project.markdown_extensions.pymdownx.highlight]
+        anchor_linenums     = true
+        line_spans          = "__span"
+        pygments_lang_class = true
+    [project.markdown_extensions.pymdownx.inlinehilite]
+    [project.markdown_extensions.pymdownx.keys]
+    [project.markdown_extensions.pymdownx.superfences]
+        custom_fences = [
+            { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+        ]
+    [project.markdown_extensions.pymdownx.tabbed]
+        alternate_style     = true
+        combine_header_slug = true

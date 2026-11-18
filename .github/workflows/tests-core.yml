@@ -15,7 +15,7 @@ on:
             - "src/gate_cache/**"
             - "!src/gate_cache/dashboard/**"
             - ".pre-commit-hooks.yaml"
-            - "docs/how-it-works.md"
+            - "docs/reference/marker-format.md"
             - "tests/core/**"
             - ".github/workflows/tests-core.yml"
             - "tests/conftest.py"
