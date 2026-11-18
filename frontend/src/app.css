@@ -26,10 +26,13 @@
 
   Gate series (chart-series-1 to 5) color the parts of a chart split by gate, in rank order:
   blue, magenta, teal, violet, cyan. They avoid green, red, and amber, which mean saved,
-  failures, and warnings. Validated with the dataviz palette checks against the surface in
-  each theme: lightness band, chroma floor, contrast >= 3:1, and normal-vision separation pass;
-  teal next to magenta sits in the 6-8 CVD floor band for deutans, so every gate chart names
-  its parts in a legend and a tooltip.
+  failures, and warnings. Checked with the dataviz palette validator against the surface in
+  each theme. Neighbors in rank order pass the lightness band, chroma floor, contrast (>= 3:1),
+  and normal-vision separation, and teal next to magenta sits in the 6-8 color-blind floor
+  band. Pairs that are not neighbors are close: teal and cyan (3 and 5) even for full color
+  vision, and blue and violet (1 and 4) and magenta and cyan (2 and 5) for deuteranopes. A
+  stacked chart only puts neighbors side by side, and every gate chart names each part in a
+  legend and a tooltip, so color never identifies a gate alone.
 */
 @font-face {
   font-family: "Geist";
@@ -331,18 +334,6 @@ code {
   --color-surface-content: var(--text);
 }
 
-/* A value that changed after first paint: fade in and rise into place. */
-@keyframes value-swap {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -351,15 +342,6 @@ code {
   to {
     opacity: 1;
     transform: none;
-  }
-}
-
-@keyframes shimmer {
-  from {
-    background-position: 200% 0;
-  }
-  to {
-    background-position: -200% 0;
   }
 }
 

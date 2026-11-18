@@ -36,7 +36,10 @@ export function summaryStats(
   s: Summary,
   options: { runsHref?: string; flakyHref?: string; failuresHref?: string } = {},
   daily?: DayBucket[],
+  range?: { costUnknownRuns: number },
 ): Stat[] {
+  // The sparklines plot `daily`, which can be wider than the summary's own days.
+  const costUnknown = range?.costUnknownRuns ?? s.cost_unknown_runs;
   const deltas = s.previous ? statDeltas(s, s.previous) : undefined;
   const spark = (color: string, value: (d: DayBucket) => number | null) =>
     daily && daily.length > 0 ? { values: daily.map(value), color } : undefined;
@@ -58,7 +61,7 @@ export function summaryStats(
       tone: isNegativeDuration(s.net_saved) ? "danger" : "default",
       delta: deltas?.net_saved,
       // Days with runs that recorded no cost would overstate net saved, as the delta would.
-      spark: s.cost_unknown_runs > 0 ? undefined : spark("--chart-saved", (d) => d.saved - d.cost),
+      spark: costUnknown > 0 ? undefined : spark("--chart-saved", (d) => d.saved - d.cost),
     },
     {
       label: "Time spent",
@@ -121,4 +124,18 @@ export function summaryNote(s: Summary): string | undefined {
     );
   }
   return notes.length ? notes.join(" ") : undefined;
+}
+
+/**
+ * Return the first and last index in `days` of the days a scoped summary covers, or undefined
+ * until the scoped summary loads. Reading the loaded days, not the requested span, keeps a
+ * sparkline's highlight in step with the values beside it.
+ */
+export function pickedRange(days: DayBucket[], scoped: DayBucket[] | undefined): [number, number] | undefined {
+  const first = scoped?.[0]?.day;
+  const last = scoped?.[scoped.length - 1]?.day;
+  if (!first || !last) return undefined;
+  const from = days.findIndex((d) => d.day === first);
+  const to = days.findIndex((d) => d.day === last);
+  return from >= 0 && to >= from ? [from, to] : undefined;
 }

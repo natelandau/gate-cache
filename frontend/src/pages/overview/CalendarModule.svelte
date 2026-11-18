@@ -34,6 +34,7 @@
   let metric: HeatMetric = $state("runs");
 
   const facts = $derived(query.data ? calendarFacts(query.data.days) : null);
+  const average = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 </script>
 
 <Module
@@ -68,7 +69,7 @@
       </div>
       <div>
         <dt>Runs per active day</dt>
-        <dd>{facts.runsPerActiveDay === null ? "–" : facts.runsPerActiveDay.toFixed(1)}</dd>
+        <dd>{facts.runsPerActiveDay === null ? "–" : average.format(facts.runsPerActiveDay)}</dd>
       </div>
     </dl>
   {/if}

@@ -19,16 +19,18 @@
   import type { Query } from "../../lib/query.svelte";
   import { activityHref } from "../../lib/router.svelte";
   import type { DaySpan } from "../../lib/selection";
-  import { summaryNote, summaryStats, type SummaryView } from "../../lib/summary";
+  import { pickedRange, summaryNote, summaryStats, type SummaryView } from "../../lib/summary";
 
   interface Props {
     /** Has no data until a summary for the picked days loads. */
     query: Query<SummaryView | undefined>;
     span?: DaySpan;
     days?: DayBucket[];
+    /** Runs in the whole range whose cost is unknown, which hides the net saved sparkline. */
+    costUnknownRuns?: number;
   }
 
-  let { query, span, days }: Props = $props();
+  let { query, span, days, costUnknownRuns }: Props = $props();
 
   const summary = $derived(query.data?.summary);
   const stats = $derived(
@@ -37,16 +39,10 @@
           runsHref: activityHref({}, span),
           flakyHref: activityHref({ flaky: true }, span),
           failuresHref: activityHref({ outcome: "fail" }, span),
-        }, days)
+        }, days, costUnknownRuns === undefined ? undefined : { costUnknownRuns })
       : [],
   );
-  const highlight = $derived.by((): [number, number] | undefined => {
-    if (!span || !days) return undefined;
-    const from = days.findIndex((d) => d.day >= span.from);
-    const after = days.findIndex((d) => d.day > span.to);
-    const to = (after < 0 ? days.length : after) - 1;
-    return from >= 0 && to >= from ? [from, to] : undefined;
-  });
+  const highlight = $derived(span && days ? pickedRange(days, query.data?.days) : undefined);
   const note = $derived(summary ? summaryNote(summary) : undefined);
   const label = $derived(summary?.previous ? deltaLabel(summary.previous) : undefined);
 </script>

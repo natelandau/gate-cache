@@ -69,7 +69,7 @@
         </dt>
         <dd class="value" class:danger={stat.tone === "danger"} class:flaky={stat.tone === "flaky"}>
           {#key stat.value}
-            <span class="swap" in:fly={{ y: 3, duration: reduced ? 0 : 200 }}>
+            <span class="swap" title={stat.value} in:fly={{ y: 3, duration: reduced ? 0 : 200 }}>
               {#if stat.href}
                 <a href={stat.href}>{#each valueParts(stat.value) as part, i (i)}{#if part.unit}<span class="u">{part.text}</span>{:else}{part.text}{/if}{/each}</a>
               {:else}
@@ -88,7 +88,7 @@
             </span>{#if deltaLabel}{" "}<span class="vs">{deltaLabel}</span>{/if}
           </dd>
         {/if}
-        <dd class="hint" title={stat.hint}>{stat.hint ?? ""}</dd>
+        <dd class="hint" title={stat.hint} aria-hidden={stat.hint ? undefined : "true"}>{stat.hint ?? ""}</dd>
         {#if stat.spark}
           <dd class="spark-cell"><Sparkline values={stat.spark.values} color={stat.spark.color} {highlight} /></dd>
         {/if}
@@ -163,7 +163,9 @@
   }
 
   .swap {
-    display: inline-block;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .value a {

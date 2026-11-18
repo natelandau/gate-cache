@@ -76,7 +76,7 @@ Motion explains a change. It never decorates, and nothing animates when a page f
 | `--ease`     | `cubic-bezier(.2,0,.38,.9)`   | Most transitions                                              |
 | `--ease-in`  | `cubic-bezier(0,0,.38,.9)`    | Elements that enter                                           |
 
-The keyframes `value-swap`, `fade-in`, `shimmer`, and `pulse` live in `src/app.css`. The live dot in the top bar is the only looping animation. Loading skeletons (`Skeleton`) stay invisible for 200ms, so a fast load never flashes them. A global rule turns every CSS animation and transition off under `prefers-reduced-motion`. A Svelte transition, such as the value swap in `StatStrip`, must read `prefers-reduced-motion` itself and set its duration to 0.
+The keyframes `fade-in` and `pulse` live in `src/app.css`. The live dot in the top bar is the only looping animation. Loading skeletons (`Skeleton`) are still blocks that stay invisible for 200ms, so a fast load never flashes them. A global rule turns every CSS animation and transition off under `prefers-reduced-motion`. A Svelte transition, such as the value swap in `StatStrip`, must read `prefers-reduced-motion` itself and set its duration to 0.
 
 ## Palette
 
@@ -97,7 +97,7 @@ Each role token except `--focus` and the chart tokens has a `-soft` partner, suc
 
 A chart that splits a total by gate, such as Time spent, colors the gates with `--chart-series-1` to `--chart-series-5` in rank order, and uses `--chart-neutral` gray for Other. Get a color with `seriesColor` in `src/lib/spent.ts`. The five colors are blue, magenta, teal, violet, and cyan. They avoid green, red, and amber, because those colors mean saved, failures, and warnings.
 
-The set passes the dataviz palette checks in both themes. Teal next to magenta is close for readers with deuteranopia, so a gate chart always names each part in a legend and in its tooltip. Stacked segments touch with no gap or stroke between them.
+Neighbors in rank order pass the dataviz palette checks in both themes, and teal next to magenta is the closest pair for readers with deuteranopia. Pairs that are not neighbors are close: teal and cyan (3 and 5) for every reader, and blue and violet (1 and 4) and magenta and cyan (2 and 5) for readers with deuteranopia. A stacked chart puts only neighbors side by side. A gate chart always names each part in a legend and in its tooltip, so color never identifies a gate alone. Stacked segments touch with no gap or stroke between them.
 
 ### Heatmap ramps
 
@@ -118,7 +118,7 @@ These rules keep the palette readable and consistent:
 1. Never write a hex value or `rgb()` in a component. Use a token from `src/app.css`. If no token fits, add one there with a light value and a dark value. Light values live under `:root`, and dark values live under `:root[data-theme="dark"]`.
 2. Use the role token (`--accent`, `--danger`, and so on) for text, icons, and borders. The palette slots are mid-tones, and they are too light for small text on white. The role tokens are darker shades in light mode and lighter shades in dark mode, and each one reaches 4.5:1 contrast on `--bg`, `--surface`, `--surface-sunken`, `--surface-hover`, and its `-soft` background.
 3. Use a palette slot directly only for chart marks, dots, and the focus ring. Time saved is green, runs are blue, and failures are red in every chart, bar, sparkline, and heatmap.
-4. Never show blue (`100`) and violet (`200`) as two series in one chart. Readers with protanopia cannot tell them apart.
+4. Never show blue (`100`) and violet (`200`) as two series in one chart. Readers with protanopia cannot tell them apart. The gate series are the one exception: they put blue and violet at ranks 1 and 4, never side by side, and name every part in a legend and a tooltip.
 5. Never let color carry meaning alone. A badge has a text label, a chart has a legend and a screen-reader table, a delta chip has an arrow icon and screen-reader text, and a count has a label. A picked chart mark gets an outline or ring, the other marks dim, and `aria-pressed` or `aria-selected` states the pick.
 6. Values, labels, and legends use the text tokens, never a series color. A colored swatch or bar beside them carries the identity.
 7. If you add a token, follow the derivation rule in the comment at the top of `src/app.css`, then measure the contrast of each new text token in both themes and record it in that comment.

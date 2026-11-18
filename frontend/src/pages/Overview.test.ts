@@ -145,4 +145,11 @@ describe("Overview", () => {
     expect(body).toMatch(/<h1[^>]*>Overview<\/h1>/);
     expect(body).toMatch(/class="subtitle[^"]*">api-server · /);
   });
+
+  it("tells the reader how to pick days on the daily chart", () => {
+    const { body } = render(Overview, {
+      props: { query: query({ summary, days }), repoLabel: null },
+    });
+    expect(body).toMatch(/<footer[^>]*>[\s\S]*?Click a day to scope the page\. Drag across days to pick a range\./);
+  });
 });

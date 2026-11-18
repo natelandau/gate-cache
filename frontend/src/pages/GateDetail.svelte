@@ -218,8 +218,8 @@
 
 {#snippet when(e: Recent)}{formatRelative(e.ts, clock.now)}{/snippet}
 {#snippet outcome(e: Recent)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} />{/snippet}
-{#snippet tree(e: Recent)}<span class="tree">{shortTree(e.tree)}</span>{/snippet}
-{#snippet flakyTree(t: FlakyTree)}<span class="tree">{shortTree(t.tree)}</span>{/snippet}
+{#snippet tree(e: Recent)}<span class="tree-hash">{shortTree(e.tree)}</span>{/snippet}
+{#snippet flakyTree(t: FlakyTree)}<span class="tree-hash">{shortTree(t.tree)}</span>{/snippet}
 
 <svelte:window onkeydown={onWindowKeydown} />
 

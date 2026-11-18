@@ -41,4 +41,7 @@
   {#if query.data}
     <DailyChart days={query.data.days} selected={span} {onselect} />
   {/if}
+  {#snippet footer()}
+    <span>Click a day to scope the page. Drag across days to pick a range.</span>
+  {/snippet}
 </Module>

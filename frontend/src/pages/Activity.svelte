@@ -21,6 +21,7 @@
   import { eventKeys, eventTitle, OUTCOMES, ranText, savedText } from "../lib/events";
   import TimeValue from "../lib/components/TimeValue.svelte";
   import PageHeader from "../lib/components/PageHeader.svelte";
+  import { rangeLabel } from "../lib/range";
   import { formatCount, formatRelative, formatTimestamp } from "../lib/format";
   import { createQuery } from "../lib/query.svelte";
   import { navigate } from "../lib/router.svelte";
@@ -111,6 +112,7 @@
   ];
 
   let heading: HTMLElement | undefined = $state();
+  const subtitle = $derived(`${repoLabel ?? "All repos"} · ${rangeLabel(filters.range)}`);
 
   async function loadMore(): Promise<void> {
     const live = first.data;
@@ -160,7 +162,7 @@
 
 <section class="page" aria-labelledby="activity-title">
   <div class="head">
-    <PageHeader title="Activity" headingId="activity-title" subtitle="Every run, newest first" bind:heading />
+    <PageHeader title="Activity" headingId="activity-title" {subtitle} bind:heading />
     {#if view.newer}
       <Button tone="accent" onclick={showLatest}>New runs. Show latest</Button>
     {/if}

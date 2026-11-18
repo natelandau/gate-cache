@@ -36,4 +36,8 @@ describe("app.css tokens", () => {
     expect(css).not.toContain("text-transform: uppercase");
     expect(css).not.toContain("--font-mono");
   });
+
+  it("keeps no keyframes that nothing uses", () => {
+    expect(css).not.toContain("@keyframes value-swap");
+  });
 });

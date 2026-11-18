@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Summary } from "./api";
 import type { DayBucket } from "./fill";
-import { summaryNote, summaryStats } from "./summary";
+import { pickedRange, summaryNote, summaryStats } from "./summary";
 
 const base: Summary = {
   time_saved: 90,
@@ -157,12 +157,38 @@ describe("summaryStats sparklines", () => {
     expect(spark("Skip rate")?.values).toEqual([0.5, null]);
   });
 
-  it("draws no net saved sparkline when some runs did not record their cost", () => {
+  it("draws no net saved sparkline when some runs in the plotted range did not record their cost", () => {
     expect(spark("Net saved", summaryStats({ ...base, cost_unknown_runs: 3 }, {}, daily))).toBeUndefined();
+    // The picked days are clean, but the whole range the sparkline plots is not.
+    const scoped = summaryStats(base, {}, daily, { costUnknownRuns: 2 });
+    expect(spark("Net saved", scoped)).toBeUndefined();
   });
 
   it("draws no flaky gates sparkline, and none at all without daily data", () => {
     expect(spark("Flaky gates")).toBeUndefined();
     expect(summaryStats(base).every((s) => s.spark === undefined)).toBe(true);
+  });
+});
+
+describe("pickedRange", () => {
+  const days = ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"].map((day) => ({
+    day,
+    saved: 0,
+    failures: 0,
+    runs: 0,
+    spent: 0,
+    skips: 0,
+    ran: 0,
+    cost: 0,
+  }));
+
+  it("returns the indexes of the scoped days within the whole range", () => {
+    expect(pickedRange(days, days.slice(1, 3))).toEqual([1, 2]);
+  });
+
+  it("returns nothing until scoped days have loaded, or when they fall outside", () => {
+    expect(pickedRange(days, undefined)).toBeUndefined();
+    expect(pickedRange(days, [])).toBeUndefined();
+    expect(pickedRange(days, [{ ...days[0]!, day: "2027-01-01" }])).toBeUndefined();
   });
 });

@@ -4,6 +4,7 @@
   import Notice from "../lib/components/Notice.svelte";
   import OutcomeBadge from "../lib/components/OutcomeBadge.svelte";
   import PageHeader from "../lib/components/PageHeader.svelte";
+  import { rangeLabel } from "../lib/range";
   import { eventTitle, shortTree, timeText } from "../lib/events";
   import { formatRelative, formatTimestamp, plural } from "../lib/format";
   import { gateKey, tally } from "../lib/gates";
@@ -19,15 +20,15 @@
   let { repoLabel }: Props = $props();
 
   const query = createQuery((signal) => getFlaky({ signal }));
+  const subtitle = $derived(`${repoLabel ?? "All repos"} · ${rangeLabel(filters.range)}`);
 
 </script>
 
 <section class="page" aria-labelledby="flaky-title">
-  <PageHeader
-    title="Flaky"
-    headingId="flaky-title"
-    subtitle="Gates where the same tree both failed and passed. Runs are oldest first."
-  />
+  <div>
+    <PageHeader title="Flaky" headingId="flaky-title" {subtitle} />
+    <p class="lede">Gates where the same tree both failed and passed. Runs are oldest first.</p>
+  </div>
 
   {#if query.error}
     <Notice tone="error">Could not load flaky gates: {query.error.message}</Notice>
@@ -64,7 +65,7 @@
                 {@const counts = tally(tree.runs)}
                 <li class="tree">
                   <div class="tree-head">
-                    <span class="tree" title={tree.tree}>{shortTree(tree.tree)}</span>
+                    <span class="tree-hash" title={tree.tree}>{shortTree(tree.tree)}</span>
                     <span class="muted">
                       {plural(counts.fails, "fail", "fails")}, {plural(counts.passes, "pass", "passes")}
                     </span>
@@ -94,6 +95,12 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+  }
+
+  .lede {
+    margin: var(--space-2) 0 0;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
   }
 
   .definition {

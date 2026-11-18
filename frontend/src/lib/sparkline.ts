@@ -16,10 +16,14 @@ export function sparkPath(
   height: number,
 ): { line: string; area: string } {
   if (values.length === 0) return { line: "", area: "" };
-  const max = Math.max(0, ...values.map((v) => v ?? 0));
+  const known = values.filter((v): v is number => v !== null);
+  const max = Math.max(0, ...known);
+  // Net saved goes below zero on days that cost more than they saved, so scale from the
+  // lowest value, not from zero, to keep every point inside the box.
+  const min = Math.min(0, ...known);
   const step = values.length > 1 ? width / (values.length - 1) : 0;
   const bottom = height - PAD_BOTTOM;
-  const y = (v: number) => (max > 0 ? bottom - (v / max) * (bottom - PAD_TOP) : bottom);
+  const y = (v: number) => (max > min ? bottom - ((v - min) / (max - min)) * (bottom - PAD_TOP) : bottom);
   const runs: [number, number][][] = [];
   let current: [number, number][] | null = null;
   values.forEach((v, i) => {

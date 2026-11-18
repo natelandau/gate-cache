@@ -99,6 +99,14 @@
     return value === null || value === undefined ? " " : String(value);
   }
 
+  // A text cell can be cut by its ellipsis, so its title carries the full text. A snippet cell
+  // is titled with its raw value when that value is a string, such as a gate name.
+  function cellTitle(row: T, column: Column<T>): string | undefined {
+    if (!column.cell) return cellText(row, column);
+    const value = raw(row, column.key);
+    return typeof value === "string" ? value : undefined;
+  }
+
   function isInteractive(target: EventTarget | null): boolean {
     return target instanceof Element && target.closest("a, button, input, select, textarea") !== null;
   }
@@ -158,7 +166,7 @@
             {#each columns as column (column.key)}
               <td
                 class={column.align === "right" ? "right num" : "left"}
-                title={column.title ? column.title(row) : column.cell || column.align === "right" ? undefined : cellText(row, column)}
+                title={column.title ? column.title(row) : column.align === "right" ? undefined : cellTitle(row, column)}
               >
                 {#if column.cell}
                   {@render column.cell(row)}

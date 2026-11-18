@@ -61,7 +61,12 @@
     {/if}
   </PageHeader>
 
-  <StatsModule query={scopedQuery} {span} days={query.data?.days} />
+  <StatsModule
+    query={scopedQuery}
+    {span}
+    days={query.data?.days}
+    costUnknownRuns={query.data?.summary.cost_unknown_runs}
+  />
 
   <div class="grid">
     <div class="s8"><DailyModule {query} {repoLabel} {span} onselect={pick} /></div>

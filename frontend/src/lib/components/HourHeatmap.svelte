@@ -139,8 +139,8 @@
         {/if}
       {/each}
       <span class="day-total" aria-hidden="true"
-        ><i style:width="{weekdayMax ? (byWeekday[weekday]! / weekdayMax) * 34 : 0}px" style:background={BAR_COLORS[metric]}
-        ></i><span>{formatHeatValue(metric, byWeekday[weekday]!)}</span></span
+        ><i style:width="{weekdayMax ? (byWeekday[weekday]! / weekdayMax) * 28 : 0}px" style:background={BAR_COLORS[metric]}
+        ></i><span class="day-value">{formatHeatValue(metric, byWeekday[weekday]!)}</span></span
       >
     {/each}
   </div>
@@ -178,7 +178,7 @@
 
   .grid {
     display: grid;
-    grid-template-columns: 30px repeat(24, minmax(0, 1fr)) 72px;
+    grid-template-columns: 30px repeat(24, minmax(0, 1fr)) 84px;
     gap: 3px;
     align-items: center;
     font-size: 11px;
@@ -239,6 +239,7 @@
     align-items: center;
     gap: 6px;
     min-width: 0;
+    overflow: hidden;
     padding-left: 6px;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
@@ -249,6 +250,11 @@
     flex: none;
     height: 8px;
     border-radius: 0 2px 2px 0;
+  }
+
+  .day-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .foot {

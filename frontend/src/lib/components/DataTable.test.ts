@@ -55,6 +55,20 @@ describe("DataTable", () => {
     expect(body).toContain(`title="${long}"`);
   });
 
+  it("titles a snippet cell with its text value, so a cut gate name can still be read", () => {
+    const long = "a-very-long-gate-name-drawn-by-a-snippet-that-will-not-fit-at-all";
+    const cell = createRawSnippet(() => ({ render: () => "<b>gate</b>" }));
+    const { body } = render(DataTable<Row>, {
+      props: {
+        label: "Gates",
+        rows: [{ name: long, runs: 1 }],
+        columns: [{ key: "name", label: "Gate", cell }, columns[1]!],
+        rowKey: (r: Row) => r.name,
+      },
+    });
+    expect(body).toContain(`title="${long}"`);
+  });
+
   it("renders the empty snippet when there are no rows", () => {
     const { body } = render(DataTable<Row>, {
       props: {
