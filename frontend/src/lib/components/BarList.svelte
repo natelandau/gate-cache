@@ -14,6 +14,7 @@
   - `onpick`: called with a row's bar when its name is clicked
 -->
 <script lang="ts" module>
+  import Meter from "./Meter.svelte";
   /** One row of a `BarList`. */
   export interface Bar<T> {
     /** Unique among the rows. */
@@ -49,8 +50,8 @@
 
   const max = $derived(Math.max(0, ...rows.map((row) => row.value)));
 
-  function width(value: number): string {
-    return max > 0 ? `${(value / max) * 100}%` : "0%";
+  function share(value: number): number {
+    return max > 0 ? value / max : 0;
   }
 </script>
 
@@ -75,13 +76,7 @@
             </button>
           </th>
           <td class="bar-cell" aria-hidden="true">
-            <div class="track">
-              <div
-                class="fill"
-                style:width={width(bar.value)}
-                style:background={bar.dimmed ? "var(--chart-neutral)" : FILLS[color]}
-              ></div>
-            </div>
+            <Meter share={share(bar.value)} color={bar.dimmed ? "var(--chart-neutral)" : FILLS[color]} />
           </td>
           {#each columns as column (column.label)}
             <td class="num">{column.text(bar.row)}</td>
@@ -170,18 +165,6 @@
     min-width: 80px;
   }
 
-  .track {
-    height: 6px;
-    border-radius: 2px;
-    background: var(--track);
-    overflow: hidden;
-  }
-
-  .fill {
-    height: 100%;
-    border-radius: 2px;
-    transition: width var(--dur-slow) var(--ease);
-  }
 
   .dimmed .name button,
   .dimmed td {

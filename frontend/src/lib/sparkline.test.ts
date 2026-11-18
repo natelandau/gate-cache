@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sparkPath, valueParts } from "./sparkline";
+import { sparkPath } from "./sparkline";
 
 const ys = (path: string) => [...path.matchAll(/[ML]\s*[\d.]+\s+([\d.]+)/g)].map((m) => Number(m[1]));
 
@@ -37,29 +37,5 @@ describe("sparkPath", () => {
     const points = ys(sparkPath([0, 5, 10], 200, 34).line);
     expect(points[2]).toBeLessThan(points[1]!);
     expect(points[1]).toBeLessThan(points[0]!);
-  });
-});
-
-describe("valueParts", () => {
-  it("splits units from the digits of a duration", () => {
-    expect(valueParts("6h 38m")).toEqual([
-      { text: "6", unit: false },
-      { text: "h", unit: true },
-      { text: " ", unit: false },
-      { text: "38", unit: false },
-      { text: "m", unit: true },
-    ]);
-  });
-
-  it("treats a percent sign as a unit and leaves a plain count whole", () => {
-    expect(valueParts("61%")).toEqual([
-      { text: "61", unit: false },
-      { text: "%", unit: true },
-    ]);
-    expect(valueParts("1,705")).toEqual([{ text: "1,705", unit: false }]);
-  });
-
-  it("keeps a sign with its number", () => {
-    expect(valueParts("−2m")[0]).toEqual({ text: "−2", unit: false });
   });
 });

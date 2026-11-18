@@ -13,20 +13,15 @@ export function calendarLayout(days: string[]): "month" | "weeks" {
   return days.length <= MONTH_MAX_DAYS ? "month" : "weeks";
 }
 
-/** Return the weekday of a `YYYY-MM-DD` day, 0 for Monday through 6 for Sunday. */
-function mondayIndex(day: string): number {
-  return (new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7;
-}
-
 /**
- * Return `days` as Monday-first weeks, one array of seven per week, with null padding
- * before the first day and after the last.
+ * Split `items`, one per day in order, into weeks of seven, with `lead` blank cells before the
+ * first day and blanks after the last to fill its week.
  */
-export function monthGrid(days: string[]): (string | null)[][] {
-  if (days.length === 0) return [];
-  const cells: (string | null)[] = [...Array<null>(mondayIndex(days[0]!)).fill(null), ...days];
+export function chunkWeeks<T>(items: T[], lead: number): (T | null)[][] {
+  if (items.length === 0) return [];
+  const cells: (T | null)[] = [...Array<null>(lead).fill(null), ...items];
   while (cells.length % 7 !== 0) cells.push(null);
-  const weeks: (string | null)[][] = [];
+  const weeks: (T | null)[][] = [];
   for (let start = 0; start < cells.length; start += 7) weeks.push(cells.slice(start, start + 7));
   return weeks;
 }

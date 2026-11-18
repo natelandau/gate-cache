@@ -4,16 +4,18 @@
   inline bar, and the value at the right. A row with `onselect` is a button.
 
   Props:
-  - `items`: the rows, best first; `tone` colors the value ("accent" keeps the text color,
-    "danger" marks failures); `share` (0 to 1) draws an inline bar in `barColor`
+  - `items`: the rows, best first; `tone: "danger"` marks a failure count; `share` (0 to 1)
+    draws an inline bar in `barColor`
 -->
 <script lang="ts">
+  import Meter from "./Meter.svelte";
+
   interface Item {
     key: string;
     title: string;
     subtitle: string;
     value: string;
-    tone?: "accent" | "danger";
+    tone?: "danger";
     share?: number;
     barColor?: string;
     onselect?: () => void;
@@ -36,17 +38,14 @@
           <span class="subtitle" title={item.subtitle}>{item.subtitle}</span>
         </span>
         {#if item.share !== undefined}
-          <span class="track" aria-hidden="true"
-            ><span class="fill" style:width="{Math.round(item.share * 100)}%" style:background={item.barColor ?? "var(--chart-runs)"}
-            ></span></span
-          >
+          <Meter share={item.share} color={item.barColor ?? "var(--chart-runs)"} />
         {/if}
-        <span class="value {item.tone ?? 'accent'}">{item.value}</span>
+        <span class="value" class:danger={item.tone === "danger"}>{item.value}</span>
       {/snippet}
       {#if item.onselect}
-        <button type="button" class="row" onclick={item.onselect}>{@render row()}</button>
+        <button type="button" class="row" class:plain={item.share === undefined} onclick={item.onselect}>{@render row()}</button>
       {:else}
-        <div class="row">{@render row()}</div>
+        <div class="row" class:plain={item.share === undefined}>{@render row()}</div>
       {/if}
     </li>
   {/each}
@@ -85,7 +84,7 @@
     transition: background-color var(--dur-fast) var(--ease);
   }
 
-  .row:not(:has(.track)) {
+  .row.plain {
     grid-template-columns: 20px minmax(0, 1fr) auto;
   }
 
@@ -131,20 +130,6 @@
     white-space: nowrap;
   }
 
-  .track {
-    display: block;
-    height: 6px;
-    border-radius: 2px;
-    background: var(--track);
-    overflow: hidden;
-  }
-
-  .fill {
-    display: block;
-    height: 100%;
-    border-radius: 2px;
-    transition: width var(--dur-slow) var(--ease);
-  }
 
   .value {
     font-weight: 500;

@@ -16,12 +16,10 @@
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import ArrowUpRight from "@lucide/svelte/icons/arrow-up-right";
   import Calendar from "@lucide/svelte/icons/calendar";
-  import CalendarDays from "@lucide/svelte/icons/calendar-days";
   import CheckCheck from "@lucide/svelte/icons/check-check";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
   import FolderGit2 from "@lucide/svelte/icons/folder-git-2";
-  import Hourglass from "@lucide/svelte/icons/hourglass";
   import Inbox from "@lucide/svelte/icons/inbox";
   import Info from "@lucide/svelte/icons/info";
   import LayoutDashboard from "@lucide/svelte/icons/layout-dashboard";
@@ -41,12 +39,10 @@
     "arrow-up": ArrowUp,
     "arrow-up-right": ArrowUpRight,
     calendar: Calendar,
-    "calendar-days": CalendarDays,
     "check-check": CheckCheck,
     "chevron-down": ChevronDown,
     "circle-alert": CircleAlert,
     "folder-git-2": FolderGit2,
-    hourglass: Hourglass,
     inbox: Inbox,
     info: Info,
     "layout-dashboard": LayoutDashboard,

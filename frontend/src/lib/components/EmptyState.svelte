@@ -5,25 +5,23 @@
   Props:
   - `title`: one short sentence, such as "No runs in this range"
   - `detail`: optional hint for what to do next
-  - `icon`: optional Lucide icon name shown above the title (default "inbox")
   - `children`: optional actions or extra markup below the detail
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import Icon, { type IconName } from "./Icon.svelte";
+  import Icon from "./Icon.svelte";
 
   interface Props {
     title: string;
     detail?: string;
-    icon?: IconName;
     children?: Snippet;
   }
 
-  let { title, detail, icon = "inbox", children }: Props = $props();
+  let { title, detail, children }: Props = $props();
 </script>
 
 <div class="empty">
-  <span class="tile"><Icon name={icon} size={18} /></span>
+  <span class="tile"><Icon name="inbox" size={18} /></span>
   <p class="title">{title}</p>
   {#if detail}<p class="detail">{detail}</p>{/if}
   {#if children}<div class="extra">{@render children()}</div>{/if}

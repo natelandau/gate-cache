@@ -16,8 +16,8 @@ describe("RankedList", () => {
     expect(body).toMatch(/class="rank[^"]*"[^>]*>1</);
     expect(body).toMatch(/class="rank[^"]*"[^>]*>2</);
     expect(body).toContain("api-server");
-    expect(body).toMatch(/class="value accent[^"]*"[^>]*>1h 2m</);
-    expect(body).toMatch(/class="value danger[^"]*"[^>]*>4</);
+    expect(body).toMatch(/class="value[^"]*"[^>]*>1h 2m</);
+    expect(body).toMatch(/class="value[^"]*\bdanger\b[^"]*"[^>]*>4</);
   });
 
   it("draws an inline bar for each row's share of the largest", () => {

@@ -8,7 +8,6 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import Icon from "../../lib/components/Icon.svelte";
   import { getActivity, spanScope, type EventRow } from "../../lib/api";
   import DataTable, { type Column } from "../../lib/components/DataTable.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -72,6 +71,7 @@
 </script>
 
 <Module
+  more={{ href: activityHref({ outcome: "fail" }, span), label: "All failures in Activity" }}
   title="Recent failures"
   titleId="failures-title"
   noun="failures"
@@ -91,7 +91,4 @@
     rowLabel={(e) => `Open ${e.name}`}
     busy={query.loading}
   />
-  {#snippet footer()}
-    <a class="more-link" href={activityHref({ outcome: "fail" }, span)}>All failures in Activity <Icon name="arrow-right" size={14} /></a>
-  {/snippet}
 </Module>

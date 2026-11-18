@@ -22,14 +22,19 @@ export const OUTCOMES: Record<Outcome, { label: string; tone: OutcomeTone; descr
   uncached: { label: "Uncached", tone: "neutral", description: "Ran without the cache." },
 };
 
+/** The time text of a reported failure, which did not run its command. */
+export const NOT_RERUN = "not rerun";
+/** The time text when no time was recorded. */
+export const UNKNOWN_TIME = "unknown";
+
 /**
  * Return the run time of an event for a "Ran for" column: "not rerun" for a reported failure,
  * null for a skip, which did not run, and "unknown" when no time was recorded.
  */
 export function ranText(event: EventRow): string | null {
-  if (event.reported) return "not rerun";
+  if (event.reported) return NOT_RERUN;
   if (event.outcome === "skip") return null;
-  return event.duration === null ? "unknown" : formatDuration(event.duration);
+  return event.duration === null ? UNKNOWN_TIME : formatDuration(event.duration);
 }
 
 /**
@@ -38,7 +43,7 @@ export function ranText(event: EventRow): string | null {
  */
 export function savedText(event: EventRow): string | null {
   if (event.outcome !== "skip") return null;
-  return event.saved === null ? "unknown" : formatDuration(event.saved);
+  return event.saved === null ? UNKNOWN_TIME : formatDuration(event.saved);
 }
 
 /** Return "saved 1m 31s" for a skip, "ran 54s" for a run, or "not rerun" for a reported failure, as one phrase for hover text. */

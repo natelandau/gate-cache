@@ -13,6 +13,8 @@
   - `busy`: dims the values while newer numbers load
   - `highlight`: optional [from, to] day indexes the page is scoped to, kept bright on every
     sparkline
+  - `placeholders`: when set and `stats` is empty, that many skeleton cards show while the
+    numbers load
 -->
 <script lang="ts" module>
   export interface Stat {
@@ -25,17 +27,19 @@
     tone?: "default" | "danger" | "flaky";
     href?: string;
     /** Change against the previous window; its arrow and text carry the meaning, not the tone. */
-    delta?: { text: string; tone: "good" | "bad" | "neutral" };
-    /** One value per day, null for a day with nothing to plot, and the line's color token. */
+    delta?: { text: string; tone: "good" | "bad" | "neutral"; dir: "up" | "down" | null };
+    /** One value per day, null for a day with nothing to plot, and the line's CSS color. */
     spark?: { values: (number | null)[]; color: string };
   }
 </script>
 
 <script lang="ts">
   import { fly } from "svelte/transition";
-  import { valueParts } from "../sparkline";
   import Icon from "./Icon.svelte";
+  import Skeleton from "./Skeleton.svelte";
   import Sparkline from "./Sparkline.svelte";
+  import TrendBadge from "./TrendBadge.svelte";
+  import UnitValue from "./UnitValue.svelte";
 
   interface Props {
     stats: Stat[];
@@ -43,23 +47,27 @@
     deltaLabel?: string;
     busy?: boolean;
     highlight?: [from: number, to: number];
+    placeholders?: number;
   }
 
-  let { stats, note, deltaLabel, busy = false, highlight }: Props = $props();
+  let { stats, note, deltaLabel, busy = false, highlight, placeholders }: Props = $props();
 
   const reduced =
     typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  /** Split "▲ 6%" into its direction and amount, so the arrow can be an icon. */
-  function direction(text: string): { dir: "up" | "down" | null; amount: string } {
-    if (text.startsWith("▲")) return { dir: "up", amount: text.slice(1).trim() };
-    if (text.startsWith("▼")) return { dir: "down", amount: text.slice(1).trim() };
-    return { dir: null, amount: text };
-  }
 </script>
 
 <div class="strip-wrap" aria-busy={busy}>
   <dl class="strip" class:busy>
+    {#if stats.length === 0 && placeholders}
+      {#each { length: placeholders }, i (i)}
+        <div class="card placeholder">
+          <Skeleton height={12} width="60%" />
+          <Skeleton height={28} width="75%" />
+          <Skeleton height={12} width="85%" />
+        </div>
+      {/each}
+    {/if}
     {#each stats as stat (stat.label)}
       <div class="card" class:linked={!!stat.href}>
         <dt>
@@ -71,21 +79,18 @@
           {#key stat.value}
             <span class="swap" title={stat.value} in:fly={{ y: 3, duration: reduced ? 0 : 200 }}>
               {#if stat.href}
-                <a href={stat.href}>{#each valueParts(stat.value) as part, i (i)}{#if part.unit}<span class="u">{part.text}</span>{:else}{part.text}{/if}{/each}</a>
+                <a href={stat.href}><UnitValue value={stat.value} /></a>
               {:else}
-                {#each valueParts(stat.value) as part, i (i)}{#if part.unit}<span class="u">{part.text}</span>{:else}{part.text}{/if}{/each}
+                <UnitValue value={stat.value} />
               {/if}
             </span>
           {/key}
         </dd>
         {#if stat.delta}
-          {@const d = direction(stat.delta.text)}
           <dd class="meta">
-            <span class="delta {stat.delta.tone}">
-              {#if d.dir}<Icon name={d.dir === "up" ? "trending-up" : "trending-down"} size={12} /><span
-                  class="visually-hidden">{d.dir === "up" ? "Up" : "Down"}</span
-                >{/if}{d.amount}
-            </span>{#if deltaLabel}{" "}<span class="vs">{deltaLabel}</span>{/if}
+            <TrendBadge dir={stat.delta.dir} text={stat.delta.text} tone={stat.delta.tone} />{#if deltaLabel}<span
+                class="vs">{deltaLabel}</span
+              >{/if}
           </dd>
         {/if}
         <dd class="hint" title={stat.hint} aria-hidden={stat.hint ? undefined : "true"}>{stat.hint ?? ""}</dd>
@@ -116,6 +121,10 @@
     background: var(--surface);
     box-shadow: var(--ring);
     transition: box-shadow var(--dur-fast) var(--ease);
+  }
+
+  .card.placeholder {
+    gap: 10px;
   }
 
   .card.linked:hover {
@@ -190,17 +199,6 @@
     outline-offset: 1px;
   }
 
-  .u {
-    margin: 0 3px 0 1px;
-    color: var(--text-muted);
-    font-size: 0.6em;
-    font-weight: 500;
-    letter-spacing: 0;
-  }
-
-  .u:last-child {
-    margin-right: 0;
-  }
 
   .danger {
     color: var(--danger);
@@ -226,28 +224,6 @@
     text-overflow: ellipsis;
   }
 
-  .delta {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    height: 20px;
-    padding: 0 6px;
-    border-radius: var(--radius-chip);
-    background: var(--neutral-soft);
-    color: var(--text-muted);
-    font-weight: 500;
-  }
-
-  .delta.good {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-
-  .delta.bad {
-    background: var(--danger-soft);
-    color: var(--danger);
-  }
 
   .hint {
     min-height: 16px;

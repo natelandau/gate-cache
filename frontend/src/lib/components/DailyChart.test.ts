@@ -1,5 +1,5 @@
-import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
+import { html } from "../render.test-utils";
 import DailyChart from "./DailyChart.svelte";
 
 const days = [
@@ -10,24 +10,24 @@ const days = [
 
 describe("DailyChart", () => {
   it("leads with the range's time saved and failure count", () => {
-    const { body } = render(DailyChart, { props: { days } });
-    expect(body).toMatch(/class="headline[^"]*"[\s\S]*?3(<!--[^>]*-->)*<span class="u[^"]*">m<\/span>/);
+    const body = html(DailyChart, { props: { days } });
+    expect(body).toMatch(/class="headline[^"]*"[\s\S]*?3<span class="u[^"]*">m<\/span>/);
     expect(body).toMatch(/class="fails[^"]*"[^>]*>1</);
   });
 
   it("names the two series in a legend instead of over the axis", () => {
-    const { body } = render(DailyChart, { props: { days } });
+    const body = html(DailyChart, { props: { days } });
     expect(body).toMatch(/class="legend[\s\S]*?Time saved[\s\S]*?Failures/);
     expect(body).not.toContain("panel-label");
   });
 
   it("has no picking layer without a select handler", () => {
-    const { body } = render(DailyChart, { props: { days } });
+    const body = html(DailyChart, { props: { days } });
     expect(body).not.toContain('class="picker');
   });
 
   it("marks picked days with a ring and dims the rest", () => {
-    const { body } = render(DailyChart, {
+    const body = html(DailyChart, {
       props: { days, selected: { from: "2026-11-04", to: "2026-11-05" }, onselect: () => {} },
     });
     expect(body).toMatch(/role="listbox"/);
@@ -37,7 +37,7 @@ describe("DailyChart", () => {
   });
 
   it("names each day as an option with its values and picked state", () => {
-    const { body } = render(DailyChart, {
+    const body = html(DailyChart, {
       props: { days, selected: { from: "2026-11-04", to: "2026-11-04" }, onselect: () => {} },
     });
     expect(body.match(/role="option"/g)?.length).toBe(3);

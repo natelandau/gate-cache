@@ -26,7 +26,7 @@
 
 <div class="head">
   <div class="titles">
-    <h1 id={headingId} class="page-title" tabindex="-1" bind:this={heading}>{title}</h1>
+    <h1 id={headingId} tabindex="-1" bind:this={heading}>{title}</h1>
     {#if subtitle}<p class="subtitle">{subtitle}</p>{/if}
   </div>
   {#if children}<div class="chips">{@render children()}</div>{/if}
@@ -42,6 +42,13 @@
 
   .titles {
     min-width: 0;
+  }
+
+  h1 {
+    font-size: var(--text-h1);
+    font-weight: 600;
+    letter-spacing: var(--track-h1);
+    line-height: 28px;
   }
 
   h1:focus {

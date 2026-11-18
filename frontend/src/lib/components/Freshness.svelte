@@ -113,4 +113,15 @@
   .error .label {
     color: var(--danger);
   }
+
+  @keyframes pulse {
+    from {
+      transform: scale(1);
+      opacity: 0.6;
+    }
+    to {
+      transform: scale(2.8);
+      opacity: 0;
+    }
+  }
 </style>

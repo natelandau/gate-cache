@@ -21,11 +21,10 @@
   import { eventKeys, eventTitle, OUTCOMES, ranText, savedText } from "../lib/events";
   import TimeValue from "../lib/components/TimeValue.svelte";
   import PageHeader from "../lib/components/PageHeader.svelte";
-  import { rangeLabel } from "../lib/range";
   import { formatCount, formatRelative, formatTimestamp } from "../lib/format";
   import { createQuery } from "../lib/query.svelte";
   import { navigate } from "../lib/router.svelte";
-  import { emptyTitle } from "../lib/scope";
+  import { emptyTitle, scopeSubtitle } from "../lib/scope";
   import { clock, filters, freshness } from "../lib/state.svelte";
 
   interface Props {
@@ -104,7 +103,7 @@
       title: (e) => formatTimestamp(e.ts),
       width: "96px",
     },
-    { key: "name", label: "Gate", sortable: false, cell: gate },
+    { key: "name", label: "Gate", sortable: false, cell: gate, title: (e) => e.name },
     { key: "repo_name", label: "Repo", sortable: false, title: (e) => e.repo ?? undefined },
     { key: "outcome", label: "Outcome", sortable: false, cell: outcomeCell },
     { key: "ran", label: "Ran for", sortable: false, align: "right", cell: ranCell },
@@ -112,7 +111,7 @@
   ];
 
   let heading: HTMLElement | undefined = $state();
-  const subtitle = $derived(`${repoLabel ?? "All repos"} · ${rangeLabel(filters.range)}`);
+  const subtitle = $derived(scopeSubtitle(repoLabel, filters.range));
 
   async function loadMore(): Promise<void> {
     const live = first.data;

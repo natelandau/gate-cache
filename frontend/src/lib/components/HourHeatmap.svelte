@@ -23,6 +23,7 @@
     heatStep,
     heatValue,
     hourLabel,
+    METRIC_COLORS,
     nextActive,
     weekdayName,
     type HeatMetric,
@@ -62,11 +63,6 @@
   const hourMax = $derived(Math.max(0, ...byHour));
   const weekdayMax = $derived(Math.max(0, ...byWeekday));
   const peak = $derived(peakCell(cells, metric));
-  const BAR_COLORS: Record<HeatMetric, string> = {
-    runs: "var(--chart-runs)",
-    saved: "var(--chart-saved)",
-    fail: "var(--chart-failures)",
-  };
 
   // Cells are numbered weekday * 24 + hour, so Up and Down move a day.
   const STEPS = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -24, ArrowDown: 24 };
@@ -110,7 +106,7 @@
     <span aria-hidden="true"></span>
     {#each byHour as total, hour (hour)}
       <span class="hour-total" aria-hidden="true" title="{hourLabel(hour)}: {formatHeatValue(metric, total)}"
-        ><i style:height="{hourMax ? (total / hourMax) * 100 : 0}%" style:background={BAR_COLORS[metric]}></i></span
+        ><i style:height="{hourMax ? (total / hourMax) * 100 : 0}%" style:background={METRIC_COLORS[metric]}></i></span
       >
     {/each}
     <span aria-hidden="true"></span>
@@ -139,7 +135,7 @@
         {/if}
       {/each}
       <span class="day-total" aria-hidden="true"
-        ><i style:width="{weekdayMax ? (byWeekday[weekday]! / weekdayMax) * 28 : 0}px" style:background={BAR_COLORS[metric]}
+        ><i style:width="{weekdayMax ? (byWeekday[weekday]! / weekdayMax) * 28 : 0}px" style:background={METRIC_COLORS[metric]}
         ></i><span class="day-value">{formatHeatValue(metric, byWeekday[weekday]!)}</span></span
       >
     {/each}

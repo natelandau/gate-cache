@@ -109,10 +109,13 @@ export function spentTotals(series: SpentSeries[], rows: SpentRow[]): { items: S
     repo: s.gate ? s.gate.repo_name : "",
     color: s.color,
     gate: s.gate,
-    total: rows.reduce((sum, row) => {
-      const segment = row.segments.find((g) => g.key === s.key);
-      return sum + (segment ? segment.end - segment.start : 0);
-    }, 0),
+    // The API totals each gate over the range; only Other is summed from the days.
+    total: s.gate
+      ? s.gate.total
+      : rows.reduce((sum, row) => {
+          const segment = row.segments.find((g) => g.key === s.key);
+          return sum + (segment ? segment.end - segment.start : 0);
+        }, 0),
   }));
   return { items, total: items.reduce((sum, i) => sum + i.total, 0) };
 }

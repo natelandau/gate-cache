@@ -8,13 +8,13 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import Icon from "../../lib/components/Icon.svelte";
   import { getGates, spanScope } from "../../lib/api";
   import MetricTabs from "../../lib/components/MetricTabs.svelte";
   import Module from "../../lib/components/Module.svelte";
   import RankedList from "../../lib/components/RankedList.svelte";
   import { formatCount, formatDuration } from "../../lib/format";
   import { gateKey } from "../../lib/gates";
+  import { METRIC_COLORS } from "../../lib/heat";
   import { openGatePanel } from "../../lib/panel";
   import { createQuery } from "../../lib/query.svelte";
   import { gateRunText, rankGates, rankValue, type GateRank } from "../../lib/rank";
@@ -61,11 +61,11 @@
   );
 
   const BAR_COLORS: Record<GateRank, string> = {
-    saved: "var(--chart-saved)",
-    spent: "var(--chart-runs)",
-    runs: "var(--chart-runs)",
-    fails: "var(--chart-failures)",
-    slow: "var(--chart-runs)",
+    saved: METRIC_COLORS.saved,
+    spent: METRIC_COLORS.runs,
+    runs: METRIC_COLORS.runs,
+    fails: METRIC_COLORS.fail,
+    slow: METRIC_COLORS.runs,
   };
   const top = $derived(Math.max(0, ...ranked.map((row) => rankValue(row, by) ?? 0)));
 
@@ -80,7 +80,7 @@
         by === "saved" || by === "spent" || by === "slow"
           ? formatDuration(rankValue(row, by))
           : formatCount(rankValue(row, by) ?? 0),
-      tone: by === "fails" ? ("danger" as const) : ("accent" as const),
+      tone: by === "fails" ? ("danger" as const) : undefined,
       onselect: () => openGatePanel(row),
     })),
   );
@@ -89,6 +89,7 @@
 </script>
 
 <Module
+  more={{ href: href({ page: "gates" }), label: "All gates" }}
   title="Top gates"
   titleId="top-gates-title"
   loading={query.loading && !query.data}
@@ -106,7 +107,4 @@
     />
   {/snippet}
   <RankedList {items} />
-  {#snippet footer()}
-    <a class="more-link" href={href({ page: "gates" })}>All gates <Icon name="arrow-right" size={14} /></a>
-  {/snippet}
 </Module>

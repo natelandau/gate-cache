@@ -97,11 +97,12 @@ describe("summaryStats deltas", () => {
       "No change",
       "No change",
       "No change",
-      "▲ 100%",
+      "100%",
       "No change",
       "No change",
       "No change",
     ]);
+    expect(stats[3]?.delta?.dir).toBe("up");
   });
 });
 
@@ -149,8 +150,8 @@ describe("summaryStats sparklines", () => {
     expect(spark("Time spent")?.values).toEqual([30, 0]);
     expect(spark("Runs")?.values).toEqual([4, 0]);
     expect(spark("Failures")?.values).toEqual([1, 0]);
-    expect(spark("Time saved")?.color).toBe("--chart-saved");
-    expect(spark("Failures")?.color).toBe("--chart-failures");
+    expect(spark("Time saved")?.color).toBe("var(--chart-saved)");
+    expect(spark("Failures")?.color).toBe("var(--chart-failures)");
   });
 
   it("leaves a gap in the skip rate on a day where nothing checked the cache", () => {
@@ -160,7 +161,7 @@ describe("summaryStats sparklines", () => {
   it("draws no net saved sparkline when some runs in the plotted range did not record their cost", () => {
     expect(spark("Net saved", summaryStats({ ...base, cost_unknown_runs: 3 }, {}, daily))).toBeUndefined();
     // The picked days are clean, but the whole range the sparkline plots is not.
-    const scoped = summaryStats(base, {}, daily, { costUnknownRuns: 2 });
+    const scoped = summaryStats(base, { costUnknownRuns: 2 }, daily);
     expect(spark("Net saved", scoped)).toBeUndefined();
   });
 

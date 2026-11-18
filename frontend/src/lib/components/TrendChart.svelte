@@ -96,14 +96,5 @@
     height: 140px;
   }
 
-  .trend :global(.lc-axis-tick-label),
-  .trend :global(text) {
-    font-size: var(--text-xs);
-    fill: var(--text-muted);
-  }
 
-  .trend :global(.lc-grid-line),
-  .trend :global(.lc-grid line) {
-    stroke: var(--chart-grid);
-  }
 </style>

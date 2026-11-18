@@ -50,18 +50,3 @@ export function sparkPath(
 function round(n: number): number {
   return Math.round(n * 10) / 10;
 }
-
-/**
- * Split a formatted value into digits and units, so units can be set smaller: "6h 38m" gives
- * 6, h, space, 38, m. A leading sign stays with its number, and a value with no unit letters
- * comes back whole.
- */
-export function valueParts(value: string): { text: string; unit: boolean }[] {
-  if (!/\d/.test(value)) return [{ text: value, unit: false }];
-  const parts: { text: string; unit: boolean }[] = [];
-  for (const match of value.matchAll(/([−+-]?[\d.,]+)|([a-zA-Z%]+)|(\s+)|(.)/g)) {
-    const [text, digits, unit] = match;
-    parts.push({ text, unit: !digits && !!unit });
-  }
-  return parts;
-}

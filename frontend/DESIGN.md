@@ -42,7 +42,7 @@ Use the type tokens, never a pixel size in a component. Weights are 400, 500, an
 | `--text-kpi`      | 28 / 32            | 600      | `--track-kpi`              | Headline card values                                      |
 | `--text-headline` | 30 / 32            | 600      | `--track-kpi`              | The value above a featured chart, such as the daily chart |
 
-In a headline value, set units such as `h`, `m`, `s`, and `%` smaller and muted. Split the value with `valueParts` in `src/lib/sparkline.ts`, and give each unit part the `u` class, as `StatStrip` and `DailyChart` do.
+In a headline value, set units such as `h`, `m`, `s`, and `%` smaller and muted. Render the value with `UnitValue`, which splits it with `valueParts` in `src/lib/format.ts`.
 
 ## Surfaces and space
 
@@ -76,7 +76,7 @@ Motion explains a change. It never decorates, and nothing animates when a page f
 | `--ease`     | `cubic-bezier(.2,0,.38,.9)`   | Most transitions                                              |
 | `--ease-in`  | `cubic-bezier(0,0,.38,.9)`    | Elements that enter                                           |
 
-The keyframes `fade-in` and `pulse` live in `src/app.css`. The live dot in the top bar is the only looping animation. Loading skeletons (`Skeleton`) are still blocks that stay invisible for 200ms, so a fast load never flashes them. A global rule turns every CSS animation and transition off under `prefers-reduced-motion`. A Svelte transition, such as the value swap in `StatStrip`, must read `prefers-reduced-motion` itself and set its duration to 0.
+The keyframe `fade-in` lives in `src/app.css`. The live dot in the top bar is the only looping animation. Loading skeletons (`Skeleton`) are still blocks that stay invisible for 200ms, so a fast load never flashes them. A global rule turns every CSS animation and transition off under `prefers-reduced-motion`. A Svelte transition, such as the value swap in `StatStrip`, must read `prefers-reduced-motion` itself and set its duration to 0.
 
 ## Palette
 
@@ -142,6 +142,9 @@ Use an existing component before you write markup of your own. If a page needs a
 | The outcome of one run                                | `OutcomeBadge`                    |
 | A run's time in a table cell                          | `TimeValue`, with `ranText` or `savedText` from `src/lib/events.ts` |
 | Any other short label, such as "flaky"                | `Badge` (pick the tone by role)   |
+| A change, such as "+6%" or "slower by 20%"           | `TrendBadge`                      |
+| A value with smaller units, such as "6h 38m"         | `UnitValue`                       |
+| A thin inline bar for a row's share                   | `Meter`                           |
 | A page-local filter that the user can remove          | `FilterChip`                      |
 | A labeled choice from a short list, such as a filter  | `Select` (a native `<select>`)    |
 | A command                                             | `Button` (`accent` for at most one control per view) |
@@ -149,7 +152,7 @@ Use an existing component before you write markup of your own. If a page needs a
 | A region with no data                                 | `EmptyState`, with copy from `src/lib/scope.ts` |
 | A placeholder block while data loads                  | `Skeleton`                        |
 | A button that opens a popover of choices              | `Dropdown`                        |
-| A homepage card with title, loading, error, empty, and footer | `Module`                  |
+| A homepage card with title, loading, error, empty, a "see all" link, and footer | `Module` (`more` for the link) |
 | Tabs that pick what a module measures                 | `MetricTabs`                      |
 | One cell per day over the date range                  | `CalendarHeatmap`                 |
 | Activity by weekday and hour, with totals             | `HourHeatmap`                     |
@@ -163,9 +166,9 @@ Use an existing component before you write markup of your own. If a page needs a
 
 Every page follows the same pattern:
 
-- Open with `PageHeader`. Its subtitle names the repo filter and the date range, or says what the page lists.
+- Open with `PageHeader`. Its subtitle names the repo filter and the date range, from `scopeSubtitle` in `src/lib/scope.ts`.
 - Load data with `createQuery` from `src/lib/query.svelte.ts`. The page then refetches when new runs arrive and when a filter changes.
 - Show loading with `Skeleton` blocks (`Module` does this for you), an error `Notice`, and an `EmptyState` the same way the existing pages do.
 - Name the active filter in empty states, for example "No runs in the last 7 days for api-server."
 - Use the hash router in `src/lib/router.svelte.ts` for links, so that the browser back button works.
-- Put a module's "All gates" style link in its `footer` snippet, with `Icon name="arrow-right"`.
+- Give a module's "All gates" style link to `Module` as `more`, and its footnotes as the `footer` snippet.

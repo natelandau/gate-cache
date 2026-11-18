@@ -10,7 +10,7 @@ import {
   isNegativeDuration,
   plural,
 } from "./format";
-import { clampScope, type DaySpan } from "./selection";
+import { clampScope, selectedRange, spanOf, type DaySpan } from "./selection";
 import { nowSeconds } from "./state.svelte";
 
 /** The summary with its daily series gap-filled across the selected range. */
@@ -34,12 +34,16 @@ export async function loadSummary(signal: AbortSignal, span?: DaySpan): Promise<
  */
 export function summaryStats(
   s: Summary,
-  options: { runsHref?: string; flakyHref?: string; failuresHref?: string } = {},
+  options: {
+    runsHref?: string;
+    flakyHref?: string;
+    failuresHref?: string;
+    /** Runs with unknown cost in the range `daily` covers, when wider than the summary's. */
+    costUnknownRuns?: number;
+  } = {},
   daily?: DayBucket[],
-  range?: { costUnknownRuns: number },
 ): Stat[] {
-  // The sparklines plot `daily`, which can be wider than the summary's own days.
-  const costUnknown = range?.costUnknownRuns ?? s.cost_unknown_runs;
+  const costUnknown = options.costUnknownRuns ?? s.cost_unknown_runs;
   const deltas = s.previous ? statDeltas(s, s.previous) : undefined;
   const spark = (color: string, value: (d: DayBucket) => number | null) =>
     daily && daily.length > 0 ? { values: daily.map(value), color } : undefined;
@@ -48,7 +52,7 @@ export function summaryStats(
       label: "Time saved",
       value: formatDuration(s.time_saved),
       delta: deltas?.time_saved,
-      spark: spark("--chart-saved", (d) => d.saved),
+      spark: spark("var(--chart-saved)", (d) => d.saved),
     },
     {
       label: "Net saved",
@@ -61,7 +65,7 @@ export function summaryStats(
       tone: isNegativeDuration(s.net_saved) ? "danger" : "default",
       delta: deltas?.net_saved,
       // Days with runs that recorded no cost would overstate net saved, as the delta would.
-      spark: costUnknown > 0 ? undefined : spark("--chart-saved", (d) => d.saved - d.cost),
+      spark: costUnknown > 0 ? undefined : spark("var(--chart-saved)", (d) => d.saved - d.cost),
     },
     {
       label: "Time spent",
@@ -70,7 +74,7 @@ export function summaryStats(
       title:
         "Total time gates ran, failed runs included. gate-cache overhead and waits are not counted.",
       delta: deltas?.time_spent,
-      spark: spark("--chart-runs", (d) => d.spent),
+      spark: spark("var(--chart-runs)", (d) => d.spent),
     },
     {
       label: "Runs",
@@ -78,14 +82,14 @@ export function summaryStats(
       hint: s.uncached ? `${formatCount(s.uncached)} uncached` : undefined,
       href: s.runs ? options.runsHref : undefined,
       delta: deltas?.runs,
-      spark: spark("--chart-runs", (d) => d.runs),
+      spark: spark("var(--chart-runs)", (d) => d.runs),
     },
     {
       label: "Skip rate",
       value: formatPercent(s.skip_rate),
       hint: plural(s.skips, "skip", "skips"),
       delta: deltas?.skip_rate,
-      spark: spark("--chart-runs", (d) => (d.ran ? d.skips / d.ran : null)),
+      spark: spark("var(--chart-runs)", (d) => (d.ran ? d.skips / d.ran : null)),
     },
     {
       label: "Flaky gates",
@@ -100,7 +104,7 @@ export function summaryStats(
       tone: s.failures ? "danger" : "default",
       href: s.failures ? options.failuresHref : undefined,
       delta: deltas?.failures,
-      spark: spark("--chart-failures", (d) => d.failures),
+      spark: spark("var(--chart-failures)", (d) => d.failures),
     },
   ];
 }
@@ -134,8 +138,5 @@ export function summaryNote(s: Summary): string | undefined {
 export function pickedRange(days: DayBucket[], scoped: DayBucket[] | undefined): [number, number] | undefined {
   const first = scoped?.[0]?.day;
   const last = scoped?.[scoped.length - 1]?.day;
-  if (!first || !last) return undefined;
-  const from = days.findIndex((d) => d.day === first);
-  const to = days.findIndex((d) => d.day === last);
-  return from >= 0 && to >= from ? [from, to] : undefined;
+  return first && last ? (selectedRange(days, spanOf(first, last)) ?? undefined) : undefined;
 }

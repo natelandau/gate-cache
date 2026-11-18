@@ -1,5 +1,5 @@
-import { render } from "svelte/server";
 import { describe, expect, it } from "vitest";
+import { html } from "../lib/render.test-utils";
 import type { Summary } from "../lib/api";
 import type { Query } from "../lib/query.svelte";
 import type { SummaryView } from "../lib/summary";
@@ -43,7 +43,7 @@ const days = [{ day: "2026-11-17", saved: 118, failures: 0, runs: 12, spent: 0, 
 
 describe("Overview", () => {
   it("shows the stat strip with deltas, the activity calendar, and the daily chart", () => {
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary, days }), repoLabel: null },
     });
     expect(body).toMatch(/lucide-trending-up[\s\S]*?18%/);
@@ -53,18 +53,18 @@ describe("Overview", () => {
   });
 
   it("shows the hourly, top gates, outcome mix, and flaky modules", () => {
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary, days }), repoLabel: null },
     });
     expect(body).toMatch(/<h2[^>]*id="hourly-title"[^>]*>When gates run<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="top-gates-title"[^>]*>Top gates<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="outcome-title"[^>]*>Outcome mix<\/h2>/);
     expect(body).toMatch(/<h2[^>]*id="flaky-gates-title"[^>]*>Flaky gates<\/h2>/);
-    expect(body).toMatch(/Skip<\/span>(?:\s|<!--[^>]*-->)*<(?:span|a)[^>]*>6<\/(?:span|a)>(?:\s|<!--[^>]*-->)*<span[^>]*>50%</);
+    expect(body).toMatch(/Skip<\/span>\s*<(?:span|a)[^>]*>6<\/(?:span|a)>\s*<span[^>]*>50%</);
   });
 
   it("shows the reasons, recent failures, slowdowns, and breakdown modules", () => {
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary, days }), repoLabel: null },
     });
     expect(body).toMatch(/<h2[^>]*id="reasons-title"[^>]*>Why gates ran uncached<\/h2>/);
@@ -76,7 +76,7 @@ describe("Overview", () => {
   });
 
   it("hides deltas when there is no previous window", () => {
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary: { ...summary, previous: null }, days }), repoLabel: null },
     });
     expect(body).not.toContain("vs prev");
@@ -85,14 +85,14 @@ describe("Overview", () => {
   it("shows each module's empty state when nothing ran", () => {
     const outcomes = { skip: 0, pass: 0, pass_unrecorded: 0, fail: 0, uncached: 0 };
     const empty = { ...summary, runs: 0, outcomes, previous: null };
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary: empty, days }), repoLabel: "api-server" },
     });
     expect(body.match(/for api-server\./g)).toHaveLength(3);
   });
 
   it("links run sets to Activity and makes the charts pickable", () => {
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary, days }), repoLabel: null },
     });
     expect(body).toContain('href="#/activity"');
@@ -103,7 +103,7 @@ describe("Overview", () => {
   });
 
   it("shows a chip for picked days and marks them on the calendar", () => {
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary, days }), repoLabel: null, span: { from: "2026-11-17", to: "2026-11-17" } },
     });
     expect(body).toContain("Days: Nov 17");
@@ -114,7 +114,7 @@ describe("Overview", () => {
   });
 
   it("keeps every module and headline number", () => {
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary, days }), repoLabel: null },
     });
     for (const title of [
@@ -134,12 +134,12 @@ describe("Overview", () => {
       expect(body).toMatch(new RegExp(`<h2[^>]*>${title}</h2>`));
     }
     for (const label of ["Time saved", "Net saved", "Time spent", "Runs", "Skip rate", "Flaky gates", "Failures"]) {
-      expect(body).toMatch(new RegExp(`<dt[^>]*>(<!--[^>]*-->)*<span>${label}</span>`));
+      expect(body).toMatch(new RegExp(`<dt[^>]*><span>${label}</span>`));
     }
   });
 
   it("names the repo filter and the range under the title", () => {
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary, days }), repoLabel: "api-server" },
     });
     expect(body).toMatch(/<h1[^>]*>Overview<\/h1>/);
@@ -147,7 +147,7 @@ describe("Overview", () => {
   });
 
   it("tells the reader how to pick days on the daily chart", () => {
-    const { body } = render(Overview, {
+    const body = html(Overview, {
       props: { query: query({ summary, days }), repoLabel: null },
     });
     expect(body).toMatch(/<footer[^>]*>[\s\S]*?Click a day to scope the page\. Drag across days to pick a range\./);

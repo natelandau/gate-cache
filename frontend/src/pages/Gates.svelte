@@ -7,8 +7,7 @@
   import { gateKey } from "../lib/gates";
   import { closeGatePanel, openGatePanel } from "../lib/panel";
   import { createQuery } from "../lib/query.svelte";
-  import { rangeLabel } from "../lib/range";
-  import { emptyHint, emptyTitle } from "../lib/scope";
+  import { emptyHint, emptyTitle, scopeSubtitle } from "../lib/scope";
   import { filters, freshness } from "../lib/state.svelte";
   import GateDetail from "./GateDetail.svelte";
 
@@ -23,7 +22,7 @@
   const query = createQuery((signal) => getGates({ signal }));
 
   const openKey = $derived(open ? gateKey(open) : null);
-  const subtitle = $derived(`${repoLabel ?? "All repos"} · ${rangeLabel(filters.range)}`);
+  const subtitle = $derived(scopeSubtitle(repoLabel, filters.range));
 </script>
 
 <section class="page" aria-labelledby="gates-title">

@@ -52,7 +52,6 @@
   --text-sm: 13px;
   --text-md: 14px;
   --text-lg: 16px;
-  --text-xl: 20px;
   --text-h1: 24px;
   --text-kpi: 28px;
   --text-headline: 30px;
@@ -73,7 +72,6 @@
   --topbar-height: 52px;
   --sidebar-width: 220px;
   --content-max: 1480px;
-  --radius: 6px;
   --radius-control: 6px;
   --radius-card: 10px;
   --radius-chip: 4px;
@@ -296,18 +294,6 @@ code {
   text-align: right;
 }
 
-/* The "see all" link at the foot of a homepage module. */
-.more-link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-sm);
-  text-decoration: none;
-}
-
-.more-link:hover {
-  text-decoration: underline;
-}
 
 /* A heading above a block inside a card or panel. */
 .section-title {
@@ -318,12 +304,6 @@ code {
   margin: 0 0 var(--space-2);
 }
 
-.page-title {
-  font-size: var(--text-h1);
-  font-weight: 600;
-  letter-spacing: var(--track-h1);
-  line-height: 28px;
-}
 
 /* LayerChart reads these variables for marks, axes, and tooltips. */
 .lc-root-container {
@@ -332,6 +312,18 @@ code {
   --color-surface-200: var(--surface-sunken);
   --color-surface-300: var(--border-strong);
   --color-surface-content: var(--text);
+}
+
+/* Every chart's axis text and gridlines. */
+.lc-root-container text,
+.lc-root-container .lc-axis-tick-label {
+  font-size: var(--text-xs);
+  fill: var(--text-faint);
+}
+
+.lc-root-container .lc-grid-line,
+.lc-root-container .lc-grid line {
+  stroke: var(--chart-grid);
 }
 
 @keyframes fade-in {
@@ -345,16 +337,6 @@ code {
   }
 }
 
-@keyframes pulse {
-  from {
-    transform: scale(1);
-    opacity: 0.6;
-  }
-  to {
-    transform: scale(2.8);
-    opacity: 0;
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
   *,

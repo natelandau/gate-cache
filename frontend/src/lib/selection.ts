@@ -95,6 +95,9 @@ export function cursorKey(
   return { cursor: { at, anchor }, select: [Math.min(anchor, at), Math.max(anchor, at)] };
 }
 
+/** The tooltip hint on a chart whose days scope the page. */
+export const PICK_DAY_HINT = "Click to scope the page to this day";
+
 /** Return the first and last index of `days` inside `span`, or null when none are. */
 export function selectedRange(days: { day: string }[], span?: DaySpan): [number, number] | null {
   if (!span) return null;

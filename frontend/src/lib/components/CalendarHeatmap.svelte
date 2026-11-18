@@ -30,7 +30,8 @@
     weekdayName,
     type HeatMetric,
   } from "../heat";
-  import { calendarLayout, monthGrid } from "../calendar";
+  import { calendarLayout, chunkWeeks } from "../calendar";
+  import { formatShortDay } from "../format";
   import { createDayCursor } from "../daycursor.svelte";
   import { inSpan, spanOf, toggleDay, type DaySpan } from "../selection";
   import HeatLegend from "./HeatLegend.svelte";
@@ -120,42 +121,38 @@
 
   const max = $derived(Math.max(0, ...days.map((bucket) => heatValue(bucket, metric))));
 
+  const cells = $derived(days.map((bucket, index): Cell => ({ bucket, date: localDate(bucket.day), index })));
+  // The wall calendar starts weeks on Monday; week columns keep Sunday at the top.
+  const lead = $derived.by(() => {
+    const weekday = cells[0]?.date.getDay() ?? 0;
+    return layout === "month" ? (weekday + 6) % 7 : weekday;
+  });
+  const weekGrid = $derived(chunkWeeks(cells, lead));
+
   const weeks = $derived.by(() => {
-    const cells: (Cell | null)[] = days.map((bucket, index) => ({ bucket, date: localDate(bucket.day), index }));
-    const lead = cells[0]?.date.getDay() ?? 0;
-    const padded = [...Array<null>(lead).fill(null), ...cells];
-    while (padded.length % 7 !== 0) padded.push(null);
-    const result: Week[] = [];
+    if (layout !== "weeks") return [];
     let lastMonth = -1;
-    for (let start = 0; start < padded.length; start += 7) {
-      const week = padded.slice(start, start + 7);
+    return weekGrid.map((week, index): Week => {
       const first = week.find((cell) => cell !== null);
       const month = first ? first.date.getMonth() : -1;
       const label =
         first && month !== lastMonth ? first.date.toLocaleString(undefined, { month: "short" }) : "";
       lastMonth = month;
-      result.push({ key: start, month: label, cells: week });
-    }
-    return result;
+      return { key: index, month: label, cells: week };
+    });
   });
 
   const active = $derived(days.filter((bucket) => heatValue(bucket, metric) > 0));
 
   const MONDAY_FIRST = [1, 2, 3, 4, 5, 6, 0].map((weekday) => weekdayName(weekday, "short").slice(0, 1));
-  const rowsOfWeeks = $derived.by(() => {
-    if (layout !== "month") return [];
-    const byDay = new Map(days.map((bucket, index) => [bucket.day, index]));
-    return monthGrid(days.map((d) => d.day)).map((week) => {
-      const cells = week.map((day): Cell | null => {
-        const index = day === null ? undefined : byDay.get(day);
-        const bucket = index === undefined ? undefined : days[index];
-        return bucket && index !== undefined ? { bucket, date: localDate(bucket.day), index } : null;
-      });
-      const first = cells.find((cell) => cell !== null);
-      const label = first ? first.date.toLocaleString(undefined, { month: "short", day: "numeric" }) : "";
-      return { key: week.find((d) => d !== null) ?? "", label, cells };
-    });
-  });
+  const rowsOfWeeks = $derived(
+    layout === "month"
+      ? weekGrid.map((week, index) => {
+          const first = week.find((cell) => cell !== null);
+          return { key: index, label: first ? formatShortDay(first.bucket.day) : "", cells: week };
+        })
+      : [],
+  );
 </script>
 
 {#snippet dayCell(cell: Cell | null)}

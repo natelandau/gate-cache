@@ -1,7 +1,7 @@
 <script lang="ts">
   import FilterChip from "../lib/components/FilterChip.svelte";
   import PageHeader from "../lib/components/PageHeader.svelte";
-  import { rangeLabel } from "../lib/range";
+  import { scopeSubtitle } from "../lib/scope";
   import { filters } from "../lib/state.svelte";
   import { createQuery, type Query } from "../lib/query.svelte";
   import { navigate } from "../lib/router.svelte";
@@ -41,7 +41,7 @@
 
   let heading: HTMLElement | undefined = $state();
 
-  const subtitle = $derived(`${repoLabel ?? "All repos"} · ${rangeLabel(filters.range)}`);
+  const subtitle = $derived(scopeSubtitle(repoLabel, filters.range));
 
   // Picking replaces the history entry, like the Activity filters.
   function pick(next: DaySpan | undefined): void {
@@ -61,26 +61,21 @@
     {/if}
   </PageHeader>
 
-  <StatsModule
-    query={scopedQuery}
-    {span}
-    days={query.data?.days}
-    costUnknownRuns={query.data?.summary.cost_unknown_runs}
-  />
+  <StatsModule query={scopedQuery} {span} range={query.data} />
 
   <div class="grid">
-    <div class="s8"><DailyModule {query} {repoLabel} {span} onselect={pick} /></div>
-    <div class="s4"><CalendarModule {query} {repoLabel} {span} onselect={pick} /></div>
-    <div class="s12"><SpentModule {repoLabel} {span} onselect={pick} /></div>
-    <div class="s6"><HourlyModule {repoLabel} {span} /></div>
-    <div class="s6"><TopGatesModule {repoLabel} {span} /></div>
-    <div class="s4"><OutcomeModule query={scopedQuery} {repoLabel} {span} /></div>
-    <div class="s4"><FlakyModule {repoLabel} {span} /></div>
-    <div class="s4"><ReasonsModule {repoLabel} {span} /></div>
-    <div class="s7"><FailuresModule {repoLabel} {span} /></div>
-    <div class="s5"><SlowdownsModule {repoLabel} {span} /></div>
-    <div class="s7"><BreakdownModule {repoLabel} {span} /></div>
-    <div class="s5"><CoalescingModule {repoLabel} {span} /></div>
+    <div style:--span={8}><DailyModule {query} {repoLabel} {span} onselect={pick} /></div>
+    <div style:--span={4}><CalendarModule {query} {repoLabel} {span} onselect={pick} /></div>
+    <div style:--span={12}><SpentModule {repoLabel} {span} onselect={pick} /></div>
+    <div style:--span={6}><HourlyModule {repoLabel} {span} /></div>
+    <div style:--span={6}><TopGatesModule {repoLabel} {span} /></div>
+    <div style:--span={4}><OutcomeModule query={scopedQuery} {repoLabel} {span} /></div>
+    <div style:--span={4}><FlakyModule {repoLabel} {span} /></div>
+    <div style:--span={4}><ReasonsModule {repoLabel} {span} /></div>
+    <div style:--span={7}><FailuresModule {repoLabel} {span} /></div>
+    <div style:--span={5}><SlowdownsModule {repoLabel} {span} /></div>
+    <div style:--span={7}><BreakdownModule {repoLabel} {span} /></div>
+    <div style:--span={5}><CoalescingModule {repoLabel} {span} /></div>
   </div>
 </section>
 
@@ -100,40 +95,13 @@
   /* Each slot stretches its module to the row's height, so cards in a row line up. */
   .grid > div {
     display: grid;
+    grid-column: span var(--span, 12);
     min-width: 0;
   }
 
-  .s4 {
-    grid-column: span 4;
-  }
-
-  .s5 {
-    grid-column: span 5;
-  }
-
-  .s6 {
-    grid-column: span 6;
-  }
-
-  .s7 {
-    grid-column: span 7;
-  }
-
-  .s8 {
-    grid-column: span 8;
-  }
-
-  .s12 {
-    grid-column: span 12;
-  }
-
   @media (max-width: 1100px) {
-    .s4,
-    .s5,
-    .s6,
-    .s7,
-    .s8 {
-      grid-column: span 12;
+    .grid > div {
+      --span: 12;
     }
   }
 </style>

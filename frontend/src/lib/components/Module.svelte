@@ -16,12 +16,14 @@
   - `empty`: true when there is nothing to show; no empty state shows beside an error
   - `emptyTitle`, `emptyDetail`: the empty state copy, from `src/lib/scope.ts`
   - `actions`: optional controls for the header
-  - `footer`: optional links or footnotes pinned to the bottom of the card
+  - `more`: optional `{ href, label }` for a "see all" link at the bottom of the card
+  - `footer`: optional footnotes pinned to the bottom of the card
   - `children`: the content
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
   import EmptyState from "./EmptyState.svelte";
+  import Icon from "./Icon.svelte";
   import Notice from "./Notice.svelte";
   import Skeleton from "./Skeleton.svelte";
 
@@ -36,6 +38,7 @@
     emptyTitle: string;
     emptyDetail?: string;
     actions?: Snippet;
+    more?: { href: string; label: string };
     footer?: Snippet;
     children: Snippet;
   }
@@ -51,6 +54,7 @@
     emptyTitle,
     emptyDetail,
     actions,
+    more,
     footer,
     children,
   }: Props = $props();
@@ -79,7 +83,12 @@
   {:else}
     {@render children()}
   {/if}
-  {#if footer && !loading}<footer>{@render footer()}</footer>{/if}
+  {#if (more || footer) && !loading}
+    <footer>
+      {#if more}<a class="more" href={more.href}>{more.label} <Icon name="arrow-right" size={14} /></a>{/if}
+      {#if footer}{@render footer()}{/if}
+    </footer>
+  {/if}
 </section>
 
 <style>
@@ -140,5 +149,16 @@
     padding-top: var(--space-3);
     color: var(--text-muted);
     font-size: var(--text-sm);
+  }
+
+  .more {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    text-decoration: none;
+  }
+
+  .more:hover {
+    text-decoration: underline;
   }
 </style>

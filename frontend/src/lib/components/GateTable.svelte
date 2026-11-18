@@ -64,7 +64,7 @@
   };
 
   const columns = $derived<Column<GateRow>[]>([
-    { key: "name", label: "Gate", cell: gateCell, firstDirection: "asc" },
+    { key: "name", label: "Gate", cell: gateCell, title: (g) => g.name, firstDirection: "asc" },
     ...(showRepo ? [repoColumn] : []),
     { key: "runs", label: "Runs", align: "right", text: (g) => formatCount(g.runs) },
     { key: "skip_rate", label: "Skip %", align: "right", text: (g) => formatPercent(g.skip_rate) },

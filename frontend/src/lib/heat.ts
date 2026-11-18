@@ -38,6 +38,13 @@ export const HEAT_LABELS: Record<HeatMetric, string> = {
 };
 
 /** The metric tabs of a heatmap module, in display order. */
+/** The chart color of each measure: runs are blue, time saved green, and failures red. */
+export const METRIC_COLORS: Record<HeatMetric, string> = {
+  runs: "var(--chart-runs)",
+  saved: "var(--chart-saved)",
+  fail: "var(--chart-failures)",
+};
+
 export const HEAT_OPTIONS: { value: HeatMetric; label: string }[] = (
   ["runs", "saved", "fail"] as const
 ).map((value) => ({ value, label: HEAT_LABELS[value] }));

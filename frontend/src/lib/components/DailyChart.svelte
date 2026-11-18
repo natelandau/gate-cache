@@ -18,13 +18,14 @@
   import type { ChartState } from "layerchart";
   import { BarChart, Bars, Tooltip } from "layerchart/svg";
   import { dailyScale } from "../daily";
+  import { METRIC_COLORS } from "../heat";
   import type { DayBucket } from "../fill";
   import { formatCount, formatDuration, formatLongDay, formatShortDay, plural } from "../format";
   import { createDayPick } from "../daypick.svelte";
-  import { valueParts } from "../sparkline";
   import ChartTooltip from "./ChartTooltip.svelte";
   import DayPicker from "./DayPicker.svelte";
-  import type { DaySpan } from "../selection";
+  import UnitValue from "./UnitValue.svelte";
+  import { PICK_DAY_HINT, type DaySpan } from "../selection";
 
   interface Props {
     days: DayBucket[];
@@ -65,8 +66,8 @@
   function dayText(day: DayBucket): string {
     return `${formatLongDay(day.day)}: ${formatDuration(day.saved)} saved, ${plural(day.failures, "failure", "failures")}`;
   }
-  const savedColor = "var(--chart-saved)";
-  const failColor = "var(--chart-failures)";
+  const savedColor = METRIC_COLORS.saved;
+  const failColor = METRIC_COLORS.fail;
 </script>
 
 {#snippet dayTooltip(context: ChartState<Row>)}
@@ -77,9 +78,9 @@
         rows={[
           { color: savedColor, label: "Time saved", value: formatDuration(data.saved) },
           { color: failColor, label: "Failures", value: formatCount(data.failures) },
-          { color: "var(--chart-runs)", label: "Runs", value: formatCount(data.runs) },
+          { color: METRIC_COLORS.runs, label: "Runs", value: formatCount(data.runs) },
         ]}
-        hint={onselect ? "Click to scope the page to this day" : undefined}
+        hint={onselect ? PICK_DAY_HINT : undefined}
       />
     {/snippet}
   </Tooltip.Root>
@@ -88,10 +89,7 @@
 <figure class="daily">
   <figcaption class="top">
     <span class="headline">
-      <span class="big"
-        >{#each valueParts(formatDuration(totalSaved)) as part, i (i)}{#if part.unit}<span class="u">{part.text}</span
-            >{:else}{part.text}{/if}{/each}</span
-      >
+      <span class="big"><UnitValue value={formatDuration(totalSaved)} /></span>
       <span class="second">saved · <span class="fails">{formatCount(totalFailures)}</span> {totalFailures === 1 ? "failure" : "failures"}</span>
     </span>
     <span class="legend">
@@ -195,17 +193,6 @@
     letter-spacing: var(--track-kpi);
   }
 
-  .u {
-    margin: 0 3px 0 1px;
-    color: var(--text-muted);
-    font-size: 0.6em;
-    font-weight: 500;
-    letter-spacing: 0;
-  }
-
-  .u:last-child {
-    margin-right: 0;
-  }
 
   .second {
     color: var(--text-muted);
@@ -252,14 +239,5 @@
     height: 260px;
   }
 
-  .daily :global(.lc-axis-tick-label),
-  .daily :global(text) {
-    font-size: var(--text-xs);
-    fill: var(--text-faint);
-  }
 
-  .daily :global(.lc-grid-line),
-  .daily :global(.lc-grid line) {
-    stroke: var(--chart-grid);
-  }
 </style>

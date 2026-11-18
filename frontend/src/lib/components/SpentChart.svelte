@@ -19,7 +19,7 @@
   import type { SpentGate } from "../api";
   import { createDayPick } from "../daypick.svelte";
   import { durationTicks, formatAxisDuration, formatDuration, formatLongDay, formatShortDay } from "../format";
-  import type { DaySpan } from "../selection";
+  import { PICK_DAY_HINT, type DaySpan } from "../selection";
   import { spentTotals, type SpentRow, type SpentSeries } from "../spent";
   import ChartTooltip from "./ChartTooltip.svelte";
   import DayPicker from "./DayPicker.svelte";
@@ -36,7 +36,6 @@
 
   const ticks = $derived(durationTicks(Math.max(0, ...rows.map((r) => r.total))));
   const top = $derived(Math.max(1, ticks.at(-1) ?? 0));
-  const total = $derived(rows.reduce((sum, r) => sum + r.total, 0));
   const activeRows = $derived(rows.filter((r) => r.total > 0));
   const colorOf = $derived(new Map(series.map((s) => [s.key, s.color])));
   const labelOf = $derived(new Map(series.map((s) => [s.key, s.label])));
@@ -104,7 +103,7 @@
           })),
           { label: "Total", value: formatDuration(data.total) },
         ]}
-        hint={onselect ? "Click to scope the page to this day" : undefined}
+        hint={onselect ? PICK_DAY_HINT : undefined}
       />
     {/snippet}
   </Tooltip.Root>
@@ -197,7 +196,7 @@
   <div class="visually-hidden">
     <table>
       <caption>
-        Time spent per day for {rows.length} days: {formatDuration(total)} in all. Days without
+        Time spent per day for {rows.length} days: {formatDuration(totals.total)} in all. Days without
         time spent are left out.
       </caption>
       <thead>
@@ -330,16 +329,7 @@
     height: 220px;
   }
 
-  .spent :global(.lc-axis-tick-label),
-  .spent :global(text) {
-    font-size: var(--text-xs);
-    fill: var(--text-faint);
-  }
 
-  .spent :global(.lc-grid-line),
-  .spent :global(.lc-grid line) {
-    stroke: var(--chart-grid);
-  }
 
   @media (max-width: 900px) {
     .spent {

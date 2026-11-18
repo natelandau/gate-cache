@@ -8,7 +8,7 @@ import re
 import statistics
 import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
@@ -338,13 +338,8 @@ class _Tally:
 
     def add(self, other: _Tally) -> None:
         """Add another tally's counts to this one."""
-        self.runs += other.runs
-        self.saved += other.saved
-        self.failures += other.failures
-        self.spent += other.spent
-        self.skips += other.skips
-        self.ran += other.ran
-        self.cost += other.cost
+        for f in fields(self):
+            setattr(self, f.name, getattr(self, f.name) + getattr(other, f.name))
 
 
 def _bucket_start(bucket_id: int, zone: ZoneInfo) -> datetime:
@@ -456,19 +451,7 @@ def summary(
     return {
         **result,
         "previous": previous,
-        "daily": [
-            {
-                "day": day,
-                "saved": t.saved,
-                "failures": t.failures,
-                "runs": t.runs,
-                "spent": t.spent,
-                "skips": t.skips,
-                "ran": t.ran,
-                "cost": t.cost,
-            }
-            for day, t in sorted(days.items())
-        ],
+        "daily": [{"day": day, **asdict(t)} for day, t in sorted(days.items())],
     }
 
 

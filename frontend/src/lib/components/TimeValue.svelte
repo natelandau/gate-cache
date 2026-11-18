@@ -7,6 +7,8 @@
   - `value`: the formatted time, "unknown", "not rerun", or null when the column does not apply
 -->
 <script lang="ts">
+  import { NOT_RERUN, UNKNOWN_TIME } from "../events";
+
   interface Props {
     value: string | null;
   }
@@ -16,7 +18,7 @@
 
 {#if value === null}
   <span class="muted" aria-label="none">–</span>
-{:else if value === "unknown" || value === "not rerun"}
+{:else if value === UNKNOWN_TIME || value === NOT_RERUN}
   <span class="muted">{value}</span>
 {:else}
   {value}

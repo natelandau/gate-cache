@@ -198,7 +198,7 @@
     padding: var(--space-1) var(--space-2);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-control);
     color: var(--text);
     font: inherit;
   }

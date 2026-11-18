@@ -9,8 +9,7 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import Icon from "../../lib/components/Icon.svelte";
-  import Badge from "../../lib/components/Badge.svelte";
+  import TrendBadge from "../../lib/components/TrendBadge.svelte";
   import { getSlowdowns, spanScope, type SlowdownRow } from "../../lib/api";
   import DataTable, { type Column } from "../../lib/components/DataTable.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -42,7 +41,7 @@
   const rows = $derived(query.data?.gates ?? []);
 
   const columns: Column<SlowdownRow>[] = [
-    { key: "name", label: "Gate", sortable: false, cell: gate },
+    { key: "name", label: "Gate", sortable: false, cell: gate, title: (g) => g.name },
     {
       key: "before",
       label: "Median before",
@@ -59,9 +58,7 @@
   {g.name} <span class="repo" title={g.repo ?? undefined}>{g.repo_name}</span>
 {/snippet}
 {#snippet change(g: SlowdownRow)}
-  <Badge tone="danger"
-    ><Icon name="trending-up" size={12} /><span class="visually-hidden">Up</span>&nbsp;{formatPercent(g.change)}</Badge
-  >
+  <TrendBadge dir="up" text={formatPercent(g.change)} tone="bad" />
 {/snippet}
 
 <Module

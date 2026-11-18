@@ -5,7 +5,7 @@
 
   Props:
   - `values`: one value per day; null leaves a gap
-  - `color`: a CSS custom property name for the line, such as "--chart-saved"
+  - `color`: a CSS color for the line, such as "var(--chart-saved)"
   - `highlight`: optional [from, to] day indexes to keep at full strength; the rest dim
 -->
 <script lang="ts">
@@ -23,7 +23,7 @@
   const HEIGHT = 34;
   const uid = $props.id();
   const path = $derived(sparkPath(values, WIDTH, HEIGHT));
-  const stroke = $derived(`var(${color})`);
+  const stroke = $derived(color);
   // Picked days as an x range in the path's coordinates.
   const band = $derived.by(() => {
     if (!highlight || values.length < 2) return null;
@@ -44,15 +44,13 @@
       <clipPath id="{uid}-band"><rect x={band.x} y="0" width={band.width} height={HEIGHT} /></clipPath>
     {/if}
   </defs>
-  <g class:dim={band !== null}>
+  {#snippet paths()}
     <path d={path.area} fill="url(#{uid}-fill)" />
     <path d={path.line} fill="none" stroke={stroke} />
-  </g>
+  {/snippet}
+  <g class:dim={band !== null}>{@render paths()}</g>
   {#if band}
-    <g clip-path="url(#{uid}-band)">
-      <path d={path.area} fill="url(#{uid}-fill)" />
-      <path d={path.line} fill="none" stroke={stroke} />
-    </g>
+    <g clip-path="url(#{uid}-band)">{@render paths()}</g>
   {/if}
 </svg>
 

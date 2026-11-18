@@ -172,7 +172,7 @@
     display: flex;
     padding: 2px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-control);
     background: var(--surface-sunken);
   }
 
@@ -219,7 +219,7 @@
     flex: 1;
     padding: 5px var(--space-2);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-control);
     background: var(--surface-sunken);
     color: var(--text);
     font-size: var(--text-sm);
@@ -252,7 +252,7 @@
   .custom input,
   .custom button {
     height: var(--control-height);
-    border-radius: var(--radius);
+    border-radius: var(--radius-control);
     font: inherit;
     font-size: var(--text-sm);
   }

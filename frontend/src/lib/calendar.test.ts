@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calendarFacts, calendarLayout, monthGrid } from "./calendar";
+import { calendarFacts, calendarLayout, chunkWeeks } from "./calendar";
 import type { DayBucket } from "./fill";
 
 function range(from: string, count: number): string[] {
@@ -30,21 +30,21 @@ describe("calendarLayout", () => {
   });
 });
 
-describe("monthGrid", () => {
-  it("puts Monday-first weeks in rows and pads the first and last week", () => {
-    const grid = monthGrid(range("2026-10-19", 30));
+describe("chunkWeeks", () => {
+  it("splits days into weeks and pads the first and last week", () => {
+    // 2026-10-19 is a Monday, so a Monday-first grid needs no lead.
+    const grid = chunkWeeks(range("2026-10-19", 30), 0);
     expect(grid).toHaveLength(5);
     expect(grid[0]![0]).toBe("2026-10-19");
     expect(grid[4]).toEqual(["2026-11-16", "2026-11-17", null, null, null, null, null]);
   });
 
   it("pads before a range that starts midweek", () => {
-    // 2026-11-04 is a Wednesday.
-    expect(monthGrid(["2026-11-04"])[0]).toEqual([null, null, "2026-11-04", null, null, null, null]);
+    expect(chunkWeeks(["2026-11-04"], 2)[0]).toEqual([null, null, "2026-11-04", null, null, null, null]);
   });
 
   it("returns no weeks for no days", () => {
-    expect(monthGrid([])).toEqual([]);
+    expect(chunkWeeks([], 3)).toEqual([]);
   });
 });
 
