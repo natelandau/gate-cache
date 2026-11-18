@@ -21,6 +21,7 @@
   import { durationTicks, formatAxisDuration, formatDuration, formatLongDay, formatShortDay } from "../format";
   import type { DaySpan } from "../selection";
   import type { SpentRow, SpentSeries } from "../spent";
+  import ChartTooltip from "./ChartTooltip.svelte";
   import DayPicker from "./DayPicker.svelte";
 
   interface Props {
@@ -90,20 +91,20 @@
 </script>
 
 {#snippet dayTooltip(context: ChartState<SpentRow>)}
-  <Tooltip.Root {context}>
+  <Tooltip.Root {context} variant="none" motion="none">
     {#snippet children({ data }: { data: SpentRow })}
-      <Tooltip.Header value={formatLongDay(data.day)} />
-      <Tooltip.List>
-        <Tooltip.Item label="Total" value={formatDuration(data.total)} valueAlign="right" />
-        {#each parts(data) as part (part.key)}
-          <Tooltip.Item
-            label={labelOf.get(part.key) ?? ""}
-            value={formatDuration(part.seconds)}
-            color={colorOf.get(part.key)}
-            valueAlign="right"
-          />
-        {/each}
-      </Tooltip.List>
+      <ChartTooltip
+        title={formatLongDay(data.day)}
+        rows={[
+          ...parts(data).map((part) => ({
+            color: colorOf.get(part.key),
+            label: labelOf.get(part.key) ?? "",
+            value: formatDuration(part.seconds),
+          })),
+          { label: "Total", value: formatDuration(data.total) },
+        ]}
+        hint={onselect ? "Click to scope the page to this day" : undefined}
+      />
     {/snippet}
   </Tooltip.Root>
 {/snippet}

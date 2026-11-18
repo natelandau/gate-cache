@@ -9,6 +9,18 @@ const days = [
 ];
 
 describe("DailyChart", () => {
+  it("leads with the range's time saved and failure count", () => {
+    const { body } = render(DailyChart, { props: { days } });
+    expect(body).toMatch(/class="headline[^"]*"[\s\S]*?3(<!--[^>]*-->)*<span class="u[^"]*">m<\/span>/);
+    expect(body).toMatch(/class="fails[^"]*"[^>]*>1</);
+  });
+
+  it("names the two series in a legend instead of over the axis", () => {
+    const { body } = render(DailyChart, { props: { days } });
+    expect(body).toMatch(/class="legend[\s\S]*?Time saved[\s\S]*?Failures/);
+    expect(body).not.toContain("panel-label");
+  });
+
   it("has no picking layer without a select handler", () => {
     const { body } = render(DailyChart, { props: { days } });
     expect(body).not.toContain('class="picker');
