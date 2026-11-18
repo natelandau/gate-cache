@@ -4,7 +4,7 @@
 
   Props:
   - `rows`: the data
-  - `columns`: column definitions, see `Column` below; `info` adds an info tip to a header
+  - `columns`: column definitions, see `Column` below; `info` explains a column from its header label
   - `rowKey`: a stable unique key per row
   - `label`: accessible name of the table (rendered as a hidden caption)
   - `sort`: initial sort `{ key, direction }`; bindable to read or drive it from outside
@@ -171,7 +171,8 @@
               <!-- A text cell can be cut by its ellipsis, so its title carries the full text. -->
               <td
                 class={column.align === "right" ? "right num" : "left"}
-                title={column.title ? column.title(row) : text}
+                class:wrap={column.wrap}
+                title={column.title ? column.title(row) : column.wrap ? undefined : text}
               >
                 {#if column.cell}
                   {@render column.cell(row)}
@@ -198,22 +199,21 @@
     overflow-x: auto;
   }
 
-  /* The first column stays in view while the rest of a wide table scrolls under it. Its cells
-     need an opaque background, and row hover and the active row repaint it like any cell. */
-  th:first-child,
-  td:first-child {
+  /* In a carded table, the first column stays in view while the rest scrolls under it. Its cells
+     need an opaque background, and row hover and the active row repaint it like any cell. A bare
+     table sits in a narrow module and never scrolls sideways. */
+  .table-wrap:not(.bare) :is(th, td):first-child {
     position: sticky;
     left: 0;
     z-index: 1;
     background: var(--surface);
   }
 
-  th:first-child {
+  .table-wrap:not(.bare) th:first-child {
     z-index: 2;
   }
 
-  .scrolled th:first-child,
-  .scrolled td:first-child {
+  .scrolled :is(th, td):first-child {
     box-shadow: inset -1px 0 0 var(--border);
   }
 
@@ -243,11 +243,10 @@
   .head {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
     vertical-align: middle;
   }
 
-  /* Headers never cut their text, and an info tip must show past the cell. */
+  /* Headers never cut their text, and a header's explanation must show past the cell. */
   th {
     overflow: visible;
     height: 34px;
@@ -271,7 +270,14 @@
 
   td {
     border-top: 1px solid var(--border-row);
+    font-size: var(--text-sm);
     transition: background-color var(--dur-fast) var(--ease);
+  }
+
+  /* A column that wraps long text shows all of it, so it needs no ellipsis or title. */
+  td.wrap {
+    white-space: normal;
+    max-width: none;
   }
 
   tbody tr:first-child td {
@@ -296,6 +302,12 @@
     box-shadow: inset 2px 0 0 var(--accent);
   }
 
+  .scrolled tr.active td:first-child {
+    box-shadow:
+      inset 2px 0 0 var(--accent),
+      inset -1px 0 0 var(--border);
+  }
+
   tbody tr:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: -2px;
@@ -303,8 +315,5 @@
 
   .busy tbody {
     opacity: 0.55;
-  }
-  td {
-    font-size: var(--text-sm);
   }
 </style>

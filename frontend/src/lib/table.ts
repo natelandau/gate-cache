@@ -38,8 +38,10 @@ export interface Column<T> {
   text?: (row: T) => string;
   /** Custom cell content; takes precedence over `text`. */
   cell?: Snippet<[T]>;
-  /** What the column measures, shown in an info tip beside the header. */
+  /** What the column measures, opened from the header label, which a dotted underline marks. */
   info?: string;
+  /** Wrap long text in the cell instead of cutting it with an ellipsis. */
+  wrap?: boolean;
   /** Hover text for the cell, such as a full path behind a short name. */
   title?: (row: T) => string | undefined;
   /** CSS width of the column, such as "120px" or "40%". */

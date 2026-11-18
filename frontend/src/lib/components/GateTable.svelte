@@ -13,6 +13,7 @@
   - `empty`: snippet shown when there are no gates
 -->
 <script lang="ts">
+  import GateName from "./GateName.svelte";
   import { TERMS } from "../terms";
   import type { Snippet } from "svelte";
   import type { GateRow } from "../api";
@@ -25,7 +26,7 @@
     formatRelative,
     formatTimestamp,
   } from "../format";
-  import { gateKey, splitGateName } from "../gates";
+  import { gateKey } from "../gates";
   import { clock } from "../state.svelte";
   import Badge from "./Badge.svelte";
   import DataTable, { type Column, type SortState } from "./DataTable.svelte";
@@ -65,21 +66,21 @@
   };
 
   const columns = $derived<Column<GateRow>[]>([
-    { key: "name", label: "Gate", cell: gateCell, title: (g) => g.name, firstDirection: "asc" },
+    { key: "name", label: "Gate", cell: gateCell, wrap: true, firstDirection: "asc" },
     ...(showRepo ? [repoColumn] : []),
     {
       key: "runs",
       label: TERMS.calls.column,
       align: "right",
       text: (g) => formatCount(g.runs),
-      info: "Every time the gate was called, whether its command ran or the cache skipped it.",
+      info: TERMS.calls.about,
     },
     {
       key: "skip_rate",
       label: TERMS.skipRate.column,
       align: "right",
       text: (g) => formatPercent(g.skip_rate),
-      info: "The share of calls that checked the cache and were skipped because the gate already passed on the same content.",
+      info: TERMS.skipRate.about,
     },
     {
       key: "avg_run",
@@ -93,7 +94,7 @@
       label: TERMS.ran.column,
       align: "right",
       text: (g) => formatDuration(g.time_spent),
-      info: "Total time the gate's command ran, failed runs included. Skipped calls take no time.",
+      info: TERMS.ran.about,
     },
     {
       key: "median_run",
@@ -116,8 +117,7 @@
       label: "CPU/wall",
       align: "right",
       text: (g) => formatRatio(g.cpu_ratio),
-      title: (g) =>
-        notRecorded(g.cpu_ratio) ?? "CPU seconds per wall second. Near 1× means the gate uses one core.",
+      title: (g) => notRecorded(g.cpu_ratio),
       info: "CPU time divided by run time. Near 1× means the gate keeps one core busy; above 1× means it runs in parallel; well below 1× means it mostly waits, such as on the network or disk.",
     },
     {
@@ -134,7 +134,7 @@
       label: TERMS.saved.column,
       align: "right",
       text: (g) => formatDuration(g.time_saved),
-      info: "Run time that skipped calls did not spend, taken from the passing run that let each one skip.",
+      info: TERMS.saved.about,
     },
     { key: "failures", label: "Failures", align: "right", cell: failuresCell },
     {
@@ -155,9 +155,8 @@
 </script>
 
 {#snippet gateCell(g: GateRow)}
-  {@const parts = splitGateName(g.name)}
   <span class="gate">
-    <span class="name">{parts.base}{#if parts.suffix}<span class="suffix">{parts.suffix}</span>{/if}</span>
+    <span class="name"><GateName name={g.name} /></span>
     {#if g.flaky}<Badge tone="flaky" title="A tree both failed and passed in this range">flaky</Badge>{/if}
   </span>
 {/snippet}
@@ -189,7 +188,6 @@
     padding: 6px 0;
     font-weight: 500;
     line-height: 18px;
-    white-space: normal;
   }
 
   /* As wide as the name, up to 240px; a longer name wraps at that width and never squeezes
@@ -201,10 +199,6 @@
     overflow-wrap: anywhere;
   }
 
-  .suffix {
-    color: var(--text-faint);
-    font-weight: 400;
-  }
 
   .danger {
     color: var(--danger);

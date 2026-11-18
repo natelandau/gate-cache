@@ -1,9 +1,9 @@
 <!--
   @component
   The one tooltip surface in the app. Every tooltip renders through it, so its look (surface,
-  shadow, corners, padding, type, left-aligned text, fade-in) changes in one place. The caller
-  decides where it shows and when: an info tip anchors it under its icon, and a chart hands it
-  to LayerChart's `Tooltip.Root` with `variant="none"`.
+  shadow, corners, padding, type, left-aligned text) changes in one place. The caller decides
+  where it shows and when, and sets any id or role on its own wrapper: an info tip places it
+  under its label, and a chart hands it to LayerChart's `Tooltip.Root` with `variant="none"`.
 
   Give it either `text` for a plain explanation, or a `title` with `rows` of series values and
   an optional `hint` about what a click does.
@@ -13,8 +13,6 @@
   - `title`: the first line of a data tooltip, such as "Tue, Nov 4"
   - `rows`: one entry per series, each `{ color, label, value }` with `color` a CSS color
   - `hint`: optional muted line under a hairline
-  - `id`: element id, so a control can point `aria-describedby` at it
-  - `role`: ARIA role, such as "tooltip" for an info tip
 -->
 <script lang="ts">
   interface Props {
@@ -22,14 +20,12 @@
     title?: string;
     rows?: { color?: string; label: string; value: string }[];
     hint?: string;
-    id?: string;
-    role?: "tooltip";
   }
 
-  let { text, title, rows = [], hint, id, role }: Props = $props();
+  let { text, title, rows = [], hint }: Props = $props();
 </script>
 
-<span class="tooltip" class:data={title !== undefined} {id} {role}>
+<span class="tooltip" class:data={title !== undefined}>
   {#if text}<span class="text">{text}</span>{/if}
   {#if title}<span class="title">{title}</span>{/if}
   {#each rows as row, i (i)}
@@ -58,11 +54,12 @@
     letter-spacing: 0;
     text-align: left;
     white-space: normal;
-    animation: fade-in var(--dur-fast) var(--ease-in);
   }
 
+  /* A chart mounts its tooltip as it appears, so the tooltip fades itself in. */
   .data {
     min-width: 168px;
+    animation: fade-in var(--dur-fast) var(--ease-in);
   }
 
   .text,

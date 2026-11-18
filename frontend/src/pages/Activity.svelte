@@ -1,4 +1,5 @@
 <script lang="ts">
+  import GateName from "../lib/components/GateName.svelte";
   import { TERMS } from "../lib/terms";
   import { tick } from "svelte";
   import {
@@ -157,7 +158,7 @@
 {#snippet savedCell(e: EventRow)}<TimeValue value={savedText(e)} />{/snippet}
 
 {#snippet when(e: Row)}{formatRelative(e.ts, clock.now)}{/snippet}
-{#snippet gate(e: Row)}<span class="gate">{e.name}</span>{/snippet}
+{#snippet gate(e: Row)}<span class="gate"><GateName name={e.name} /></span>{/snippet}
 {#snippet outcomeCell(e: Row)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} />{/snippet}
 
 <section class="page" aria-labelledby="activity-title">

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import GateName from "../lib/components/GateName.svelte";
   import { getFlaky } from "../lib/api";
   import EmptyState from "../lib/components/EmptyState.svelte";
   import Notice from "../lib/components/Notice.svelte";
@@ -49,7 +50,7 @@
           <li class="panel">
             <header class="gate-head">
               <h2 class="gate-name">
-                <a href={href({ page: "gate", repo: gate.repo, name: gate.name })}>{gate.name}</a>
+                <a href={href({ page: "gate", repo: gate.repo, name: gate.name })}><GateName name={gate.name} /></a>
               </h2>
               <span class="muted" title={gate.repo ?? undefined}>{gate.repo_name}</span>
               <span class="meta">

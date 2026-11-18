@@ -53,9 +53,7 @@ export function summaryStats(
     {
       label: TERMS.calls.label,
       value: formatCount(s.runs),
-      title:
-        "Every time a gate was called through gate-cache, whether its command ran or the cache " +
-        "skipped it.",
+      title: TERMS.calls.about,
       // Every call counts, so the hint splits the calls that ran from the ones the cache skipped.
       hint: s.runs ? `${formatCount(s.runs - s.skips)} ran · ${formatCount(s.skips)} skipped` : undefined,
       href: s.runs ? options.runsHref : undefined,
@@ -66,9 +64,7 @@ export function summaryStats(
       label: TERMS.ran.label,
       value: formatDuration(s.time_spent),
       hint: s.fail_time > 0 ? `${formatDuration(s.fail_time)} on failures` : undefined,
-      title:
-        "Total time of the calls that ran, failed runs included. Skipped calls take no time, " +
-        "and gate-cache overhead and waits are not counted.",
+      title: TERMS.ran.about,
       delta: deltas?.time_spent,
       spark: spark("var(--chart-runs)", (d) => d.spent),
     },
@@ -94,9 +90,7 @@ export function summaryStats(
     {
       label: TERMS.skipRate.label,
       value: formatPercent(s.skip_rate),
-      title:
-        "The share of calls that checked the cache and were skipped because the same gate " +
-        "already passed on the same content. Calls with caching off are left out.",
+      title: TERMS.skipRate.about,
       hint: `${formatCount(s.skips)} of ${formatCount(s.runs - s.uncached)} skipped`,
       delta: deltas?.skip_rate,
       spark: spark("var(--chart-runs)", (d) => (d.ran ? d.skips / d.ran : null)),
@@ -104,9 +98,7 @@ export function summaryStats(
     {
       label: TERMS.saved.label,
       value: formatDuration(s.time_saved),
-      title:
-        "Run time that skipped calls did not spend, taken from the earlier passing run that let " +
-        "each one skip.",
+      title: TERMS.saved.about,
       delta: deltas?.time_saved,
       spark: spark("var(--chart-saved)", (d) => d.saved),
     },

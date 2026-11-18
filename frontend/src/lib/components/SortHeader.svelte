@@ -18,7 +18,7 @@
     direction: SortDirection | null;
     align?: "left" | "right";
     onclick: () => void;
-    /** Id of an element that explains the column, such as an info tip. */
+    /** Id of an element that explains the column, such as an InfoTip explanation. */
     describedby?: string;
   }
 

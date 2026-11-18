@@ -9,6 +9,7 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
+  import GateName from "../../lib/components/GateName.svelte";
   import TrendBadge from "../../lib/components/TrendBadge.svelte";
   import { getSlowdowns, spanScope, type SlowdownRow } from "../../lib/api";
   import DataTable, { type Column } from "../../lib/components/DataTable.svelte";
@@ -55,7 +56,7 @@
 </script>
 
 {#snippet gate(g: SlowdownRow)}
-  {g.name} <span class="repo" title={g.repo ?? undefined}>{g.repo_name}</span>
+  <GateName name={g.name} /> <span class="repo" title={g.repo ?? undefined}>{g.repo_name}</span>
 {/snippet}
 {#snippet change(g: SlowdownRow)}
   <TrendBadge dir="up" text={formatPercent(g.change)} tone="bad" />

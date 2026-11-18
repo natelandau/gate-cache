@@ -3,11 +3,10 @@ import { describe, expect, it } from "vitest";
 import Tooltip from "./Tooltip.svelte";
 
 describe("Tooltip", () => {
-  it("shows a plain explanation with the given role and id", () => {
-    const { body } = render(Tooltip, { props: { text: "What this measures.", role: "tooltip", id: "x-tip" } });
-    expect(body).toMatch(/role="tooltip"/);
-    expect(body).toMatch(/id="x-tip"/);
+  it("shows a plain explanation", () => {
+    const { body } = render(Tooltip, { props: { text: "What this measures." } });
     expect(body).toContain("What this measures.");
+    expect(body).not.toContain('class="title');
   });
 
   it("shows the title, a color bar and value per row, and the hint", () => {
