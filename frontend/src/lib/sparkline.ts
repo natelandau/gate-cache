@@ -36,8 +36,9 @@ export function sparkPath(
     if (!current) runs.push((current = []));
     current.push([round(i * step), round(y(v))]);
   });
+  // A lone known day gets a zero-length segment: with a round line cap it draws as a dot.
   const segment = (points: [number, number][]) =>
-    points.map(([x, py], i) => `${i ? "L" : "M"}${x} ${py}`).join(" ");
+    points.map(([x, py], i) => `${i ? "L" : "M"}${x} ${py}`).join(" ") + (points.length === 1 ? " h0" : "");
   const line = runs.map(segment).join(" ");
   const area = runs
     .map((points) => {

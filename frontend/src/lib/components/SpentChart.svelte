@@ -16,12 +16,14 @@
 <script lang="ts">
   import { barMotion } from "../motion";
   import type { ChartState } from "layerchart";
-  import { BarChart, Bars, Tooltip } from "layerchart/svg";
+  import { BarChart, Tooltip } from "layerchart/svg";
   import type { SpentGate } from "../api";
+  import { barFloor, stackStretch } from "../bars";
   import { createDayPick } from "../daypick.svelte";
   import { durationTicks, formatAxisDuration, formatDuration, formatLongDay, formatShortDay } from "../format";
   import { PICK_DAY_HINT, type DaySpan } from "../selection";
   import { spentTotals, type SpentRow, type SpentSeries } from "../spent";
+  import FloorBars from "./FloorBars.svelte";
   import TooltipSurface from "./TooltipSurface.svelte";
   import DayPicker from "./DayPicker.svelte";
 
@@ -60,13 +62,16 @@
   // position rather than from events on the bars.
   function hoverAt(event: PointerEvent): void {
     const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const fy = (event.clientY - box.top - padding.top) / (box.height - padding.top - padding.bottom);
+    const plotPx = box.height - padding.top - padding.bottom;
+    const fy = (event.clientY - box.top - padding.top) / plotPx;
     const index = pick.indexAt(event, box);
-    const value = (1 - fy) * top;
+    const row = index === null ? undefined : rows[index];
+    // FloorBars stretches a short stack to stay visible, so map the pointer back to true values.
+    const value = row ? ((1 - fy) * top) / stackStretch(row.total, barFloor(top, plotPx)) : 0;
     const segment =
-      index === null || fy < 0 || fy > 1
+      !row || fy < 0 || fy > 1
         ? undefined
-        : rows[index]?.segments.find((s) => s.end > s.start && value >= s.start && value < s.end);
+        : row.segments.find((s) => s.end > s.start && value >= s.start && value < s.end);
     highlight = segment?.key ?? null;
   }
 
@@ -177,8 +182,9 @@
       >
         {#snippet marks()}
           {#each series as s (s.key)}
-            <Bars
+            <FloorBars
               y={(d: SpentRow) => span(d, s.key)}
+              total={(d: SpentRow) => d.total}
               fill={s.color}
               opacity={opacity(s.key)}
               radius={0}

@@ -23,6 +23,12 @@ describe("sparkPath", () => {
     expect(line.match(/M/g)).toHaveLength(2);
   });
 
+  it("draws a known day with no known neighbors, instead of a bare move", () => {
+    const { line } = sparkPath([1, null, 3], 200, 34);
+    // Every subpath must draw after its move, or the browser paints nothing for it.
+    expect(line.split("M").slice(1).every((sub) => /[LHVlhv]/.test(sub))).toBe(true);
+  });
+
   it("keeps negative values inside the box, with zero above the lowest point", () => {
     const points = ys(sparkPath([-10, 0, 10], 200, 34).line);
     for (const y of points) {

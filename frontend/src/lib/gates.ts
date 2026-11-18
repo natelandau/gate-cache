@@ -4,6 +4,7 @@ import type { EventRow, GateDetail, GateRow } from "./api";
 import { formatDuration } from "./format";
 import type { MixPart } from "./rank";
 import { OTHER_COLOR, SPENT_COLORS } from "./spent";
+import { median } from "./stats";
 
 /** Return a key unique per (repo, gate name); null is its own repo. */
 export function gateKey(gate: { repo: string | null; name: string }): string {
@@ -24,11 +25,11 @@ export function trendStats(trend: GateDetail["trend"]): {
   median: number | null;
   latest: number | null;
 } {
-  if (trend.length === 0) return { count: 0, median: null, latest: null };
-  const sorted = trend.map((point) => point.duration).sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  const median = sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
-  return { count: trend.length, median, latest: trend.at(-1)!.duration };
+  return {
+    count: trend.length,
+    median: median(trend.map((point) => point.duration)),
+    latest: trend.at(-1)?.duration ?? null,
+  };
 }
 
 /** Count the failures and passes (cached or not) among runs on one tree. */
