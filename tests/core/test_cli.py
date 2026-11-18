@@ -221,7 +221,7 @@ def test_help_is_self_describing(
     assert "from the top of the work tree" in flat
     assert "a path that is missing from the list hides a change that must run" in flat
     assert cli.FILES_CHANGED_NOTICE in flat
-    assert 'gate-cache --name "test-$(git hash-object .env)" -- ' in out
+    assert 'gate-cache --name "test@$(git hash-object .env)" -- ' in out
     assert "empty-command" not in out
 
 

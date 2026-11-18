@@ -187,7 +187,7 @@ def test_schema_version(tmp_path: Path) -> None:
     """A new archive records its schema version and uses WAL."""
     arch = Archive.open(tmp_path / "a.sqlite3")
     try:
-        assert arch.meta("schema_version") == "3"
+        assert arch.meta("schema_version") == str(archive_module.SCHEMA_VERSION)
         assert arch.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     finally:
         arch.close()
@@ -452,8 +452,9 @@ def test_v1_archive_is_migrated(tmp_path: Path, inbox: Path, schema: str) -> Non
     line = make_event(now).to_line()
     inbox.write_bytes(line)
     with Archive.open(path) as arch:
-        assert arch.meta("schema_version") == "3"
+        assert arch.meta("schema_version") == str(archive_module.SCHEMA_VERSION)
         assert arch.connection.execute("SELECT name, raw FROM events").fetchall() == [("old", None)]
+        assert arch.connection.execute("SELECT gate FROM events").fetchall() == [("old",)]
         arch.ingest(inbox, now=now)
         arch.ingest(inbox, now=now + 3)
         rows = arch.connection.execute("SELECT name, raw FROM events ORDER BY ts").fetchall()
@@ -547,7 +548,7 @@ def test_v2_archive_backfills_timings(tmp_path: Path) -> None:
     connection.commit()
     connection.close()
     with Archive.open(path) as arch:
-        assert arch.meta("schema_version") == "3"
+        assert arch.meta("schema_version") == str(archive_module.SCHEMA_VERSION)
         assert _timings(arch) == [
             (None, None, 0, 0, 0),
             (0.5, 2.0, 1, 0, 0),

@@ -158,7 +158,7 @@
 {#snippet savedCell(e: EventRow)}<TimeValue value={savedText(e)} />{/snippet}
 
 {#snippet when(e: Row)}{formatRelative(e.ts, clock.now)}{/snippet}
-{#snippet gate(e: Row)}<span class="gate"><GateName name={e.name} /></span>{/snippet}
+{#snippet gate(e: Row)}<span class="gate"><GateName name={e.name} gate={e.gate} /></span>{/snippet}
 {#snippet outcomeCell(e: Row)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} />{/snippet}
 
 <section class="page" aria-labelledby="activity-title">
@@ -192,7 +192,7 @@
         {rows}
         {columns}
         rowKey={(e) => e.key}
-        onRowClick={(e) => navigate({ page: "gate", repo: e.repo, name: e.name })}
+        onRowClick={(e) => navigate({ page: "gate", repo: e.repo, name: e.gate })}
         rowLabel={(e) =>
           `${e.name} in ${e.repo_name}, ${OUTCOMES[e.outcome].label}, ${formatRelative(e.ts, clock.now)}. Open gate`}
         busy={first.loading}

@@ -92,9 +92,10 @@ cover.
 Only the name and the file content are keyed. The working directory is not, so
 a command whose meaning depends on it needs a distinct --name. To also key on an
 ignored file, an environment variable, or a tool version, put its value in
---name. A changed value gives a new name, so the command runs again. Never put a
-secret in a name, because markers and status store it as plain text. Give --name
-to a command that takes a secret argument.
+--name after an @, as in test@v22. A changed value gives a new name, so the
+command runs again, and stats count every value toward the gate before the @.
+Never put a secret in a name, because markers and status store it as plain
+text. Give --name to a command that takes a secret argument.
 
 --path scopes a gate to the files it reads, so a change elsewhere in the
 repository does not run it again. Each --path is a git pathspec, read from the
@@ -143,7 +144,7 @@ Environment:
 Typical use:
   gate-cache -- uv run pytest -x
   gate-cache --name pytest -- uv run pytest -x
-  gate-cache --name "test-$(git hash-object .env)" -- uv run pytest
+  gate-cache --name "test@$(git hash-object .env)" -- uv run pytest
   gate-cache --name api-test --path api/ --path uv.lock -- uv run pytest api
 """
 

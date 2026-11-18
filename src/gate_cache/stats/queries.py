@@ -29,7 +29,7 @@ _MAX_PAGE = 500
 _OUTCOMES: frozenset[str] = frozenset(get_args(Outcome))
 # The archive keeps outcomes from newer gate-cache versions; only known ones count.
 _KNOWN = "outcome IN (" + ", ".join(f"'{o}'" for o in sorted(_OUTCOMES)) + ")"
-_ROW_COLUMNS = "ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported"
+_ROW_COLUMNS = "ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported, gate"
 # Every real UTC offset is a whole number of quarter hours, so no bucket spans two local days.
 _BUCKET_SECONDS = 900
 # Floor division: CAST truncates toward zero, which is one bucket too high for negative ts.
@@ -158,7 +158,7 @@ def _zone(name: str) -> ZoneInfo:
 def _where(
     filters: Filters,
     *,
-    name: str | None = None,
+    gate: str | None = None,
     exact_repo: tuple[str | None] | None = None,
 ) -> tuple[str, list[Any]]:
     """Build a WHERE clause from fixed fragments; every value binds as a parameter."""
@@ -176,9 +176,9 @@ def _where(
         if None in filters.repos:
             parts.append("repo IS NULL")
         clauses.append(f"({' OR '.join(parts)})")
-    if name is not None:
-        clauses.append("name = ?")
-        params.append(name)
+    if gate is not None:
+        clauses.append("gate = ?")
+        params.append(gate)
     if filters.start is not None:
         clauses.append("ts >= ?")
         params.append(filters.start)
@@ -199,6 +199,8 @@ def _skip_rate(skips: int, ran: int) -> float | None:
 
 
 # A flaky tree: one gate's content that both failed and passed. Every flaky view groups by this.
+# Grouped by the exact name, not the gate: two keys of one gate, such as two tool versions,
+# that split a tree's outcomes are a real difference, not a flake.
 _FLAKY_GROUP = (
     " GROUP BY repo, name, tree"
     " HAVING SUM(outcome = 'fail') > 0 AND SUM(outcome IN " + _GOOD + ") > 0"
@@ -227,26 +229,32 @@ def _flaky_trees_cte(where: str) -> str:
 def _flaky_trees(
     conn: sqlite3.Connection, where: str, params: list[Any]
 ) -> list[tuple[str | None, str, str, int, int, float]]:
-    """Return (repo, name, tree, fails, passes, last) for trees with a fail and a pass."""
+    """Return (repo, gate, tree, fails, passes, last) for trees with a fail and a pass.
+
+    A tree that is flaky under several keys of one gate comes back once, with their counts summed.
+    """
     sql = (
-        "SELECT repo, name, tree,"  # noqa: S608
-        " SUM(outcome = 'fail'), SUM(outcome IN " + _GOOD + "), MAX(ts)"
+        "SELECT repo, gate, tree, SUM(fails), SUM(passes), MAX(last) FROM ("  # noqa: S608
+        "SELECT repo, gate, tree,"
+        " SUM(outcome = 'fail') AS fails, SUM(outcome IN " + _GOOD + ") AS passes,"
+        " MAX(ts) AS last"
         " FROM events"
         + _and(where, "tree IS NOT NULL")
         + _FLAKY_GROUP
-        + " ORDER BY MAX(ts) DESC, tree"
+        + ") GROUP BY repo, gate, tree ORDER BY MAX(last) DESC, tree"
     )
     return [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in conn.execute(sql, params)]
 
 
 def _event_row(raw: tuple[Any, ...], names: dict[str | None, str]) -> dict[str, Any]:
     """Convert a row selected with _ROW_COLUMNS into an API dict."""
-    ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported = raw
+    ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported, gate = raw
     return {
         "ts": ts,
         "repo": repo,
         "repo_name": names[repo],
         "name": name,
+        "gate": gate,
         "outcome": outcome,
         "duration": duration,
         "saved": saved,
@@ -540,24 +548,24 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     durations = _pass_durations(conn, where, params)
     resources = _resource_costs(conn, where, params)
     rows = conn.execute(
-        "SELECT repo, name, COUNT(*),"  # noqa: S608
+        "SELECT repo, gate, COUNT(*),"  # noqa: S608
         " SUM(outcome = 'skip'), SUM(outcome IN " + _RAN + "),"
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
         " SUM(outcome = 'fail'), MAX(ts), COALESCE(SUM(duration), 0.0),"
         " COALESCE(SUM(CASE WHEN outcome = 'fail' THEN duration END), 0.0)"
-        " FROM events" + where + " GROUP BY repo, name",
+        " FROM events" + where + " GROUP BY repo, gate",
         params,
     ).fetchall()
     out: list[dict[str, Any]] = []
-    for repo, name, runs, skips, ran, saved, failures, last, spent, fail_time in rows:
-        durs = durations.get((repo, name), [])
+    for repo, gate, runs, skips, ran, saved, failures, last, spent, fail_time in rows:
+        durs = durations.get((repo, gate), [])
         avg_run, median_run = _run_stats(durs)
-        cpu_ratio, peak_rss, rss_values = resources.get((repo, name), (None, None, []))
+        cpu_ratio, peak_rss, rss_values = resources.get((repo, gate), (None, None, []))
         out.append(
             {
                 "repo": repo,
                 "repo_name": names[repo],
-                "name": name,
+                "name": gate,
                 "runs": runs,
                 "skip_rate": _skip_rate(skips, ran),
                 "avg_run": avg_run,
@@ -565,7 +573,7 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
                 "time_saved": float(saved),
                 "failures": failures,
                 "last_run": last,
-                "flaky": (repo, name) in flaky_keys,
+                "flaky": (repo, gate) in flaky_keys,
                 "time_spent": float(spent),
                 "fail_time": float(fail_time),
                 "p90_run": _p90(durs),
@@ -611,12 +619,12 @@ def spent(conn: sqlite3.Connection, filters: Filters, *, status: SpentStatus) ->
     totals: dict[tuple[str | None, str], float] = defaultdict(float)
     cells: dict[str, dict[tuple[str | None, str], float]] = defaultdict(lambda: defaultdict(float))
     days: dict[int, str] = {}
-    for repo, name, bucket_id, seconds in conn.execute(
-        "SELECT repo, name, " + _BUCKET + ", SUM(duration)"  # noqa: S608
-        " FROM events" + where + " GROUP BY repo, name, 3",
+    for repo, gate, bucket_id, seconds in conn.execute(
+        "SELECT repo, gate, " + _BUCKET + ", SUM(duration)"  # noqa: S608
+        " FROM events" + where + " GROUP BY repo, gate, 3",
         params,
     ):
-        key = (repo, name)
+        key = (repo, gate)
         totals[key] += float(seconds)
         if bucket_id not in days:
             days[bucket_id] = _bucket_start(bucket_id, zone).date().isoformat()
@@ -635,11 +643,11 @@ def spent(conn: sqlite3.Connection, filters: Filters, *, status: SpentStatus) ->
             {
                 "repo": repo,
                 "repo_name": names[repo],
-                "name": name,
-                "label": f"{name} · {names[repo]}" if multi_repo else name,
-                "total": totals[(repo, name)],
+                "name": gate,
+                "label": f"{gate} · {names[repo]}" if multi_repo else gate,
+                "total": totals[(repo, gate)],
             }
-            for repo, name in top
+            for repo, gate in top
         ],
         "daily": daily,
     }
@@ -664,12 +672,12 @@ def _pass_durations(
 ) -> dict[tuple[str | None, str], list[float]]:
     """Return the passing durations of each gate."""
     durations: dict[tuple[str | None, str], list[float]] = defaultdict(list)
-    for repo, name, duration in conn.execute(
-        "SELECT repo, name, duration FROM events"  # noqa: S608
+    for repo, gate, duration in conn.execute(
+        "SELECT repo, gate, duration FROM events"  # noqa: S608
         + _and(where, "outcome = 'pass' AND duration IS NOT NULL"),
         params,
     ):
-        durations[(repo, name)].append(duration)
+        durations[(repo, gate)].append(duration)
     return durations
 
 
@@ -731,28 +739,28 @@ def _resource_costs(
 ) -> dict[tuple[str | None, str], tuple[float | None, int | None, list[int]]]:
     """Return CPU seconds per wall second, peak memory, and memory samples for each gate."""
     totals: dict[tuple[str | None, str], _ResourceTotals] = defaultdict(_ResourceTotals)
-    for repo, name, duration, cpu, rss in conn.execute(
-        "SELECT repo, name, duration,"  # noqa: S608
+    for repo, gate, duration, cpu, rss in conn.execute(
+        "SELECT repo, gate, duration,"  # noqa: S608
         " CASE WHEN json_valid(raw) THEN json_extract(raw, '$.cpu') END,"
         " CASE WHEN json_valid(raw) THEN json_extract(raw, '$.max_rss') END"
         # Only runs that ran the command record usage, so skips need no JSON parsing.
         " FROM events" + _and(where, "duration IS NOT NULL"),
         params,
     ):
-        gate = totals[(repo, name)]
+        usage = totals[(repo, gate)]
         if _is_number(cpu):
-            gate.cpu += cpu
-            gate.wall += duration
-            gate.has_cpu = True
+            usage.cpu += cpu
+            usage.wall += duration
+            usage.has_cpu = True
         if _is_number(rss):
-            gate.rss.append(int(rss))
+            usage.rss.append(int(rss))
     return {
         key: (
-            gate.cpu / gate.wall if gate.has_cpu and gate.wall else None,
-            max(gate.rss) if gate.rss else None,
-            gate.rss,
+            usage.cpu / usage.wall if usage.has_cpu and usage.wall else None,
+            max(usage.rss) if usage.rss else None,
+            usage.rss,
         )
-        for key, gate in totals.items()
+        for key, usage in totals.items()
     }
 
 
@@ -794,8 +802,8 @@ def slowdowns(
     before = _median_passes(conn, window)
     after = _median_passes(conn, current)
     out: list[dict[str, Any]] = []
-    for (repo, name), (median_now, runs_now) in after.items():
-        median_before, runs_before = before.get((repo, name), (0.0, 0))
+    for (repo, gate), (median_now, runs_now) in after.items():
+        median_before, runs_before = before.get((repo, gate), (0.0, 0))
         if (
             min(runs_now, runs_before) < min_runs
             or median_before <= 0
@@ -806,7 +814,7 @@ def slowdowns(
             {
                 "repo": repo,
                 "repo_name": names[repo],
-                "name": name,
+                "name": gate,
                 "before": median_before,
                 "now": median_now,
                 "change": median_now / median_before - 1,
@@ -825,12 +833,12 @@ def gate_detail(
         conn: Archive connection.
         filters: Range filters; its repo is ignored.
         repo: The gate's repo; None selects events recorded without a repo.
-        name: Gate name.
+        name: Gate, as stats group it: the name before any `@` key.
 
     Returns:
         The detail body.
     """
-    where, params = _where(filters, name=name, exact_repo=(repo,))
+    where, params = _where(filters, gate=name, exact_repo=(repo,))
     names = _all_repo_names(conn)
     trend = conn.execute(
         "SELECT ts, duration FROM events"  # noqa: S608
@@ -991,7 +999,7 @@ class _Grouping:
 # One entry here adds a grouping; the dashboard lists its choices in frontend/src/lib/dimensions.ts.
 _GROUPINGS: dict[str, _Grouping] = {
     "repo": _Grouping(("repo",), _repo_labels, in_repo=True),
-    "gate": _Grouping(("repo", "name"), _gate_labels, in_repo=True),
+    "gate": _Grouping(("repo", "gate"), _gate_labels, in_repo=True),
     "source": _Grouping(
         (_TRIGGER, f"CASE WHEN {_TRIGGER} = 'agent' THEN NULLIF({_raw_text('agent')}, '') END"),
         _source_labels,
@@ -1070,7 +1078,7 @@ def _breakdown_rows(
         f" {grouping.extra or 'NULL'}, MAX(ts),"
         " COUNT(*), SUM(outcome = 'skip'), SUM(outcome IN " + _RAN + "),"
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
-        " SUM(outcome = 'fail'), COUNT(DISTINCT json_array(repo, name)),"
+        " SUM(outcome = 'fail'), COUNT(DISTINCT json_array(repo, gate)),"
         " COALESCE(SUM(duration), 0.0)"
         " FROM events" + where + " GROUP BY " + ", ".join(str(i) for i in range(1, width + 1)),
         params,
@@ -1196,7 +1204,8 @@ def activity(  # noqa: PLR0913
         group: Keep only the events of one breakdown row, as its dimension and key.
         weekday: With `hour`, keep only events in this local weekday (0 is Sunday).
         hour: With `weekday`, keep only events in this local hour (0 to 23).
-        gate: Keep only events of this repo and gate name; None as the repo is the unknown repo.
+        gate: Keep only events of this repo and gate, the name before any `@` key; None as the
+            repo is the unknown repo.
         flaky: Keep only events on trees that both failed and passed in the window.
 
     Returns:
@@ -1216,13 +1225,13 @@ def activity(  # noqa: PLR0913
         where = _and(where, _BUCKET + " IN (SELECT value FROM json_each(?))")  # noqa: S608
         params = [*params, json.dumps(buckets)]
     if gate is not None:
-        where = _and(where, "repo IS ? AND name = ?")
+        where = _and(where, "repo IS ? AND gate = ?")
         params = [*params, gate[0], gate[1]]
     prefix, prefix_params = "", []
     if flaky:
         # Flakiness is decided over every outcome in the window, whatever else is filtered.
         tree_where, prefix_params = (
-            _where(filters, name=gate[1], exact_repo=(gate[0],)) if gate else _where(filters)
+            _where(filters, gate=gate[1], exact_repo=(gate[0],)) if gate else _where(filters)
         )
         prefix = _flaky_trees_cte(tree_where)
         where = _and(where, _ON_FLAKY_TREE)
@@ -1279,21 +1288,22 @@ def flaky(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         + " ORDER BY ts, id",
         [*params, *params],
     ):
-        runs[row[1], row[2], row[8]].append(_event_row(row, names))
+        event = _event_row(row, names)
+        runs[event["repo"], event["gate"], event["tree"]].append(event)
     last_seen = {key: max(run["ts"] for run in tree_runs) for key, tree_runs in runs.items()}
     by_gate: dict[tuple[str | None, str], list[tuple[str, float]]] = {}
-    for repo, name, tree in sorted(last_seen, key=lambda k: (-last_seen[k], k[2])):
-        by_gate.setdefault((repo, name), []).append((tree, last_seen[repo, name, tree]))
+    for repo, gate, tree in sorted(last_seen, key=lambda k: (-last_seen[k], k[2])):
+        by_gate.setdefault((repo, gate), []).append((tree, last_seen[repo, gate, tree]))
     out: list[dict[str, Any]] = [
         {
             "repo": repo,
             "repo_name": names[repo],
-            "name": name,
+            "name": gate,
             "tree_count": len(gate_trees),
             "last_seen": max(last for _, last in gate_trees),
-            "trees": [{"tree": tree, "runs": runs[repo, name, tree]} for tree, _ in gate_trees],
+            "trees": [{"tree": tree, "runs": runs[repo, gate, tree]} for tree, _ in gate_trees],
         }
-        for (repo, name), gate_trees in by_gate.items()
+        for (repo, gate), gate_trees in by_gate.items()
     ]
     out.sort(key=lambda g: -g["last_seen"])
     return {"gates": out}

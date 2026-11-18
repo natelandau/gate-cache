@@ -76,12 +76,11 @@ export function sourceParts(rows: GateDetail["by_source"]): MixPart[] {
 }
 
 /**
- * Split a gate name into its readable part and a trailing "@" plus hex suffix, such as
- * "apple-test" and "@c350b4abb3f3", so the suffix can be shown muted. Names without one
- * come back whole with an empty suffix.
+ * Whether a gate name is a command line, as gate-cache records a gate run without --name.
+ * A name with whitespace is taken as one; the CLI documents names without spaces.
  */
-export function splitGateName(name: string): { base: string; suffix: string } {
-  // A digit-only suffix, such as a date, is part of the name, not a hash.
-  const match = /^(.+?)(@(?=[0-9]*[a-f])[0-9a-f]{6,})$/i.exec(name);
-  return match ? { base: match[1]!, suffix: match[2]! } : { base: name, suffix: "" };
+export function isCommandLine(name: string): boolean {
+  // The same ASCII whitespace that the archive's gate column checks, so a name never shows
+  // as both a keyed gate and a command line.
+  return /[ \t\n\v\f\r]/.test(name);
 }
