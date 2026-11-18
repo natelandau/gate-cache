@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import statistics
 from collections.abc import Iterator
 from pathlib import Path
 from typing import get_args
@@ -49,12 +50,14 @@ def insert(
     wait_known: bool = False,
     reported: bool = False,
     wait_timed_out: bool = False,
+    exit_code: int | None = None,
+    raw: dict[str, object] | None = None,
 ) -> None:
     """Insert one event row."""
     conn.execute(
         "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome, duration, saved,"
-        " reason, overhead, waited, wait_known, reported, wait_timed_out)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " reason, overhead, waited, wait_known, reported, wait_timed_out, exit_code, raw)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             f"h{conn.total_changes}-{ts}",
             ts,
@@ -71,6 +74,8 @@ def insert(
             wait_known,
             reported,
             wait_timed_out,
+            exit_code,
+            json.dumps(raw) if raw is not None else None,
         ),
     )
     conn.commit()
@@ -555,6 +560,45 @@ def test_previous_window_totals(empty_conn: sqlite3.Connection) -> None:
     assert s["previous"]["days"] == 1.0
 
 
+def test_summary_time_spent(empty_conn: sqlite3.Connection) -> None:
+    """Time spent sums every recorded duration, and failing time only the failures."""
+    insert(empty_conn, BASE, "pass", duration=4.0)
+    insert(empty_conn, BASE + 1, "fail", duration=6.0)
+    insert(empty_conn, BASE + 2, "skip", saved=9.0)
+    body = summary(empty_conn, Filters(start=BASE, end=BASE + DAY), now=BASE + DAY)
+    assert body["time_spent"] == 10.0
+    assert body["fail_time"] == 6.0
+
+
+def test_summary_only_skips_spends_nothing(empty_conn: sqlite3.Connection) -> None:
+    """Skips record no duration, so they spend no time."""
+    insert(empty_conn, BASE, "skip", saved=9.0)
+    assert summary(empty_conn, Filters(), now=BASE + 1)["time_spent"] == 0.0
+
+
+def test_previous_time_spent(empty_conn: sqlite3.Connection) -> None:
+    """Previous totals include the time spent in the previous window."""
+    insert(empty_conn, BASE, "pass", duration=5.0)
+    insert(empty_conn, BASE + DAY + 100, "pass", duration=7.0)
+    s = summary(empty_conn, Filters(start=BASE + DAY, end=BASE + 2 * DAY), now=BASE + 2 * DAY)
+    assert s["previous"]["time_spent"] == 5.0
+
+
+def test_breakdown_time_spent_and_gate_medians(empty_conn: sqlite3.Connection) -> None:
+    """Gate rows carry the average and median pass; other dimensions carry none."""
+    insert(empty_conn, BASE, "pass", name="lint", duration=2.0)
+    insert(empty_conn, BASE + 1, "pass", name="lint", duration=4.0)
+    insert(empty_conn, BASE + 2, "fail", name="lint", duration=9.0)
+    gate_rows = queries.breakdown(empty_conn, Filters(), by="gate")["rows"]
+    assert gate_rows[0]["time_spent"] == 15.0
+    assert gate_rows[0]["avg_run"] == 3.0
+    assert gate_rows[0]["median_run"] == 3.0
+    repo_rows = queries.breakdown(empty_conn, Filters(), by="repo")["rows"]
+    assert repo_rows[0]["time_spent"] == 15.0
+    assert repo_rows[0]["avg_run"] is None
+    assert repo_rows[0]["median_run"] is None
+
+
 def test_previous_none_for_all_time(conn: sqlite3.Connection) -> None:
     """An unbounded range has no previous window."""
     assert summary(conn, Filters(), now=BASE + 3 * DAY)["previous"] is None
@@ -962,3 +1006,177 @@ def test_group_filter_rejects_keys_that_do_not_fit(key: str) -> None:
     """A key that is not a JSON list of one text or null per group column is a ValueError."""
     with pytest.raises(ValueError, match="malformed branch key"):
         queries.group_filter("branch", key)
+
+
+def test_gates_cost_fields(empty_conn: sqlite3.Connection) -> None:
+    """Report time spent, failed time, spread, CPU ratio, and memory per gate."""
+    for d in (10.0, 20.0, 30.0, 40.0, 50.0):
+        insert(
+            empty_conn, BASE + d, "pass", duration=d, raw={"cpu": d * 2, "max_rss": int(d) * 1000}
+        )
+    insert(empty_conn, BASE + 100, "fail", duration=5.0)
+    insert(empty_conn, BASE + 101, "uncached", duration=7.0)
+    insert(empty_conn, BASE + 102, "skip", saved=10.0)
+    (row,) = gates(empty_conn, Filters())["gates"]
+    assert row["time_spent"] == 162.0
+    assert row["fail_time"] == 5.0
+    assert row["p90_run"] == pytest.approx(
+        statistics.quantiles([10, 20, 30, 40, 50], n=10, method="inclusive")[8]
+    )
+    assert row["cpu_ratio"] == pytest.approx(300.0 / 150.0)
+    assert row["peak_rss"] == 50000
+    assert row["median_rss"] == 30000
+
+
+def test_gates_cost_fields_without_resources(empty_conn: sqlite3.Connection) -> None:
+    """Leave resource and spread fields empty when the data cannot support them."""
+    insert(empty_conn, BASE, "pass", duration=3.0)
+    insert(empty_conn, BASE + 1, "pass", duration=3.0, raw={"cpu": "x"})
+    insert(empty_conn, BASE + 2, "pass", duration=0.0, raw={"cpu": 1.0})
+    (row,) = gates(empty_conn, Filters())["gates"]
+    assert row["time_spent"] == 6.0
+    assert row["cpu_ratio"] is None
+    assert row["peak_rss"] is None
+    assert row["median_rss"] is None
+    assert row["p90_run"] is None
+
+
+def test_gates_memory_without_cpu(empty_conn: sqlite3.Connection) -> None:
+    """Report peak memory for a gate whose runs recorded no CPU time."""
+    insert(empty_conn, BASE, "pass", duration=3.0, raw={"max_rss": 1000})
+    (row,) = gates(empty_conn, Filters())["gates"]
+    assert row["peak_rss"] == 1000
+    assert row["cpu_ratio"] is None
+
+
+def test_spent_top_five_and_other(empty_conn):
+    """Spent keeps the five largest gates and folds the rest into other."""
+    for i, name in enumerate("abcdef"):
+        insert(empty_conn, BASE + i, "pass", name=name, duration=float(10 - i))
+    body = queries.spent(empty_conn, Filters(), status="all")
+    assert [g["name"] for g in body["gates"]] == ["a", "b", "c", "d", "e"]
+    (day,) = body["daily"]
+    assert day["gates"] == [10.0, 9.0, 8.0, 7.0, 6.0]
+    assert day["other"] == 5.0
+
+
+def test_spent_status_filters(empty_conn):
+    """Spent counts only failing or only passing runs for those statuses."""
+    insert(empty_conn, BASE, "pass", duration=3.0)
+    insert(empty_conn, BASE + 1, "fail", duration=4.0)
+    assert queries.spent(empty_conn, Filters(), status="failing")["gates"][0]["total"] == 4.0
+    assert queries.spent(empty_conn, Filters(), status="passing")["gates"][0]["total"] == 3.0
+
+
+def test_spent_only_skips_is_empty(empty_conn):
+    """Spent ignores events that have no duration."""
+    insert(empty_conn, BASE, "skip", saved=1.0)
+    assert queries.spent(empty_conn, Filters(), status="all") == {
+        "status": "all",
+        "gates": [],
+        "daily": [],
+    }
+
+
+def test_spent_same_name_two_repos(empty_conn):
+    """Spent labels gates with their repo when the top gates span repos."""
+    insert(empty_conn, BASE, "pass", repo=REPO_A, duration=2.0)
+    insert(empty_conn, BASE + 1, "pass", repo=REPO_B, duration=1.0)
+    gates_ = queries.spent(empty_conn, Filters(), status="all")["gates"]
+    assert len(gates_) == 2
+    assert all(" · " in g["label"] for g in gates_)
+
+
+def test_spent_days_match_summary_days(empty_conn):
+    """Spent buckets days in the filter's zone exactly as summary does."""
+    insert(empty_conn, BASE + 3600, "pass", duration=1.0)  # previous day in New York
+    f = Filters(tz="America/New_York")
+    assert [d["day"] for d in queries.spent(empty_conn, f, status="all")["daily"]] == [
+        d["day"] for d in summary(empty_conn, f, now=BASE + DAY)["daily"]
+    ]
+
+
+def test_spent_unknown_status(empty_conn):
+    """Spent rejects an unknown status."""
+    with pytest.raises(ValueError, match="status"):
+        queries.spent(empty_conn, Filters(), status="nope")  # ty: ignore[invalid-argument-type]
+
+
+def test_spent_other_is_exactly_zero_without_other_gates(empty_conn):
+    """Spent sums other gates directly, so top gates leave no float residue."""
+    for name, duration in zip("abc", (0.1, 0.2, 0.3), strict=True):
+        insert(empty_conn, BASE, "pass", name=name, duration=duration)
+    (day,) = queries.spent(empty_conn, Filters(), status="all")["daily"]
+    assert day["other"] == 0.0
+
+
+def test_gate_detail_histogram(empty_conn: sqlite3.Connection) -> None:
+    """Bin passing durations from fastest to slowest and report the median."""
+    for d in (1.0, 2.0, 3.0, 4.0, 13.0):
+        insert(empty_conn, BASE + d, "pass", duration=d)
+    h = gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["histogram"]
+    assert len(h["edges"]) == 13
+    assert h["edges"][0] == 1.0
+    assert h["edges"][-1] == 13.0
+    assert sum(h["counts"]) == 5
+    assert h["counts"][-1] == 1
+    assert h["median"] == 3.0
+
+
+def test_gate_detail_histogram_identical_durations(empty_conn: sqlite3.Connection) -> None:
+    """Put identical durations in the first bin."""
+    for i in range(5):
+        insert(empty_conn, BASE + i, "pass", duration=2.0)
+    h = gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["histogram"]
+    assert h["counts"][0] == 5
+    assert sum(h["counts"]) == 5
+    assert h["edges"][0] == 2.0
+    assert h["edges"][-1] == pytest.approx(3.0)
+
+
+def test_gate_detail_histogram_needs_five(empty_conn: sqlite3.Connection) -> None:
+    """Return no histogram under five passes."""
+    insert(empty_conn, BASE, "pass", duration=2.0)
+    assert gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["histogram"] is None
+
+
+def test_gate_detail_failure_timing(empty_conn: sqlite3.Connection) -> None:
+    """Split failures at half the median pass and skip reported ones."""
+    for i, d in enumerate((10.0, 10.0, 10.0)):
+        insert(empty_conn, BASE + i, "pass", duration=d)
+    insert(empty_conn, BASE + 10, "fail", duration=2.0)
+    insert(empty_conn, BASE + 11, "fail", duration=9.0)
+    insert(empty_conn, BASE + 12, "fail", reported=True)
+    t = gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["failure_timing"]
+    assert t["threshold"] == 5.0
+    assert t["early"] == {"runs": 1, "time": 2.0}
+    assert t["late"] == {"runs": 1, "time": 9.0}
+    assert t["unclassified"] == {"runs": 0, "time": 0.0}
+
+
+def test_gate_detail_failure_timing_without_passes(empty_conn: sqlite3.Connection) -> None:
+    """Leave failures unclassified when there is no median pass."""
+    insert(empty_conn, BASE, "fail", duration=4.0)
+    t = gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["failure_timing"]
+    assert t["threshold"] is None
+    assert t["unclassified"] == {"runs": 1, "time": 4.0}
+
+
+def test_gate_detail_by_source(empty_conn: sqlite3.Connection) -> None:
+    """List time spent by source, largest first."""
+    insert(empty_conn, BASE, "pass", duration=3.0, raw={"trigger": "hook"})
+    insert(empty_conn, BASE + 1, "pass", duration=8.0, raw={"trigger": "agent", "agent": "claude"})
+    rows = gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["by_source"]
+    assert [(r["label"], r["time_spent"]) for r in rows] == [
+        ("Agent: claude", 8.0),
+        ("Git hook", 3.0),
+    ]
+    assert set(rows[0]) == {"key", "label", "title", "runs", "time_spent"}
+
+
+def test_gate_detail_by_source_drops_sources_without_time(empty_conn: sqlite3.Connection) -> None:
+    """Leave out a source whose runs all skipped, since it spent no time."""
+    insert(empty_conn, BASE, "pass", duration=3.0, raw={"trigger": "hook"})
+    insert(empty_conn, BASE + 1, "skip", saved=3.0, raw={"trigger": "ci"})
+    rows = gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["by_source"]
+    assert [r["label"] for r in rows] == ["Git hook"]
