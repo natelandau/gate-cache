@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.10.0 (2026-11-18)
+
+### Feat
+
+- **dashboard**: plot gate run time by run with gaps marked (#28)
+
 ## v0.9.0 (2026-11-18)
 
 ### Feat

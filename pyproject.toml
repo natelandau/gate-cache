@@ -15,7 +15,7 @@
     name = "gate-cache"
     readme = "README.md"
     requires-python = ">=3.11"
-    version = "0.9.0"
+    version = "0.10.0"
 
     [project.urls]
         Changelog     = "https://github.com/natelandau/gate-cache/blob/main/CHANGELOG.md"
