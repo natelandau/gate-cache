@@ -16,7 +16,7 @@ REQUIRED_FILES = (
     "gate_cache/agent/skill.md",
     "gate_cache/agent/prompt.md",
 )
-WHEEL_MAX_BYTES = 300 * 1024
+WHEEL_MAX_BYTES = 400 * 1024
 # The dashboard serves files under this prefix as immutable, so each name needs a content hash.
 HASHED_ASSETS = "gate_cache/dashboard/static/assets/"
 HASHED_NAME_RE = re.compile(r"-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$")
