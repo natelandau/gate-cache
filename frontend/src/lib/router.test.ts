@@ -1,24 +1,18 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   activityHref,
   href,
   openerAfter,
   panelHost,
   parseHash,
-  router,
-  startRouter,
   type Route,
 } from "./router.svelte";
-import { filters } from "./state.svelte";
 
 describe("parseHash", () => {
   it("defaults to the overview", () => {
     expect(parseHash("")).toEqual({ page: "overview" });
     expect(parseHash("#/")).toEqual({ page: "overview" });
     expect(parseHash("#/nope")).toEqual({ page: "overview" });
-    expect(parseHash("#/repos")).toEqual({ page: "overview" });
-    expect(parseHash("#/repos/a/b")).toEqual({ page: "overview" });
-    expect(parseHash("#/repos/")).toEqual({ page: "overview" });
     expect(parseHash("#/triage/extra")).toEqual({ page: "overview" });
   });
 
@@ -35,11 +29,6 @@ describe("parseHash", () => {
       name: "lint/strict",
     });
     expect(parseHash("#/gates/-/test")).toEqual({ page: "gate", repo: null, name: "test" });
-  });
-
-  it("turns an old repo route into a repo selection on the overview", () => {
-    expect(parseHash("#/repos/%2Fx%2F.git")).toEqual({ page: "overview", selectRepo: "/x/.git" });
-    expect(parseHash("#/repos/-")).toEqual({ page: "overview", selectRepo: "-" });
   });
 
   it("parses the activity filters, repeated once per value", () => {
@@ -102,7 +91,6 @@ describe("parseHash", () => {
 
   it("falls back on malformed encoding", () => {
     expect(parseHash("#/gates/%E0%A4%A/test")).toEqual({ page: "overview" });
-    expect(parseHash("#/repos/%E0%A4%A")).toEqual({ page: "overview" });
   });
 });
 
@@ -160,10 +148,6 @@ describe("href", () => {
       "#/overview?from=2026-11-03&to=2026-11-03",
     );
   });
-
-  it("links the overview without a repo selection", () => {
-    expect(href({ page: "overview", selectRepo: "/x/.git" })).toBe("#/overview");
-  });
 });
 
 describe("openerAfter", () => {
@@ -210,40 +194,3 @@ describe("panelHost", () => {
   });
 });
 
-describe("startRouter", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("selects the repo of an old repo link and replaces the hash with the overview", () => {
-    const replace = vi.fn();
-    vi.stubGlobal("location", { hash: "#/repos/%2Fx%2F.git", replace });
-    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
-    const stop = startRouter();
-    expect(filters.repos).toEqual(["/x/.git"]);
-    expect(replace).toHaveBeenCalledWith("#/overview");
-    expect(router.route).toEqual({ page: "overview" });
-    stop();
-  });
-
-  it("replaces a bare repos route with the overview and keeps the repo filter", () => {
-    filters.repos = ["/kept/.git"];
-    const replace = vi.fn();
-    vi.stubGlobal("location", { hash: "#/repos", replace });
-    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
-    const stop = startRouter();
-    expect(replace).toHaveBeenCalledWith("#/overview");
-    expect(filters.repos).toEqual(["/kept/.git"]);
-    expect(router.route).toEqual({ page: "overview" });
-    stop();
-  });
-
-  it("leaves a plain overview hash alone", () => {
-    const replace = vi.fn();
-    vi.stubGlobal("location", { hash: "#/overview", replace });
-    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
-    const stop = startRouter();
-    expect(replace).not.toHaveBeenCalled();
-    stop();
-  });
-});

@@ -13,9 +13,6 @@
  *
  * Spans and activity filters are page-local: they live only in the hash. A malformed one is
  * dropped, not an error.
- *
- * Old `#/repos/<repo>` links parse as the overview with `selectRepo` set; `startRouter` turns
- * that into a repo filter. `startRouter` replaces any old `#/repos` hash with `#/overview`.
  */
 
 import type { ActivityFilter, ActivityLink, GateRef, Outcome, TriageReason } from "./api";
@@ -23,11 +20,10 @@ import { dimension, isDimension } from "./dimensions";
 import { OUTCOMES } from "./events";
 import { hasKey } from "./guards";
 import { isDay, spanOf, type DaySpan } from "./selection";
-import { setRepos } from "./state.svelte";
 import { isTriageReason } from "./triage";
 
 export type Route =
-  | { page: "overview"; selectRepo?: string; span?: DaySpan }
+  | { page: "overview"; span?: DaySpan }
   | { page: "gates" }
   | { page: "gate"; repo: string | null; name: string }
   | ({ page: "activity" } & ActivityFilter)
@@ -164,10 +160,6 @@ export function parseHash(hash: string): Route {
       return { page: "gate", repo: repo === UNKNOWN_REPO ? null : repo, name };
     }
   }
-  if (head === "repos" && rest.length === 1) {
-    const repo = decode(rest[0] ?? "");
-    if (repo) return { page: "overview", selectRepo: repo };
-  }
   if (head === "activity" && rest.length === 0) return activityRoute(query);
   if (head === "overview" && rest.length === 0) return overviewRoute(query);
   if (head === "triage" && rest.length === 0) return triageRoute(query);
@@ -243,11 +235,6 @@ export function panelHost(route: Route, opener: Route | null): "overview" | "gat
   return opener?.page === "overview" ? "overview" : "gates";
 }
 
-/** Return whether a hash is an old `#/repos` route, which the overview replaced. */
-function isReposHash(hash: string): boolean {
-  return /^#?\/?repos(?:[/?]|$)/.test(hash);
-}
-
 /** Set by `navigate` with `replace` and consumed by the next hash change. */
 let pendingReplace = false;
 
@@ -270,14 +257,9 @@ export function navigate(route: Route, options: { replace?: boolean } = {}): voi
 export function startRouter(): () => void {
   let loaded = false;
   const sync = () => {
-    let next = parseHash(location.hash);
+    const next = parseHash(location.hash);
     const replaced = pendingReplace;
     pendingReplace = false;
-    if (next.page === "overview" && isReposHash(location.hash)) {
-      if (next.selectRepo !== undefined) setRepos([next.selectRepo]);
-      next = { page: "overview" };
-      navigate(next, { replace: true });
-    }
     router.opener = openerAfter(loaded ? router.route : null, next, router.opener, replaced);
     router.route = next;
     loaded = true;
