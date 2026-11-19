@@ -58,6 +58,20 @@ Run linters and tests only through these duties, never directly, so every run sh
 - `uv run duty docs` serves the documentation site with live reload at http://localhost:8010/gate-cache/. `uv run duty docs_check` builds it in strict mode, so a broken link fails.
 - `uv run duty dist_check dist/*` checks that built wheels and sdists ship the dashboard UI and the agent guides. Run it after `frontend_build` and `uv build`.
 
+## Checking the dashboard UI
+
+To see a dashboard change in a browser without a person, take headless screenshots:
+
+1. Set `GATE_CACHE_DATA_DIR` to a temporary directory, and seed it with a synthetic `events.jsonl` or with runs recorded under `GATE_CACHE_STATS=1`.
+2. Start the dashboard: `uv run gate-cache dashboard --no-browser --port 7879`.
+3. Take a screenshot with Chrome: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --virtual-time-budget=8000 --window-size=1400,2200 --screenshot=out.png http://localhost:7879/`. Add `--force-dark-mode` for the dark theme.
+
+A gate panel opens at `#/gates/<repo>/<name>`, with each part URI-encoded. To pick the range and repos, put a JSON value such as `{"repos":[],"range":"1y"}` in the `gate-cache.filters` localStorage key before the page loads.
+
+The Chrome command line clips widths less than about 500px, and it cannot hover or click. For a phone width, a hover, an open menu, or a clipped screenshot, use Playwright. Install it in a scratch directory and set `executablePath` to the installed Chrome or to a cached headless shell, such as `~/Library/Caches/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-mac-arm64/chrome-headless-shell`. No browser download is necessary. Playwright also sets `colorScheme: "dark"` and seeds localStorage in an init script.
+
+Only one dashboard runs for each data directory. A second `gate-cache dashboard` prints `dashboard already running` and exits 0, even on another port. To use real data while the user's dashboard runs, copy the data directory (`gate-cache stats` prints it) to a temporary directory. Delete `dashboard.lock` and `dashboard.url` from the copy, and point `GATE_CACHE_DATA_DIR` at it.
+
 ## Commits
 
 Before you open a pull request, fast-forward a branch onto `main`, or squash a branch into `main`, compare `src/gate_cache/agent/skill.md` (the `gate-cache --skill` guide) with the branch diff. If the branch makes the guide wrong, or changes how an agent sets up, configures, or troubleshoots gate-cache, update the guide on the branch. [Agent guides](#agent-guides) sets the scope.
