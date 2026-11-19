@@ -364,7 +364,7 @@ class _ReportQuery:
 
 def _build_report(conn: sqlite3.Connection | None, query: _ReportQuery) -> dict[str, Any]:
     """Return the report the query asks for, from the open record."""
-    from gate_cache.gate import current_status
+    from gate_cache.gate import current_status, marker_max_age_days
     from gate_cache.stats import report_text
     from gate_cache.stats.report import RepoNotFoundError, gate_report, resolve_repo, suite_report
 
@@ -385,7 +385,9 @@ def _build_report(conn: sqlite3.Connection | None, query: _ReportQuery) -> dict[
             window=query.window,
             limit=query.limit,
             # The status on the current content says nothing about a gate of another repo.
-            current=partial(current_status, snapshots={}) if target == query.here else None,
+            current=partial(current_status, snapshots={}, max_age_days=marker_max_age_days())
+            if target == query.here
+            else None,
             recording=query.recording,
         )
     if report is None:
