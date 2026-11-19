@@ -58,6 +58,9 @@ MAX_AGE_ENV = "GATE_CACHE_MAX_AGE_DAYS"
 DEFAULT_MAX_AGE_DAYS = 30
 _DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
 _CI_REASON = f"caching disabled in CI ({DISABLE_ENV}=0 keeps it on)"
+# Version of the `status --json` shape; consumers check it before reading other keys.
+STATUS_SCHEMA = 1
+
 _NO_COMMON_DIR_REASON = "could not locate git directory"
 _FILES_CHANGED = "files changed during the run"
 FILES_CHANGED_NOTICE = f"{_FILES_CHANGED}, not recording pass"
@@ -967,7 +970,9 @@ def gate_status(
                 if name is not None
                 else {"passed": [], "missed": []}
             )
-            _print_json({"enabled": False, "tree": None, "reason": reason, **empty})
+            _print_json(
+                {"schema": STATUS_SCHEMA, "enabled": False, "tree": None, "reason": reason, **empty}
+            )
         else:
             say(reason)
         return 1
@@ -977,6 +982,42 @@ def gate_status(
     snapshot = take_snapshot(paths=paths)
     common_dir = snapshot.common_dir if snapshot.known else None
     return _named_status(name, snapshot, common_dir, as_json=as_json)
+
+
+def current_status(
+    name: str,
+    paths: Sequence[str],
+    *,
+    snapshots: dict[tuple[str, ...], Snapshot] | None = None,
+) -> dict[str, Any] | None:
+    """Look up one gate on the current content, the way `status --name` does.
+
+    Args:
+        name: Exact gate name, as recorded.
+        paths: Pathspecs of a scoped gate. Empty for an unscoped gate.
+        snapshots: Snapshots taken so far, by pathspecs. Share one across the lookups of a
+            report, so gates that watch the same paths hash the working tree once.
+
+    Returns:
+        The key the gate is looked up under, `hit` or `miss`, and the last run of a
+        miss. None when caching is disabled or the tree or common dir is unknown.
+    """
+    if disabled_reason() is not None:
+        return None
+    snapshots = {} if snapshots is None else snapshots
+    key = tuple(paths)
+    if key not in snapshots:
+        snapshots[key] = take_snapshot(paths=paths)
+    snapshot = snapshots[key]
+    common_dir = snapshot.common_dir if snapshot.known else None
+    if snapshot.key is None or common_dir is None:
+        return None
+    lookup = _lookup_gate(name, snapshot.key, common_dir)
+    return {
+        "tree": snapshot.key,
+        "result": "hit" if lookup.hit else "miss",
+        "last_run": lookup.last_run,
+    }
 
 
 def _print_json(data: Mapping[str, Any]) -> None:
@@ -1026,6 +1067,29 @@ def _miss_summary(record: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class _Lookup:
+    """What the records hold for one gate under one key."""
+
+    path: Path
+    hit: bool
+    last_run: dict[str, Any] | None
+    duration: float | None
+
+
+def _lookup_gate(name: str, key: str, common_dir: Path) -> _Lookup:
+    """Read the marker, or the miss record, of one gate under one key."""
+    path = marker_path(common_dir, key, name)
+    hit = marker_exists(path)
+    record = None if hit else miss_record(common_dir, key, name)
+    return _Lookup(
+        path=path,
+        hit=hit,
+        last_run=_miss_summary(record) if record is not None else None,
+        duration=marker_duration(path) if hit else None,
+    )
+
+
 def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_json: bool) -> int:
     """Print whether one gate would skip on the snapshot's key."""
     key = snapshot.key
@@ -1034,16 +1098,14 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
     last_run: dict[str, Any] | None = None
     duration: float | None = None
     if key is not None and common_dir is not None:
-        path = marker_path(common_dir, key, name)
-        hit = marker_exists(path)
-        duration = marker_duration(path) if hit else None
-        record = None if hit else miss_record(common_dir, key, name)
-        last_run = _miss_summary(record) if record is not None else None
+        lookup = _lookup_gate(name, key, common_dir)
+        path, hit, last_run, duration = lookup.path, lookup.hit, lookup.last_run, lookup.duration
     reason = _unknown_reason(snapshot, common_dir)
 
     if as_json:
         _print_json(
             {
+                "schema": STATUS_SCHEMA,
                 "enabled": True,
                 "name": name,
                 "tree": key,
@@ -1103,6 +1165,7 @@ def _list_gates(*, as_json: bool) -> int:
     if as_json:
         _print_json(
             {
+                "schema": STATUS_SCHEMA,
                 "enabled": True,
                 "tree": tree,
                 "reason": _unknown_reason(snapshot, common_dir),

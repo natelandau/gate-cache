@@ -21,8 +21,10 @@ from gate_cache.durations import DURATIONS_DIRNAME, durations_dir, durations_pat
 from gate_cache.gate import (
     SPOT_CHECK_FAILED_NOTICE,
     SPOT_CHECK_NOTICE,
+    STATUS_SCHEMA,
     USUAL_DURATION_NOTICE,
     clear_cache,
+    current_status,
     disabled_reason,
     gate_status,
     marker_max_age_days,
@@ -911,6 +913,95 @@ def test_named_status_json_miss_with_last_run(
     assert data["last_run"]["reason"] == "exit code 5"
     assert data["last_run"]["timestamp"]
     assert data["duration"] is None
+
+
+def test_current_status_looks_up_the_exact_gate_name(git_repo: Path, counter: Counter) -> None:
+    """Verify current_status hits only the named gate and reports a failed gate's last run."""
+    run_gate("test@py312", counter.argv())
+    run_gate("test@py313", counter.argv(exit_code=1))
+    hit = current_status("test@py312", ())
+    assert hit is not None
+    assert hit["tree"] == git("write-tree", cwd=git_repo)
+    assert hit["result"] == "hit"
+    assert hit["last_run"] is None
+    miss = current_status("test@py313", ())
+    assert miss is not None
+    assert miss["result"] == "miss"
+    assert miss["last_run"]["exit_code"] == 1
+    assert miss["last_run"]["reason"] == "exit code 1"
+    assert miss["last_run"]["timestamp"].endswith("Z")
+    unrecorded = current_status("test", ())
+    assert unrecorded is not None
+    assert unrecorded["result"] == "miss"
+    assert unrecorded["last_run"] is None
+
+
+def test_current_status_is_none_when_unavailable(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify current_status gives None when the tree or git directory is unknown, or caching is off."""
+    git("update-index", "--skip-worktree", "a.txt", cwd=git_repo)
+    assert current_status(NAME, ()) is None
+    git("update-index", "--no-skip-worktree", "a.txt", cwd=git_repo)
+    with monkeypatch.context() as patch:
+        hide_common_dir(patch)
+        assert current_status(NAME, ()) is None
+    monkeypatch.setenv("GATE_CACHE_DISABLE", "1")
+    assert current_status(NAME, ()) is None
+
+
+def test_current_status_shares_snapshots_per_path_set(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify lookups that share a snapshot cache hash each path set once."""
+    run_gate(NAME, counter.argv())
+    taken: list[tuple[str, ...]] = []
+
+    def counting_snapshot(paths: Sequence[str] = ()) -> Snapshot:
+        taken.append(tuple(paths))
+        return take_snapshot(paths=paths)
+
+    monkeypatch.setattr("gate_cache.gate.take_snapshot", counting_snapshot)
+    snapshots: dict[tuple[str, ...], Snapshot] = {}
+    first = current_status(NAME, (), snapshots=snapshots)
+    assert current_status("other", (), snapshots=snapshots) is not None
+    assert current_status(NAME, ["a.txt"], snapshots=snapshots) is not None
+    assert first is not None
+    assert first["result"] == "hit"
+    assert taken == [(), ("a.txt",)]
+
+
+def test_current_status_uses_the_scope_key_for_paths(git_repo: Path, counter: Counter) -> None:
+    """Verify a scoped current_status reports the scope key and hits the scoped record."""
+    run_gate(NAME, counter.argv(), paths=["a.txt"])
+    status = current_status(NAME, ["a.txt"])
+    assert status is not None
+    assert status["result"] == "hit"
+    assert status["tree"] != git("write-tree", cwd=git_repo)
+    unscoped = current_status(NAME, ())
+    assert unscoped is not None
+    assert unscoped["result"] == "miss"
+
+
+@pytest.mark.parametrize(
+    ("disabled", "name"),
+    [(False, NAME), (False, None), (True, NAME), (True, None)],
+)
+def test_status_json_carries_the_schema_first(
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    *,
+    disabled: bool,
+    name: str | None,
+) -> None:
+    """Verify every status --json shape starts with the schema version."""
+    if disabled:
+        monkeypatch.setenv("GATE_CACHE_DISABLE", "1")
+    gate_status(name, as_json=True)
+    data = json.loads(capfd.readouterr().out)
+    assert next(iter(data)) == "schema"
+    assert data["schema"] == STATUS_SCHEMA
 
 
 def test_list_status_json(
