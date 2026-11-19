@@ -237,11 +237,16 @@
 
 <style>
   .calendar {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
     margin: 0;
   }
 
+  /* Day rows share any extra card height, so the calendar matches a taller card beside it. */
   .grid {
     display: grid;
+    flex: 1;
     gap: 5px;
     color: var(--text-faint);
     font-size: 11px;
@@ -250,6 +255,8 @@
   /* Wall calendar: a label column, then seven weekday columns that share the width. */
   .layout-month .grid {
     grid-template-columns: max-content repeat(7, minmax(0, 1fr));
+    grid-template-rows: auto;
+    grid-auto-rows: 1fr;
     align-items: center;
     max-width: 480px;
   }
@@ -266,7 +273,7 @@
 
   /* Week columns: weekday labels first, then one column per week, filling the width. */
   .layout-weeks .grid {
-    grid-template-rows: 14px repeat(7, auto);
+    grid-template-rows: 14px repeat(7, 1fr);
     grid-auto-flow: column;
     grid-template-columns: max-content;
     grid-auto-columns: minmax(10px, 1fr);
@@ -286,8 +293,10 @@
     line-height: 14px;
   }
 
+  /* Square at rest; stretches taller when its row grows. */
   .cell {
     display: block;
+    align-self: stretch;
     aspect-ratio: 1;
     width: 100%;
     border-radius: 5px;

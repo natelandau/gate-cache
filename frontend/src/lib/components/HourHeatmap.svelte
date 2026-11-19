@@ -115,12 +115,18 @@
 
 <style>
   .hours {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
     margin: 0;
   }
 
+  /* Weekday rows share any extra card height, so the heatmap matches a taller card beside it. */
   .grid {
     display: grid;
+    flex: 1;
     grid-template-columns: 30px repeat(24, minmax(0, 1fr)) 84px;
+    grid-template-rows: auto auto repeat(7, 1fr);
     gap: 3px;
     align-items: center;
     font-size: 11px;
@@ -136,8 +142,11 @@
     line-height: 1;
   }
 
+  /* Square at rest; stretches taller when its row grows. */
   .cell {
     display: block;
+    align-self: stretch;
+    width: 100%;
     aspect-ratio: 1;
     border-radius: 3px;
     transition: background-color var(--dur-slow) var(--ease);

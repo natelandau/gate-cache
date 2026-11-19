@@ -236,6 +236,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) 240px;
     grid-template-areas: "chart legend";
+    flex: 1;
     gap: var(--space-5);
     margin: 0;
   }
@@ -321,9 +322,12 @@
     font-weight: 600;
   }
 
+  /* The plot fills the card, so it matches the height of a taller card beside it. */
   .frame {
     grid-area: chart;
     position: relative;
+    display: flex;
+    flex-direction: column;
     min-width: 0;
   }
 
@@ -334,10 +338,9 @@
   }
 
   .plot {
-    height: 300px;
+    flex: 1;
+    min-height: 300px;
   }
-
-
 
   @media (max-width: 900px) {
     .spent {
