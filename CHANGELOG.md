@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.11.0 (2026-11-19)
+
+### Feat
+
+- **cli**: add styled output and --json to every subcommand (#36)
+- **config**: add per-project settings to the config file (#35)
+- **stats**: add the stats report command (#34)
+- **spot-check**: run a sample of skips to check the cache (#33)
+- **stats**: record per-test detail from JUnit reports (#32)
+- **cli**: print a gate's usual run time before it runs (#31)
+
+### Fix
+
+- **dashboard**: stretch overview charts to fill their card
+- **hooks**: run the hook's command with the user's PATH (#30)
+
+### Refactor
+
+- **dashboard**: drop the redirect for old repo links
+
 ## v0.10.0 (2026-11-18)
 
 ### Feat
