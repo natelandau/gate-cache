@@ -10,9 +10,14 @@ from gate_cache.stats.junit import TESTS_DIR_NAME
 from gate_cache.stats.lock import InstanceLock
 from gate_cache.stats.recorder import INBOX_NAME
 
+CLEAR_BLOCKED = (
+    "stats are in use: stop the dashboard before clearing stats, "
+    "or try again in a moment if a stats report is running"
+)
+
 
 def stats_clear(*, confirmed: bool = False) -> int:
-    """Delete every recorded event and the archive, unless the dashboard is running.
+    """Delete every recorded event and the archive, unless the dashboard or a report holds them.
 
     Keep `machine-id` so the machine keeps its ID, but remove temp files a killed run left
     while it created that file. Ask the user to confirm first, since the deletion cannot be
@@ -31,7 +36,7 @@ def stats_clear(*, confirmed: bool = False) -> int:
         say(f"could not clear stats: {error.strerror or error}")
         return 1
     if lock is None:
-        say("stop the dashboard before clearing stats")
+        say(CLEAR_BLOCKED)
         return 1
     try:
         warning = [

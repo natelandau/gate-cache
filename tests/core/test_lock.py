@@ -50,3 +50,12 @@ def test_stale_url_unlink_failure_releases_fd(
     again = InstanceLock.acquire(tmp_path)
     assert again is not None
     again.release()
+
+
+def test_release_keeps_a_url_it_did_not_write(tmp_path: Path) -> None:
+    """A holder that never published a URL leaves the URL file alone on release."""
+    lock = InstanceLock.acquire(tmp_path)
+    assert lock is not None
+    (tmp_path / "dashboard.url").write_text("http://127.0.0.1:2")
+    lock.release()
+    assert running_url(tmp_path) == "http://127.0.0.1:2"

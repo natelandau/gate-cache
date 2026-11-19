@@ -76,22 +76,37 @@ def _use_color() -> bool:
     return sys.stdout.isatty()
 
 
+def kv_text(rows: dict[str, str]) -> str:
+    """Return key/value rows as text with the values aligned in one column.
+
+    Use it to build a larger block of text; `kv` prints the same rows directly.
+
+    Args:
+        rows: Labels mapped to their values, in display order.
+
+    Returns:
+        str: One line per row and per extra value line, each ending in a newline.
+    """
+    if not rows:
+        return ""
+    cell_width = max(len(key) for key in rows) + len(": ")
+    dim, reset = (_DIM, _RESET) if _use_color() else ("", "")
+    lines: list[str] = []
+    for key, value in rows.items():
+        pad = " " * (cell_width - len(key) - len(": "))
+        first, *rest = value.splitlines() or [""]
+        lines.append(f"  {dim}{key}{reset}: {pad}{first}")
+        lines.extend(f"{' ' * (2 + cell_width)}{line}" for line in rest)
+    return "".join(f"{line}\n" for line in lines)
+
+
 def kv(rows: dict[str, str]) -> None:
     """Print key/value rows on stdout with the values aligned in one column.
 
     Args:
         rows: Labels mapped to their values, printed in insertion order.
     """
-    if not rows:
-        return
-    cell_width = max(len(key) for key in rows) + len(": ")
-    dim, reset = (_DIM, _RESET) if _use_color() else ("", "")
-    for key, value in rows.items():
-        pad = " " * (cell_width - len(key) - len(": "))
-        first, *rest = value.splitlines() or [""]
-        print(f"  {dim}{key}{reset}: {pad}{first}")  # noqa: T201
-        for line in rest:
-            print(f"{' ' * (2 + cell_width)}{line}")  # noqa: T201
+    sys.stdout.write(kv_text(rows))
 
 
 def format_duration(seconds: float) -> str:

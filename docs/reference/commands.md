@@ -33,7 +33,7 @@ Shows which gates skip with the current hash of your files. It runs nothing. Use
 | `gate-cache status --name NAME` | One gate. |
 | `gate-cache status -- COMMAND` | One gate that runs without `--name`. Give the same command line. |
 
-Add the same `--path` options to look up a scoped gate. Add `--json` to print one JSON object in place of text.
+Add the same `--path` options to look up a scoped gate. Add `--json` to print one JSON object in place of text. Read the [report format](report-format.md).
 
 ## `gate-cache clear`
 
@@ -46,7 +46,28 @@ Permanently deletes every record of a pass for the repository, and the run times
 | `gate-cache stats` | Shows whether recording is on, what decided it, and where the configuration file and the data are. |
 | `gate-cache stats on` | Turns recording on. |
 | `gate-cache stats off` | Turns recording off and keeps the data. |
+| `gate-cache stats report` | Prints a report of the recorded runs. |
 | `gate-cache stats clear` | Permanently deletes all recorded stats. It asks you to type `yes` first. In a script, give `--yes`. |
+
+`gate-cache stats --json` prints the recording setting as a JSON object. Read the [report format](report-format.md).
+
+### `gate-cache stats report`
+
+Prints, for each gate, its runs, skip rate, failures, run times, and the time it spent and saved. The report is for terminals and for coding agents. For a view in a browser, use the [dashboard](../stats/dashboard.md).
+
+With `--name`, or a command after `--`, the report shows one gate in detail: its status on the current content, its trend, its exit codes, its flaky hashes, where its runs came from, and its recent runs. The report groups `test@v22` and `test@v20` under `test`, so give `--name test`. For a gate that ran without `--name`, give its command after `--`.
+
+| Option | Effect |
+| --- | --- |
+| `--json` | Prints one JSON object. Read the [report format](report-format.md). |
+| `--since DURATION` | Sets the length of the report window, counted back from `--until`, as a whole number and `h`, `d`, `w`, or `y`. The default is `30d`. For the week before the last one, give `--since 7d --until 7d`. |
+| `--until WHEN` | Sets the end of the report: a date, an ISO 8601 timestamp, or a duration ago. The default is now. |
+| `--limit N` | Sets the most items in each list, from 1 to 500. The default is 20. |
+| `--repo NAME\|PATH` | Covers one repository, by the name that the report prints or a path inside it. |
+| `--all-repos` | Covers every repository. |
+| `--name NAME` | Reports one gate. |
+
+Inside a repository, the report covers that repository. Outside a repository, it covers every repository on the computer. `--name` outside a repository needs `--repo`. If a `--repo` name matches more than one repository, use a path.
 
 ## `gate-cache dashboard`
 
@@ -79,6 +100,9 @@ Only one dashboard runs at a time. A second `gate-cache dashboard` opens the one
 | An error in the gate-cache options | 2, and nothing runs |
 | `status` found a pass | 0, else 1 |
 | `clear` or `stats clear` was not confirmed, or failed | 1 |
+| `stats report` ran, also when nothing was recorded | 0 |
+| `stats report` found no such gate or repository, or could not read the record | 1 |
+| `stats report` got a bad option, or a `--repo` name that matches more than one repository | 2 |
 
 An error in the cache never changes the exit code of the command.
 

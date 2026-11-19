@@ -35,7 +35,7 @@ To cover a missing input, put it in the gate name after an `@`, or add its path 
 
 If the command exits 0 but changes files, gate-cache also deletes the earlier pass, so the next run executes the command.
 
-If you record stats, the dashboard counts spot checks on the Overview and lists each gate that failed one on the [Triage](../stats/triage.md) page.
+If you record stats, the dashboard counts spot checks on the Overview and lists each gate that failed one on the [Triage](../stats/triage.md) page. `gate-cache stats report` also lists the failed spot checks of each gate.
 
 ## Change the rate
 

@@ -77,6 +77,8 @@ gate-cache dashboard
 
 The dashboard opens in your browser at `http://127.0.0.1:7878`. Only a copy of gate-cache installed from PyPI includes the dashboard.
 
+To print the stats in a terminal, run `gate-cache stats report`. Add `--json` for a script or a coding agent.
+
 ## Examples
 
 Wrap a command. These examples use `pytest`, a test runner for Python. The second run skips, because no file changed:

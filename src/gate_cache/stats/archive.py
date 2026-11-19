@@ -42,12 +42,25 @@ _INT64_MIN = -(2**63)
 # spaces, so an argument such as `npx eslint@9` never merges two commands into one gate.
 # The dashboard reads the result from each event's `gate` field rather than repeating the rule;
 # frontend/src/lib/gates.ts isCommandLine must match the whitespace set below.
+_GATE_WHITESPACE = " \t\n\v\f\r"
 GATE_EXPRESSION = (
     "CASE WHEN instr(name, '@') > 1 AND instr(name, '@') < length(name)"
-    " AND name NOT GLOB '*[' || char(32, 9, 10, 11, 12, 13) || ']*'"
+    f" AND name NOT GLOB '*[' || char({', '.join(str(ord(c)) for c in _GATE_WHITESPACE)}) || ']*'"
     " THEN substr(name, 1, instr(name, '@') - 1) ELSE name END"
 )
 _GATE_COLUMN = f"gate TEXT GENERATED ALWAYS AS ({GATE_EXPRESSION}) VIRTUAL"
+
+
+def gate_of(name: str) -> str:
+    """Return the gate a run name counts toward in stats, by the rule of `GATE_EXPRESSION`.
+
+    Use it to check a name in Python the same way the archive groups it.
+    """
+    at = name.find("@")
+    if 0 < at < len(name) - 1 and not any(c in _GATE_WHITESPACE for c in name):
+        return name[:at]
+    return name
+
 
 _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -483,7 +496,29 @@ class Archive:
             self._connection.rollback()
             return 0
 
-    def ingest(self, inbox: Path, *, now: float | None = None) -> int:
+    def _ingest_processing(self, state: Path, *, now: float, fresh: bool) -> tuple[int, bool]:
+        """Read the renamed inbox files, deleting each once it has settled.
+
+        Returns:
+            The events added, and whether any file stays with lines still to come.
+        """
+        added = 0
+        pending = False
+        for path in sorted(state.glob("events.*.processing")):
+            match = _PROCESSING_RE.match(path.name)
+            if match is None:
+                continue
+            if now - int(match.group(1)) / _NS_PER_SECOND >= SETTLE_SECONDS:
+                added += self._ingest_safely(path)
+            elif fresh:
+                # Each event is one append, so a line still being written fails to parse and
+                # is skipped, and the line hash keeps the settled re-read from duplicating.
+                added += self._ingest_safely(path, delete=False)
+            # A file that failed to ingest, or has not settled, stays with lines still to come.
+            pending = pending or path.exists()
+        return added, pending
+
+    def ingest(self, inbox: Path, *, now: float | None = None, fresh: bool = False) -> int:
         """Move events from the inbox into the archive.
 
         Settled `events.*.processing` files are read first. The live inbox is then renamed so
@@ -494,22 +529,16 @@ class Archive:
         Args:
             inbox: Path of the live `events.jsonl`.
             now: Unix time for the settle check; defaults to the current time.
+            fresh: Also read the files that have not settled, and keep them for the settled
+                pass. A one-off reader that must see a run that just ended sets it.
 
         Returns:
             The number of events added.
         """
         now = time.time() if now is None else now
-        added = 0
-        # Whether some event lines stay unread this cycle, so a test file's event may still come.
-        pending = False
-        for path in sorted(inbox.parent.glob("events.*.processing")):
-            match = _PROCESSING_RE.match(path.name)
-            if match is None:
-                continue
-            if now - int(match.group(1)) / _NS_PER_SECOND >= SETTLE_SECONDS:
-                added += self._ingest_safely(path)
-            # A file that failed to ingest stays, with its lines still unread.
-            pending = pending or path.exists()
+        # pending: whether some event lines stay unread this cycle, so a test file's event may
+        # still come.
+        added, pending = self._ingest_processing(inbox.parent, now=now, fresh=fresh)
         try:
             settled = now - inbox.stat().st_mtime >= SETTLE_SECONDS
             renamed = inbox.with_name(f"events.{time.time_ns()}.processing")
@@ -517,11 +546,11 @@ class Archive:
         except FileNotFoundError:
             pass
         else:
-            if settled:
+            if settled or fresh:
                 # A writer that opened the inbox before the rename can still append, so the file
                 # stays for the settled pass, which picks up late lines and deletes it.
                 added += self._ingest_safely(renamed, delete=False)
-            else:
+            if not settled:
                 pending = True
         if added:
             count = int(self.meta("ingest_count") or 0) + 1

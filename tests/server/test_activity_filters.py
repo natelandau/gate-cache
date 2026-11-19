@@ -1,6 +1,5 @@
 """Tests for the activity feed's gate and flaky filters."""
 
-import json
 import sqlite3
 import time
 from collections.abc import Iterator
@@ -12,28 +11,9 @@ import pytest
 
 from gate_cache.stats.archive import Archive
 from gate_cache.stats.queries import Filters, activity
+from tests.conftest import REPO_A, REPO_B, insert
 
 NEW_YORK = ZoneInfo("America/New_York")
-REPO_A = "/x/a/.git"
-REPO_B = "/x/b/.git"
-
-
-def insert(
-    conn: sqlite3.Connection,
-    ts: float,
-    outcome: str = "pass",
-    *,
-    repo: str | None = REPO_A,
-    name: str = "lint",
-    tree: str | None = "t1",
-) -> None:
-    """Insert one event row."""
-    conn.execute(
-        "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (f"h{conn.total_changes}-{ts}-{name}", ts, repo, name, tree, json.dumps([]), outcome),
-    )
-    conn.commit()
 
 
 def local(*parts: int) -> float:

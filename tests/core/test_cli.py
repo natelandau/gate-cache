@@ -1,19 +1,37 @@
 """Tests for the command line interface."""
 
+import json
 import os
 import re
 import shlex
+import sqlite3
 import sys
+import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 import gate_cache
 from gate_cache import cli
+from gate_cache import gate as gate_module
+from gate_cache.snapshot import git_common_dir
+from gate_cache.stats import report as report_module
+from gate_cache.stats.archive import ARCHIVE_NAME, Archive, ArchiveVersionError
+from gate_cache.stats.report_text import (
+    KEYED_NAME_ERROR,
+    RECORDING_OFF_HINT,
+    REPORT_HINT,
+    UNKNOWN_GATE,
+    UNKNOWN_REPO,
+)
+from gate_cache.stats.window import DURATION_ERROR, UNTIL_ERROR
 from gate_cache.wait_settings import WaitSettings
-from tests.conftest import Counter, invoke
+from tests.conftest import REPO_A, REPO_B, Counter, insert, invoke
 
 
 def test_run_requires_double_dash(
@@ -881,3 +899,289 @@ def test_hook_flag_leaves_a_shared_python_alone(
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--hook", "--name", "x", "--", "pytest") == 0
     assert seen == {"PATH": path}
+
+
+def _record(state: Path, *events: tuple[str, str]) -> None:
+    """Archive one recent passing run for each (repo, gate name) pair."""
+    with Archive.open(state / ARCHIVE_NAME) as archive:
+        for offset, (repo, name) in enumerate(events):
+            insert(archive.connection, time.time() - 600 + offset, "pass", repo=repo, name=name)
+
+
+def _report_json(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], *args: str
+) -> dict[str, Any]:
+    """Run `stats report --json` with args, require exit 0, and return the parsed report."""
+    capfd.readouterr()
+    assert invoke(monkeypatch, "stats", "report", "--json", *args) == 0
+    return json.loads(capfd.readouterr().out)
+
+
+def test_stats_json(
+    stats_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Stats --json prints the setting as one versioned object."""
+    assert invoke(monkeypatch, "stats", "--json") == 0
+    data = json.loads(capfd.readouterr().out)
+    assert data == {
+        "schema": 1,
+        "enabled": False,
+        "decided_by": "default",
+        "config_file": str(stats_dirs[0]),
+        "data_dir": str(stats_dirs[1]),
+    }
+
+
+@pytest.fixture
+def outside_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_env: Path) -> Path:
+    """Chdir into a directory outside any git repository and return it."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    return outside
+
+
+COMMAND = ["npx", "eslint@9", "."]
+
+
+@pytest.fixture
+def recorded_here(
+    git_repo: Path,
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    """Record `lint` and a gate named by COMMAND here and `other` elsewhere; fake the status.
+
+    Returns:
+        The gate names whose status on the current content was looked up.
+    """
+    common = str(git_common_dir(git_repo))
+    _record(stats_dirs[1], (common, "lint"), (common, shlex.join(COMMAND)), (REPO_B, "other"))
+    looked_up: list[str] = []
+
+    def current_status(name: str, paths: list[str], **_: object) -> dict[str, Any]:
+        looked_up.append(name)
+        return {"tree": "here", "result": "hit", "last_run": None}
+
+    monkeypatch.setattr(gate_module, "current_status", current_status)
+    return looked_up
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["on", "--json"], cli.STATS_JSON_ACTION),
+        (["report", "--all-repos", "--repo", "x"], cli.ALL_REPOS_CONFLICT),
+        (["report", "--all-repos", "--name", "x"], cli.ALL_REPOS_CONFLICT),
+        (["report", "--name", "test@v22"], KEYED_NAME_ERROR.format(gate="test")),
+        (["report", "--name", "x", "--", "pytest"], cli.NAME_OR_COMMAND),
+        (["report", "--name", "x"], cli.NAME_NEEDS_REPO),
+        (["report", "--", "echo", "hi"], cli.NAME_NEEDS_REPO),
+        (["report", "--since", "0d"], DURATION_ERROR),
+        (["report", "--since", "7"], DURATION_ERROR),
+        (["report", "--since", "9" * 400 + "d"], DURATION_ERROR),
+        (["report", "--until", "soon"], UNTIL_ERROR),
+        (["report", "--until", "0001-01-01"], UNTIL_ERROR),
+        (["report", "--until", "10000y"], UNTIL_ERROR),
+        (["report", "--limit", "many"], cli.LIMIT_ERROR),
+    ],
+)
+def test_stats_report_usage_errors(
+    stats_dirs: tuple[Path, Path],
+    outside_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+    message: str,
+) -> None:
+    """Each invalid flag combination or value exits 2 and says what is wrong."""
+    assert invoke(monkeypatch, "stats", *args) == 2
+    assert message in " ".join(capfd.readouterr().err.split())
+
+
+@pytest.mark.parametrize(
+    ("args", "repo", "gates"),
+    [
+        pytest.param([], "here", {"lint", shlex.join(COMMAND)}, id="current repo"),
+        pytest.param(["--all-repos"], None, {"lint", shlex.join(COMMAND), "other"}, id="all repos"),
+        pytest.param(["--repo", "other"], REPO_B, {"other"}, id="named repo"),
+    ],
+)
+def test_stats_report_scope(
+    recorded_here: list[str],
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+    repo: str | None,
+    gates: set[str],
+) -> None:
+    """--repo picks one repo, else --all-repos every repo, else the current repo."""
+    expected = str(git_common_dir(git_repo)) if repo == "here" else repo
+
+    report = _report_json(monkeypatch, capfd, *args)
+
+    assert report["repo"] == expected
+    assert "recording" not in report
+    assert {g["name"] for g in report["gates"]} == gates
+
+
+@pytest.mark.parametrize(
+    ("args", "name", "tree"),
+    [
+        pytest.param(["--name", "lint"], "lint", "here", id="name"),
+        pytest.param(["--", *COMMAND], shlex.join(COMMAND), "here", id="command"),
+        pytest.param(["--name", shlex.join(COMMAND)], shlex.join(COMMAND), "here", id="name @"),
+        pytest.param(["--repo", "other", "--name", "other"], "other", None, id="other repo"),
+    ],
+)
+def test_stats_report_one_gate(
+    recorded_here: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+    name: str,
+    tree: str | None,
+) -> None:
+    """One gate is named by --name or its command, with a status only in the current repo."""
+    report = _report_json(monkeypatch, capfd, *args)
+
+    assert report["name"] == name
+    assert (report["current"] or {}).get("tree") == tree
+    assert recorded_here == ([name] if tree else [])
+
+
+@pytest.mark.parametrize(
+    ("args", "hint"),
+    [pytest.param([], True, id="suite"), pytest.param(["--name", "lint"], False, id="gate")],
+)
+def test_stats_report_text(
+    recorded_here: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+    hint: bool,
+) -> None:
+    """Without --json, each view prints text that names the gate."""
+    assert invoke(monkeypatch, "stats", "report", *args) == 0
+    out = capfd.readouterr().out
+    assert "lint" in out
+    assert (REPORT_HINT in out) is hint
+
+
+@pytest.mark.parametrize(
+    "args", [["report", "--json"], ["--json", "report"], ["--json", "report", "--since", "7d"]]
+)
+def test_stats_report_json_outside_repo(
+    stats_dirs: tuple[Path, Path],
+    outside_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+) -> None:
+    """Outside a repo with nothing recorded, the machine-wide report is empty and creates nothing."""
+    assert invoke(monkeypatch, "stats", *args) == 0
+    report = json.loads(capfd.readouterr().out)
+    assert report["repo"] is None
+    assert report["recording"] is False
+    assert report["gates"] == []
+    state = stats_dirs[1]
+    assert not state.exists() or not any(state.iterdir())
+
+
+@pytest.mark.parametrize(("limit", "shown"), [("0", 1), ("2", 2), ("9999", 3)])
+def test_stats_report_limit_is_clamped(
+    stats_dirs: tuple[Path, Path],
+    outside_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    limit: str,
+    shown: int,
+) -> None:
+    """--limit caps each list, and a value out of range is pulled into 1 to 500."""
+    _record(stats_dirs[1], *[(REPO_A, "lint")] * 3)
+
+    report = _report_json(monkeypatch, capfd, "--repo", "proj", "--name", "lint", "--limit", limit)
+    assert report["recent"]["shown"] == shown
+
+
+@pytest.mark.parametrize("recording", [True, False])
+def test_stats_report_name_unknown(
+    git_repo: Path,
+    stats_dirs: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    recording: bool,
+) -> None:
+    """A gate the repo never recorded exits 1 and names it, with a hint when recording is off."""
+    monkeypatch.setenv("GATE_CACHE_STATS", "1" if recording else "0")
+    common = str(git_common_dir(git_repo))
+    _record(stats_dirs[1], (common, "lint"))
+
+    assert invoke(monkeypatch, "stats", "report", "--name", "nope") == 1
+    err = " ".join(capfd.readouterr().err.split())
+    assert UNKNOWN_GATE.format(name="nope", repo=common) in err
+    assert (RECORDING_OFF_HINT in err) is not recording
+
+
+@pytest.mark.parametrize("record", [True, False])
+def test_stats_report_repo_unknown(
+    stats_dirs: tuple[Path, Path],
+    outside_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    record: bool,
+) -> None:
+    """A --repo that matches no recorded repo exits 1, with or without a record."""
+    if record:
+        _record(stats_dirs[1], (REPO_A, "lint"))
+
+    assert invoke(monkeypatch, "stats", "report", "--repo", "nowhere") == 1
+    assert UNKNOWN_REPO.format(text="nowhere") in capfd.readouterr().err
+
+
+def test_stats_report_repo_ambiguous(
+    stats_dirs: tuple[Path, Path],
+    outside_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """A --repo name shared by two repos exits 2 and lists both paths."""
+    _record(stats_dirs[1], ("/a/shop/.git", "lint"), ("/b/shop/.git", "lint"))
+
+    assert invoke(monkeypatch, "stats", "report", "--repo", "shop") == 2
+    err = capfd.readouterr().err
+    assert "/a/shop" in err
+    assert "/b/shop" in err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ArchiveVersionError("archive schema 9 is newer than this gate-cache supports"),
+        sqlite3.DatabaseError("file is not a database"),
+        PermissionError(13, "Permission denied"),
+    ],
+)
+def test_stats_report_unreadable_record(
+    stats_dirs: tuple[Path, Path],
+    outside_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    error: Exception,
+) -> None:
+    """A record that cannot be read exits 1 with one line that says why."""
+
+    @contextmanager
+    def broken() -> Generator[None]:
+        raise error
+        yield
+
+    monkeypatch.setattr(report_module, "open_record", broken)
+    assert invoke(monkeypatch, "stats", "report") == 1
+    err = capfd.readouterr().err
+    assert str(error) in err
+    assert "Traceback" not in err

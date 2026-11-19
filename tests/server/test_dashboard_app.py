@@ -43,21 +43,21 @@ def test_second_dashboard_reports_running(
         assert app.run_dashboard(port=0, open_browser=True) == 0
     finally:
         lock.release()
-    assert "already running at http://127.0.0.1:7878" in capsys.readouterr().err
+    assert app.DASHBOARD_RUNNING.format(url="http://127.0.0.1:7878") in capsys.readouterr().err
     opener.assert_called_once_with("http://127.0.0.1:7878")
 
 
 def test_dashboard_during_stats_clear_prompt(
     stats_dirs: tuple[Path, Path], opener: MagicMock, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A dashboard started while `stats clear` holds the lock names both possible holders."""
+    """A dashboard started while `stats clear` holds the lock names every possible holder."""
     held = InstanceLock.acquire(stats_dirs[1])
     assert held is not None
     try:
         assert app.run_dashboard(port=0, open_browser=True) == 0
     finally:
         held.release()
-    assert "already running, or stats clear is in progress" in capsys.readouterr().err
+    assert app.DASHBOARD_BUSY in capsys.readouterr().err
     opener.assert_not_called()
 
 

@@ -12,6 +12,8 @@ Each run of a check costs time: yours, your CI, and your coding agents. The dash
 - **Top gates**, ranked by **Time ran**, lists the gates that ran the longest in total.
 - On the **Gates** page, sort by **Time ran**.
 
+The same data prints in a terminal with `gate-cache stats report`, which ranks each gate by the time it spent.
+
 A gate that is slow and runs often costs the most. Each run of a 5-minute suite that agents start 40 times a day costs more than three hours.
 
 ## Choose what to do

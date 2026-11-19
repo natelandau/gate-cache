@@ -25,6 +25,8 @@ Each row has a badge that names its reason, one line that says what to check, an
 
 Spot checks do not count toward the **Flaky** reason. A failed spot check has its own row.
 
+The flaky gates and tests also print in a terminal with `gate-cache stats report`. Add `--name NAME` for the flaky hashes and tests of one gate.
+
 ## Fix a flaky gate
 
 A flaky gate gives different results on the same code. Flaky gates cost time, and they teach people and agents to ignore failures. Use the pattern of the runs to find the cause.

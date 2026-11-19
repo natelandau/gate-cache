@@ -32,7 +32,7 @@ def test_stats_clear_refuses_while_running(
     finally:
         lock.release()
     assert archive_path().exists()
-    assert "stop the dashboard" in capsys.readouterr().err
+    assert clear.CLEAR_BLOCKED in capsys.readouterr().err
 
 
 def test_stats_clear_deletes(

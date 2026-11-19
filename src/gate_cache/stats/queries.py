@@ -9,7 +9,7 @@ import statistics
 import time
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, fields, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
 from zoneinfo import ZoneInfo
@@ -20,6 +20,8 @@ from gate_cache.stats.recorder import Outcome
 if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Callable, Iterable, Iterator, Sequence
+
+    from gate_cache.stats.window import Bucket
 
 _RAN = "('skip', 'pass', 'pass_unrecorded', 'fail')"
 _GOOD = "('pass', 'pass_unrecorded')"
@@ -50,8 +52,27 @@ SLOWEST_TESTS_LIMIT = 20
 # Bounds the per-test read: a busy gate can hold thousands of results per run.
 SLOWEST_TESTS_RUNS = 200
 REPORT_PROBLEM_RUNS = 20
+FAILED_TESTS_SHOWN = 5
 _REPORT_PROBLEMS = ("missing", "stale", "invalid")
+# The report contract names each stored problem status; `invalid` reads as `unreadable` there.
+_REPORT_PROBLEM_KEYS = {"missing": "missing", "stale": "stale", "invalid": "unreadable"}
 _TESTS_CUTOFF_SLACK = 3600
+
+# The cost of one gate over a range, as both report views show it.
+SUMMARY_KEYS = (
+    "runs",
+    "skip_rate",
+    "failures",
+    "median_run",
+    "p90_run",
+    "time_spent",
+    "time_saved",
+    "fail_time",
+)
+# A gate's spot-check run and failure counts, as `gates` and `gate_summary` return them.
+SPOT_CHECK_KEYS = ("spot_checks", "spot_check_failures")
+# Only `gate_rows` returns it, so the dashboard's gates response keeps its shape.
+LAST_FAILED_SPOT_CHECK = "last_failed_spot_check"
 
 # Plain decimal text, optionally in the exponent form repr gives very large or small floats.
 NUMBER_RE = re.compile(r"-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?")
@@ -89,7 +110,7 @@ SELECT NULL WHERE EXISTS (SELECT 1 FROM events WHERE repo IS NULL)
 """
 
 
-def _work_dir(repo: str) -> Path:
+def work_dir(repo: str) -> Path:
     """Return the folder that holds a repo's working copy, or the repo itself when bare."""
     path = Path(repo)
     return path.parent if path.name == ".git" else path
@@ -97,7 +118,7 @@ def _work_dir(repo: str) -> Path:
 
 def _folder_name(repo: str | None) -> str:
     """Return a repo's folder name, which other repos may share."""
-    return _UNKNOWN_REPO if repo is None else _work_dir(repo).name
+    return _UNKNOWN_REPO if repo is None else work_dir(repo).name
 
 
 def _parent_labels(name: str, clashing: list[str], taken: set[str]) -> list[str]:
@@ -106,7 +127,7 @@ def _parent_labels(name: str, clashing: list[str], taken: set[str]) -> list[str]
     A label must also differ from every name in `taken`, the folder names other repos show.
     Fall back to each full path when the parents cannot tell them apart.
     """
-    folders = [_work_dir(repo).parent for repo in clashing]
+    folders = [work_dir(repo).parent for repo in clashing]
     parents = [[p for p in folder.parts if p != folder.anchor] for folder in folders]
     for depth in range(1, max(len(p) for p in parents) + 1):
         # A repo at the filesystem root has no parent folder to show, so it shows the root.
@@ -150,7 +171,7 @@ class _RepoNames(dict[str | None, str]):
         return _folder_name(repo)
 
 
-def _all_repo_names(conn: sqlite3.Connection) -> _RepoNames:
+def all_repo_names(conn: sqlite3.Connection) -> _RepoNames:
     """Return repo_names over the whole archive, so a filter never changes a repo's name."""
     return _RepoNames(repo_names(repo for (repo,) in conn.execute(_DISTINCT_REPOS)))
 
@@ -527,6 +548,39 @@ def summary(
     }
 
 
+_WAIT_COLUMNS = (
+    "COUNT(waited),"
+    " COALESCE(SUM(waited IS NOT NULL AND outcome = 'skip'), 0),"
+    " COALESCE(SUM(waited IS NOT NULL AND reported), 0),"
+    " COALESCE(SUM(waited IS NOT NULL AND wait_timed_out), 0),"
+    " COALESCE(SUM(waited), 0.0),"
+    # Each wait, for the median, collected in the same pass over the range.
+    " json_group_array(waited) FILTER (WHERE waited IS NOT NULL)"
+)
+# A run that waited can still end uncached when its new snapshot has no tree key.
+_CHECKED_COLUMNS = (
+    "COALESCE(SUM(outcome IN " + _RAN + " OR waited IS NOT NULL), 0),"
+    " COALESCE(SUM(outcome IN " + _RAN + " AND wait_known = 0), 0),"
+    " COALESCE(SUM(CASE WHEN waited IS NOT NULL AND outcome = 'skip' THEN saved END), 0.0)"
+)
+
+
+def _wait_counts(
+    waited: int, skipped: int, reported: int, timed_out: int, total_wait: float, waits_json: str
+) -> dict[str, Any]:
+    """Convert the values selected with _WAIT_COLUMNS into wait counts."""
+    waits = json.loads(waits_json)
+    return {
+        "waited": waited,
+        "skipped": skipped,
+        "reported": reported,
+        "ran": waited - skipped - reported,
+        "timed_out": timed_out,
+        "total_wait": float(total_wait),
+        "median_wait": float(statistics.median(waits)) if waits else None,
+    }
+
+
 def coalescing(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     """Return how often runs waited for a concurrent run of the same gate, and how it ended.
 
@@ -544,35 +598,45 @@ def coalescing(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         the cache came from a gate-cache that did not record waits.
     """
     where, params = _where(filters)
-    # A run that waited can still end uncached when its new snapshot has no tree key.
-    row = conn.execute(
-        "SELECT COALESCE(SUM(outcome IN " + _RAN + " OR waited IS NOT NULL), 0),"  # noqa: S608
-        " COALESCE(SUM(outcome IN " + _RAN + " AND wait_known = 0), 0),"
-        " COUNT(waited),"
-        " COALESCE(SUM(waited IS NOT NULL AND outcome = 'skip'), 0),"
-        " COALESCE(SUM(waited IS NOT NULL AND reported), 0),"
-        " COALESCE(SUM(waited IS NOT NULL AND wait_timed_out), 0),"
-        " COALESCE(SUM(waited), 0.0),"
-        " COALESCE(SUM(CASE WHEN waited IS NOT NULL AND outcome = 'skip' THEN saved END), 0.0),"
-        # Each wait, for the median, collected in the same pass over the range.
-        " json_group_array(waited) FILTER (WHERE waited IS NOT NULL)"
-        " FROM events" + where,
+    checked, unknown, saved, *waits = conn.execute(
+        f"SELECT {_CHECKED_COLUMNS}, {_WAIT_COLUMNS} FROM events{where}",  # noqa: S608
         params,
     ).fetchone()
-    checked, unknown, waited, skipped, reported, timed_out, total_wait, saved, waits_json = row
-    waits = json.loads(waits_json)
     return {
         "runs": checked,
         "unknown_runs": unknown,
-        "waited": waited,
-        "skipped": skipped,
-        "reported": reported,
-        "ran": waited - skipped - reported,
-        "timed_out": timed_out,
-        "total_wait": float(total_wait),
-        "median_wait": float(statistics.median(waits)) if waits else None,
+        **_wait_counts(*waits),
         "saved": float(saved),
     }
+
+
+GateKey = tuple[str | None, str]
+
+
+def _gate_where(filters: Filters, gate_key: GateKey | None) -> tuple[str, list[Any]]:
+    """Build the WHERE clause of a per-gate query, scoped to one gate's repo and name when given."""
+    if gate_key is None:
+        return _where(filters)
+    repo, name = gate_key
+    return _where(filters, gate=name, exact_repo=(repo,))
+
+
+def gate_waits(
+    conn: sqlite3.Connection, filters: Filters, *, gate_key: GateKey | None = None
+) -> dict[GateKey, dict[str, Any]]:
+    """Return the wait counts of coalescing() for each gate that waited, without the run totals.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters.
+        gate_key: One gate's (repo, name) to scan alone; None covers every gate in `filters`.
+    """
+    where, params = _gate_where(filters, gate_key)
+    rows = conn.execute(
+        f"SELECT repo, gate, {_WAIT_COLUMNS} FROM events{where} GROUP BY repo, gate",  # noqa: S608
+        params,
+    )
+    return {(repo, gate): _wait_counts(*waits) for repo, gate, *waits in rows if waits[0] > 0}
 
 
 def hourly(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
@@ -606,8 +670,25 @@ def hourly(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
 
 def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     """Return per-gate metrics ordered by time saved."""
+    return {
+        "gates": [
+            {key: value for key, value in row.items() if key != LAST_FAILED_SPOT_CHECK}
+            for row in gate_rows(conn, filters)
+        ]
+    }
+
+
+def gate_rows(conn: sqlite3.Connection, filters: Filters) -> list[dict[str, Any]]:
+    """Return the metrics of `gates`, plus each gate's newest failed spot check."""
     where, params = _where(filters)
-    names = _all_repo_names(conn)
+    out = _gate_rows(conn, where, params)
+    out.sort(key=lambda g: (-g["time_saved"], g["repo_name"], g["name"]))
+    return out
+
+
+def _gate_rows(conn: sqlite3.Connection, where: str, params: list[Any]) -> list[dict[str, Any]]:
+    """Return the metrics of each gate with events matching `where`, in no set order."""
+    names = all_repo_names(conn)
     flaky_keys = {(r[0], r[1]) for r in _flaky_trees(conn, where, params)}
     durations = _pass_durations(conn, where, params)
     resources = _resource_costs(conn, where, params)
@@ -617,7 +698,8 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
         " SUM(outcome = 'fail'), MAX(ts), COALESCE(SUM(duration), 0.0),"
         " COALESCE(SUM(CASE WHEN outcome = 'fail' THEN duration END), 0.0),"
-        " COALESCE(SUM(spot_check), 0), COALESCE(SUM(spot_check AND outcome = 'fail'), 0)"
+        " COALESCE(SUM(spot_check), 0), COALESCE(SUM(spot_check AND outcome = 'fail'), 0),"
+        " MAX(CASE WHEN " + _FAILED_SPOT_CHECK + " THEN ts END)"
         " FROM events" + where + " GROUP BY repo, gate",
         params,
     ).fetchall()
@@ -635,6 +717,7 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         fail_time,
         spot_checks,
         spot_check_failures,
+        last_failed_spot_check,
     ) in rows:
         durs = durations.get((repo, gate), [])
         avg_run, median_run = _run_stats(durs)
@@ -645,6 +728,7 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
                 "repo_name": names[repo],
                 "name": gate,
                 "runs": runs,
+                "skips": skips,
                 "skip_rate": _skip_rate(skips, ran),
                 "avg_run": avg_run,
                 "median_run": median_run,
@@ -652,6 +736,7 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
                 "failures": failures,
                 "spot_checks": spot_checks,
                 "spot_check_failures": spot_check_failures,
+                LAST_FAILED_SPOT_CHECK: last_failed_spot_check,
                 "last_run": last,
                 "flaky": (repo, gate) in flaky_keys,
                 "time_spent": float(spent),
@@ -662,8 +747,7 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
                 "median_rss": float(statistics.median(rss_values)) if rss_values else None,
             }
         )
-    out.sort(key=lambda g: (-g["time_saved"], g["repo_name"], g["name"]))
-    return {"gates": out}
+    return out
 
 
 SpentStatus = Literal["all", "passing", "failing"]
@@ -695,7 +779,7 @@ def spent(conn: sqlite3.Connection, filters: Filters, *, status: SpentStatus) ->
     zone = _zone(filters.tz)
     where, params = _where(filters)
     where = _and(where, _SPENT_CONDITIONS[status])
-    names = _all_repo_names(conn)
+    names = all_repo_names(conn)
     totals: dict[tuple[str | None, str], float] = defaultdict(float)
     cells: dict[str, dict[tuple[str | None, str], float]] = defaultdict(lambda: defaultdict(float))
     days: dict[int, str] = {}
@@ -877,7 +961,7 @@ def slowdowns(
     window = previous_window(conn, filters, now=current_time)
     if window is None:
         return {"gates": [], "comparable": False}
-    names = _all_repo_names(conn)
+    names = all_repo_names(conn)
     current = replace(filters, end=filters.end if filters.end is not None else current_time)
     before = _median_passes(conn, window)
     after = _median_passes(conn, current)
@@ -911,8 +995,12 @@ def _slowest_tests(
     *,
     gate_median: float | None,
     since: float,
+    limit: int | None = SLOWEST_TESTS_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Return the tests with the longest median passing duration in the gate's recent runs."""
+    """Return the tests with the longest median passing duration in the gate's recent runs.
+
+    A `limit` of None returns every test.
+    """
     # The median averages the middle row, or the middle two, of each test's sorted durations.
     rows = conn.execute(
         "WITH runs AS (SELECT id FROM events"  # noqa: S608
@@ -931,7 +1019,7 @@ def _slowest_tests(
         " SELECT name, AVG(duration) AS median, MAX(runs) FROM ranked"
         " WHERE rank IN ((runs + 1) / 2, (runs + 2) / 2)"
         " GROUP BY name ORDER BY median DESC, name LIMIT ?",
-        [*params, since, SLOWEST_TESTS_RUNS, SLOWEST_TESTS_LIMIT],
+        [*params, since, SLOWEST_TESTS_RUNS, -1 if limit is None else limit],
     ).fetchall()
     return [
         {
@@ -944,25 +1032,31 @@ def _slowest_tests(
     ]
 
 
-def _report_problems(conn: sqlite3.Connection, where: str, params: list[Any]) -> dict[str, int]:
-    """Count the gate's recent runs whose test reports were missing, stale, or invalid.
+def _report_problem_counts(
+    conn: sqlite3.Connection, where: str, params: list[Any]
+) -> dict[GateKey, dict[str, int]]:
+    """Count, per gate, the recent runs whose test reports were missing, stale, or invalid.
 
     A run counts once, under the status of its unread reports. That is `junit` when no report
-    was read, else `junit_problem`.
+    was read, else `junit_problem`. Only gates with a problem appear.
     """
-    counts = dict.fromkeys(_REPORT_PROBLEMS, 0)
-    for (status,) in conn.execute(
-        "SELECT CASE WHEN json_valid(raw) THEN CASE json_type(raw, '$.junit')"  # noqa: S608
-        " WHEN 'text' THEN json_extract(raw, '$.junit')"
-        " ELSE json_extract(raw, '$.junit_problem') END END"
-        " FROM events"
-        + _and(where, "outcome != 'skip' AND NOT reported")
-        + " ORDER BY ts DESC, id DESC LIMIT ?",
+    out: dict[GateKey, dict[str, int]] = {}
+    # Ranks on the index alone, so the JSON is read only for the runs that count.
+    for repo, gate, status in conn.execute(
+        "SELECT r.repo, r.gate,"  # noqa: S608
+        " CASE WHEN json_valid(e.raw) THEN CASE json_type(e.raw, '$.junit')"
+        " WHEN 'text' THEN json_extract(e.raw, '$.junit')"
+        " ELSE json_extract(e.raw, '$.junit_problem') END END"
+        " FROM (SELECT id, repo, gate,"
+        " ROW_NUMBER() OVER (PARTITION BY repo, gate ORDER BY ts DESC, id DESC) AS rn"
+        " FROM events" + _and(where, "outcome != 'skip' AND NOT reported") + ") AS r"
+        " JOIN events AS e ON e.id = r.id WHERE r.rn <= ?",
         [*params, REPORT_PROBLEM_RUNS],
     ):
-        if status in counts:
+        if status in _REPORT_PROBLEMS:
+            counts = out.setdefault((repo, gate), dict.fromkeys(_REPORT_PROBLEMS, 0))
             counts[status] += 1
-    return counts
+    return out
 
 
 def _tests_cutoff(filters: Filters, since: float) -> float | None:
@@ -994,13 +1088,9 @@ def gate_detail(
         The detail body.
     """
     where, params = _where(filters, gate=name, exact_repo=(repo,))
-    names = _all_repo_names(conn)
+    names = all_repo_names(conn)
     since = tests_since(time.time() if now is None else now)
-    has_tests = bool(
-        conn.execute(
-            "SELECT EXISTS (SELECT 1 FROM tests WHERE repo IS ? AND gate = ?)", (repo, name)
-        ).fetchone()[0]
-    )
+    has_tests = _has_tests(conn, repo=repo, name=name)
     trend = conn.execute(
         "SELECT ts, duration FROM events"  # noqa: S608
         + _and(where, "outcome = 'pass' AND duration IS NOT NULL")
@@ -1030,19 +1120,39 @@ def gate_detail(
         ],
         "trend": [{"ts": ts, "duration": d} for ts, d in trend],
         "recent": [_event_row(r, names) for r in recent],
-        "flaky_trees": [
-            {"tree": tree, "fails": fails, "passes": passes, "last": last}
-            for _, _, tree, fails, passes, last in _flaky_trees(conn, where, params)
-        ],
+        "flaky_trees": gate_flaky_trees(conn, filters, repo=repo, name=name),
         "slowest_tests": (
             _slowest_tests(conn, where, params, gate_median=median, since=since)
             if has_tests
             else []
         ),
         "has_tests": has_tests,
-        "report_problems": _report_problems(conn, where, params),
+        "report_problems": _report_problem_counts(conn, where, params).get(
+            (repo, name), dict.fromkeys(_REPORT_PROBLEMS, 0)
+        ),
         "tests_cutoff": _tests_cutoff(filters, since),
     }
+
+
+def gate_flaky_trees(
+    conn: sqlite3.Connection, filters: Filters, *, repo: str | None, name: str
+) -> list[dict[str, Any]]:
+    """Return the trees on which the gate both failed and passed, newest first."""
+    where, params = _where(filters, gate=name, exact_repo=(repo,))
+    return [
+        {"tree": tree, "fails": fails, "passes": passes, "last": last}
+        for _, _, tree, fails, passes, last in _flaky_trees(conn, where, params)
+    ]
+
+
+def gate_failure_timing(
+    conn: sqlite3.Connection, filters: Filters, *, repo: str | None, name: str
+) -> dict[str, Any]:
+    """Return how the gate's failed runs split into early and late against its median pass."""
+    where, params = _where(filters, gate=name, exact_repo=(repo,))
+    passes = _pass_durations(conn, where, params).get((repo, name), [])
+    median = statistics.median(passes) if passes else None
+    return _failure_timing(conn, where, params, median)
 
 
 def repos(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
@@ -1240,7 +1350,7 @@ def _breakdown_rows(
     """
     grouping = _grouping(by)
     width = len(grouping.columns)
-    names = _all_repo_names(conn) if names is None else names
+    names = all_repo_names(conn) if names is None else names
     # With exactly one MAX aggregate, SQLite takes the bare `extra` value from that newest row.
     rows = conn.execute(
         "SELECT " + ", ".join(grouping.columns) + ","  # noqa: S608
@@ -1384,7 +1494,7 @@ def activity(  # noqa: PLR0913
         ts, event_id = _parse_cursor(before)
         where = _and(where, "(ts < ? OR (ts = ? AND id < ?))")
         params = [*params, ts, ts, event_id]
-    names = _all_repo_names(conn)
+    names = all_repo_names(conn)
     rows = conn.execute(
         f"{prefix}SELECT {_ROW_COLUMNS}, id FROM events{where} ORDER BY ts DESC, id DESC LIMIT ?",  # noqa: S608
         [*prefix_params, *params, limit + 1],
@@ -1428,6 +1538,35 @@ class _TriageScope:
 
 # CROSS JOIN keeps SQLite from scanning every test result: the window's events lead and
 # their results come through the event_id index.
+def _flaky_results(where: str) -> str:
+    """Return a subquery `f` of each test that both failed and passed on one flaky tree.
+
+    Its parameters are `where`'s, then `since`; the `_flaky_trees_cte` it reads from comes first.
+    """
+    return (
+        "(SELECT e.repo, e.gate, test_results.test_id,"  # noqa: S608
+        " SUM(test_results.outcome = 'fail') AS fails,"
+        " SUM(test_results.outcome IN " + _TEST_PASSED + ") AS passes, MAX(e.ts) AS last"
+        " FROM (SELECT id, repo, gate, name, tree, ts FROM events"
+        + _and(where, "tree IS NOT NULL AND ts >= ? AND " + _ON_FLAKY_TREE)
+        + ") AS e CROSS JOIN test_results ON test_results.event_id = e.id"
+        " GROUP BY e.repo, e.name, e.tree, test_results.test_id"
+        " HAVING fails > 0 AND passes > 0) AS f"
+    )
+
+
+def _retried_results(where: str) -> str:
+    """Return a subquery `r` of each retried test result, with its run's gate and time."""
+    return (
+        "(SELECT e.repo, e.gate, e.ts, test_results.test_id"  # noqa: S608
+        " FROM (SELECT id, repo, gate, ts FROM events"
+        + _and(where, "ts >= ? AND " + _NOT_SPOT_CHECK)
+        + ") AS e"
+        " CROSS JOIN test_results ON test_results.event_id = e.id"
+        " WHERE test_results.outcome = 'retried') AS r"
+    )
+
+
 def _flaky_tests(
     conn: sqlite3.Connection, where: str, params: list[Any], *, since: float
 ) -> dict[tuple[str | None, str], list[dict[str, Any]]]:
@@ -1435,16 +1574,9 @@ def _flaky_tests(
     out: dict[tuple[str | None, str], list[dict[str, Any]]] = defaultdict(list)
     for repo, gate, test, fails, passes, last in conn.execute(
         _flaky_trees_cte(where)  # noqa: S608
-        + "SELECT f.repo, f.gate, tests.name, SUM(f.fails), SUM(f.passes), MAX(f.last) FROM ("
-        " SELECT e.repo, e.gate, test_results.test_id,"
-        " SUM(test_results.outcome = 'fail') AS fails,"
-        " SUM(test_results.outcome IN " + _TEST_PASSED + ") AS passes, MAX(e.ts) AS last"
-        " FROM (SELECT id, repo, gate, name, tree, ts FROM events"
-        + _and(where, "tree IS NOT NULL AND ts >= ? AND " + _ON_FLAKY_TREE)
-        + ") AS e CROSS JOIN test_results ON test_results.event_id = e.id"
-        " GROUP BY e.repo, e.name, e.tree, test_results.test_id"
-        " HAVING fails > 0 AND passes > 0"
-        ") AS f JOIN tests ON tests.id = f.test_id"
+        + "SELECT f.repo, f.gate, tests.name, SUM(f.fails), SUM(f.passes), MAX(f.last) FROM "
+        + _flaky_results(where)
+        + " JOIN tests ON tests.id = f.test_id"
         " GROUP BY f.test_id ORDER BY MAX(f.last) DESC, tests.name",
         [*params, *params, since],
     ):
@@ -1458,18 +1590,37 @@ def _retried_tests(
     """Return, per gate, the tests that passed on a retry."""
     out: dict[tuple[str | None, str], list[dict[str, Any]]] = defaultdict(list)
     for repo, gate, test, runs, last in conn.execute(
-        "SELECT e.repo, e.gate, tests.name, COUNT(*), MAX(e.ts)"  # noqa: S608
-        " FROM (SELECT id, repo, gate, ts FROM events"
-        + _and(where, "ts >= ? AND " + _NOT_SPOT_CHECK)
-        + ") AS e"
-        " CROSS JOIN test_results ON test_results.event_id = e.id"
-        " JOIN tests ON tests.id = test_results.test_id"
-        " WHERE test_results.outcome = 'retried'"
-        " GROUP BY tests.id ORDER BY MAX(e.ts) DESC, tests.name",
+        "SELECT r.repo, r.gate, tests.name, COUNT(*), MAX(r.ts) FROM "  # noqa: S608
+        + _retried_results(where)
+        + " JOIN tests ON tests.id = r.test_id"
+        " GROUP BY tests.id ORDER BY MAX(r.ts) DESC, tests.name",
         [*params, since],
     ):
         out[repo, gate].append({"name": test, "runs": runs, "last": last})
     return out
+
+
+def _test_counts(
+    conn: sqlite3.Connection, where: str, params: list[Any], *, since: float
+) -> dict[GateKey, tuple[int, int]]:
+    """Return, per gate, how many tests were flaky and how many passed on a retry."""
+    out: dict[GateKey, list[int]] = defaultdict(lambda: [0, 0])
+    for repo, gate, count in conn.execute(
+        _flaky_trees_cte(where)  # noqa: S608
+        + "SELECT repo, gate, COUNT(DISTINCT test_id) FROM "
+        + _flaky_results(where)
+        + " GROUP BY repo, gate",
+        [*params, *params, since],
+    ):
+        out[repo, gate][0] = count
+    for repo, gate, count in conn.execute(
+        "SELECT repo, gate, COUNT(DISTINCT test_id) FROM "  # noqa: S608
+        + _retried_results(where)
+        + " GROUP BY repo, gate",
+        [*params, since],
+    ):
+        out[repo, gate][1] = count
+    return {key: (flaky_count, retried) for key, (flaky_count, retried) in out.items()}
 
 
 def _flaky_items(scope: _TriageScope) -> list[dict[str, Any]]:
@@ -1586,9 +1737,439 @@ def triage(
         raise ValueError(msg)
     where, params = _where(filters)
     since = tests_since(time.time() if now is None else now)
-    scope = _TriageScope(conn, where, params, _all_repo_names(conn), since)
+    scope = _TriageScope(conn, where, params, all_repo_names(conn), since)
     order = list(_TRIAGE_REASONS)
     builders = [_TRIAGE_REASONS[reason]] if reason is not None else _TRIAGE_REASONS.values()
     items = [item for build in builders for item in build(scope)]
     items.sort(key=lambda i: (-i["last_seen"], order.index(i["reason"]), i["name"]))
     return {"items": items, "tests_cutoff": _tests_cutoff(filters, since)}
+
+
+def gate_flaky_counts(
+    conn: sqlite3.Connection, filters: Filters
+) -> dict[tuple[str | None, str], dict[str, Any]]:
+    """Return flaky tree, fail, and pass counts per gate, with the newest flaky run."""
+    where, params = _where(filters)
+    out: dict[tuple[str | None, str], dict[str, Any]] = {}
+    for repo, gate, _tree, fails, passes, last in _flaky_trees(conn, where, params):
+        entry = out.setdefault(
+            (repo, gate), {"trees": 0, "fails": 0, "passes": 0, "last_seen": last}
+        )
+        entry["trees"] += 1
+        entry["fails"] += fails
+        entry["passes"] += passes
+        entry["last_seen"] = max(entry["last_seen"], last)
+    return out
+
+
+def gate_tests(
+    conn: sqlite3.Connection,
+    filters: Filters,
+    *,
+    repo: str | None,
+    name: str,
+    since: float,
+    gate_median: float | None,
+) -> dict[str, Any] | None:
+    """Return one gate's per-test detail: slowest, flaky, and retried tests, and report problems.
+
+    Args:
+        conn: Archive connection.
+        filters: Range filters; its repo is ignored.
+        repo: The gate's repo.
+        name: Gate, the name before any `@` key.
+        since: Oldest event time whose per-test results are kept.
+        gate_median: The gate's median passing duration over `filters`, for each test's share.
+
+    Returns:
+        The detail with every slowest test and report problems under their report keys, or None
+        when the gate never recorded test results and its recent runs had no report problem.
+    """
+    where, params = _where(filters, gate=name, exact_repo=(repo,))
+    key = (repo, name)
+    problems = _report_problem_counts(conn, where, params).get(key)
+    if problems is None and not _has_tests(conn, repo=repo, name=name):
+        return None
+    problems = problems or dict.fromkeys(_REPORT_PROBLEMS, 0)
+    return {
+        "since": _tests_cutoff(filters, since),
+        "slowest": _slowest_tests(
+            conn, where, params, gate_median=gate_median, since=since, limit=None
+        ),
+        "flaky": _flaky_tests(conn, where, params, since=since).get(key, []),
+        "retried": _retried_tests(conn, where, params, since=since).get(key, []),
+        "report_problems": {_REPORT_PROBLEM_KEYS[k]: problems[k] for k in _REPORT_PROBLEMS},
+    }
+
+
+def gate_test_counts(
+    conn: sqlite3.Connection, filters: Filters, *, since: float
+) -> dict[GateKey, dict[str, int]]:
+    """Return, per gate, how many tests were flaky or retried and how many runs had report problems.
+
+    Only gates that recorded test results, or whose recent runs had a report problem, appear.
+    """
+    where, params = _where(filters)
+    problems = _report_problem_counts(conn, where, params)
+    counts = _test_counts(conn, where, params, since=since)
+    return {
+        key: {
+            "flaky": counts.get(key, (0, 0))[0],
+            "retried": counts.get(key, (0, 0))[1],
+            "report_problems": sum(problems.get(key, {}).values()),
+        }
+        for key in _gates_with_tests(conn) | problems.keys()
+    }
+
+
+def _gates_with_tests(conn: sqlite3.Connection) -> set[GateKey]:
+    """Return every gate that ever recorded test results."""
+    return {(repo, gate) for repo, gate in conn.execute("SELECT DISTINCT repo, gate FROM tests")}
+
+
+def _has_tests(conn: sqlite3.Connection, *, repo: str | None, name: str) -> bool:
+    """Return whether the gate ever recorded test results."""
+    (found,) = conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM tests WHERE repo IS ? AND gate = ?)", (repo, name)
+    ).fetchone()
+    return bool(found)
+
+
+def gate_uncached(
+    conn: sqlite3.Connection, filters: Filters, *, gate_key: GateKey | None = None
+) -> dict[GateKey, list[dict[str, Any]]]:
+    """Return why each gate ran without the cache, most common first.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters.
+        gate_key: One gate's (repo, name) to scan alone; None covers every gate in `filters`.
+    """
+    where, params = _gate_where(filters, gate_key)
+    rows = conn.execute(
+        "SELECT repo, gate, outcome, reason, COUNT(*) AS n FROM events"  # noqa: S608
+        + _and(where, "outcome IN ('uncached', 'pass_unrecorded') AND reason IS NOT NULL")
+        + " GROUP BY repo, gate, outcome, reason ORDER BY n DESC, reason, outcome",
+        params,
+    )
+    out: dict[tuple[str | None, str], list[dict[str, Any]]] = {}
+    for repo, gate, outcome, reason, count in rows:
+        out.setdefault((repo, gate), []).append(
+            {"outcome": outcome, "reason": reason, "count": count}
+        )
+    return out
+
+
+def gate_overhead(
+    conn: sqlite3.Connection, filters: Filters, *, gate_key: GateKey | None = None
+) -> dict[GateKey, float]:
+    """Return the seconds gate-cache itself spent around each gate's runs.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters.
+        gate_key: One gate's (repo, name) to scan alone; None covers every gate in `filters`.
+    """
+    where, params = _gate_where(filters, gate_key)
+    rows = conn.execute(
+        "SELECT repo, gate, COALESCE(SUM(overhead), 0.0) FROM events"  # noqa: S608
+        + where
+        + " GROUP BY repo, gate",
+        params,
+    )
+    return {(repo, gate): float(total) for repo, gate, total in rows}
+
+
+def gate_latest_command(
+    conn: sqlite3.Connection, filters: Filters
+) -> dict[tuple[str | None, str], tuple[str, list[str]]]:
+    """Return each gate's newest command, falling back to its name, and its watched paths."""
+    where, params = _where(filters)
+    rows = conn.execute(
+        "SELECT repo, gate, command, paths FROM ("  # noqa: S608
+        "SELECT repo, gate, COALESCE(" + _raw_text("command") + ", name) AS command, paths,"
+        " ROW_NUMBER() OVER (PARTITION BY repo, gate ORDER BY ts DESC, id DESC) AS rn"
+        " FROM events" + where + ") WHERE rn = 1",
+        params,
+    )
+    return {(repo, gate): (command, json.loads(paths)) for repo, gate, command, paths in rows}
+
+
+def gate_command(
+    conn: sqlite3.Connection, *, repo: str | None, name: str
+) -> tuple[str, list[str]] | None:
+    """Return one gate's newest command and paths over the whole record.
+
+    Returns:
+        The command, or the name when the run recorded none, and the watched paths. None
+        when the repo never recorded the gate.
+    """
+    where, params = _where(Filters(), gate=name, exact_repo=(repo,))
+    command = _raw_text("command")
+    row = conn.execute(
+        f"SELECT COALESCE({command}, name), paths FROM events{where}"  # noqa: S608
+        " ORDER BY ts DESC, id DESC LIMIT 1",
+        params,
+    ).fetchone()
+    return None if row is None else (row[0], json.loads(row[1]))
+
+
+def _bucket_date(day: date, bucket: Bucket) -> date:
+    """Return the first day of the week (Monday) or month holding a day, or the day itself."""
+    if bucket == "week":
+        return day - timedelta(days=day.weekday())
+    if bucket == "month":
+        return day.replace(day=1)
+    return day
+
+
+def gate_trend(
+    conn: sqlite3.Connection,
+    filters: Filters,
+    *,
+    repo: str | None,
+    name: str,
+    bucket: Bucket,
+    tz: ZoneInfo,
+) -> list[dict[str, Any]]:
+    """Return runs and passing-duration spread per local day, week, or month, oldest first.
+
+    Args:
+        conn: Archive connection.
+        filters: Range filters; its repo is ignored.
+        repo: The gate's repo; None selects events recorded without a repo.
+        name: Gate, as stats group it: the name before any `@` key.
+        bucket: `day`, `week`, or `month`.
+        tz: Zone that decides where each bucket starts.
+
+    Returns:
+        One row per bucket that holds an event.
+    """
+    where, params = _where(filters, gate=name, exact_repo=(repo,))
+    runs: Counter[date] = Counter()
+    passes: dict[date, list[float]] = defaultdict(list)
+    for ts, outcome, duration in conn.execute(
+        "SELECT ts, outcome, duration FROM events" + where,  # noqa: S608
+        params,
+    ):
+        start = _bucket_date(datetime.fromtimestamp(ts, tz).date(), bucket)
+        runs[start] += 1
+        if outcome == "pass" and duration is not None:
+            passes[start].append(duration)
+    return [
+        {
+            "start": start.isoformat(),
+            "runs": runs[start],
+            "median": _run_stats(passes[start])[1],
+            "p90": _p90(passes[start]),
+        }
+        for start in sorted(runs)
+    ]
+
+
+def gate_exit_codes(
+    conn: sqlite3.Connection, filters: Filters, *, repo: str | None, name: str
+) -> dict[str, int]:
+    """Return how often each exit code ended a failed run, most common first."""
+    where, params = _where(filters, gate=name, exact_repo=(repo,))
+    rows = conn.execute(
+        "SELECT exit_code, COUNT(*) AS n FROM events"  # noqa: S608
+        + _and(where, "outcome = 'fail' AND exit_code IS NOT NULL")
+        + " GROUP BY exit_code ORDER BY n DESC, exit_code",
+        params,
+    )
+    return {str(code): count for code, count in rows}
+
+
+def gate_dimensions(
+    conn: sqlite3.Connection, filters: Filters, *, repo: str | None, name: str
+) -> dict[str, list[dict[str, Any]]]:
+    """Return the gate's runs grouped by source, branch, and machine, most runs first.
+
+    A run whose raw line lacks a field groups under `None` for that field.
+    """
+    where, params = _where(filters, gate=name, exact_repo=(repo,))
+    trigger, agent = _raw_text("trigger"), _raw_text("agent")
+    branch, machine, host = _raw_text("branch"), _raw_text("machine"), _raw_text("host")
+    counts = "COUNT(*), SUM(outcome = 'fail')"
+    order = " ORDER BY COUNT(*) DESC, 1, 2"
+
+    sources = conn.execute(
+        f"SELECT {trigger}, {agent}, {counts}, COALESCE(SUM(duration), 0.0)"  # noqa: S608
+        f" FROM events{where} GROUP BY 1, 2{order}",
+        params,
+    )
+    branches = conn.execute(
+        f"SELECT {branch}, {counts} FROM events{where} GROUP BY 1{order}",  # noqa: S608
+        params,
+    )
+    # With a lone MAX(), SQLite takes the other bare columns from the row that holds the maximum,
+    # so each machine reports the host of its newest run.
+    machines = conn.execute(
+        f"SELECT {machine}, {counts}, {host}, MAX(ts) FROM events{where} GROUP BY 1{order}",  # noqa: S608
+        params,
+    )
+    return {
+        "sources": [
+            {
+                "source": source,
+                "agent": who,
+                "runs": runs,
+                "failures": failures,
+                "time_spent": float(spent),
+            }
+            for source, who, runs, failures, spent in sources
+        ],
+        "branches": [
+            {"branch": b, "runs": runs, "failures": failures} for b, runs, failures in branches
+        ],
+        "machines": [
+            {"machine": m, "host": h, "runs": runs, "failures": failures}
+            for m, runs, failures, h, _newest in machines
+        ],
+    }
+
+
+_COMMIT_LENGTH = 7
+_RUN_KEYS = (
+    "ts",
+    "name",
+    "outcome",
+    "exit_code",
+    "duration",
+    "tree",
+    "commit",
+    "branch",
+    "source",
+    "agent",
+    "machine",
+    "spot_check",
+)
+
+
+def gate_runs(
+    conn: sqlite3.Connection,
+    filters: Filters,
+    *,
+    repo: str | None,
+    name: str,
+    limit: int,
+    tree: str | None = None,
+    failed_spot_checks: bool = False,
+) -> tuple[int, list[dict[str, Any]]]:
+    """Return the gate's event count and its newest events, optionally for one tree.
+
+    Each event carries its `id`, for `failed_tests`. A tree's runs leave out spot checks, as
+    the flaky views do.
+
+    Args:
+        conn: Archive connection.
+        filters: Range filters.
+        repo: The gate's repo.
+        name: Gate, the name before any `@` key.
+        limit: Most events to return; the count covers every match.
+        tree: Keep only this tree's runs, leaving out spot checks.
+        failed_spot_checks: Keep only the spot checks that failed.
+    """
+    where, params = _where(filters, gate=name, exact_repo=(repo,))
+    if tree is not None:
+        where = _and(where, "tree = ? AND " + _NOT_SPOT_CHECK)
+        params = [*params, tree]
+    if failed_spot_checks:
+        where = _and(where, _FAILED_SPOT_CHECK)
+    (total,) = conn.execute("SELECT COUNT(*) FROM events" + where, params).fetchone()  # noqa: S608
+    rows = conn.execute(
+        "SELECT id, ts, name, outcome, exit_code, duration, tree, "  # noqa: S608
+        f"NULLIF(substr({_raw_text('head')}, 1, {_COMMIT_LENGTH}), ''), "
+        + ", ".join(_raw_text(f) for f in ("branch", "trigger", "agent", "machine"))
+        + ", spot_check FROM events"
+        + where
+        + " ORDER BY ts DESC, id DESC LIMIT ?",
+        [*params, limit],
+    )
+    runs = [dict(zip(("id", *_RUN_KEYS), row, strict=True)) for row in rows]
+    for run in runs:
+        run["spot_check"] = bool(run["spot_check"])
+    return total, runs
+
+
+def failed_tests(
+    conn: sqlite3.Connection, event_ids: list[int]
+) -> dict[int, tuple[int, list[str]]]:
+    """Return, per run that recorded test results, its failed test count and first names.
+
+    Take the ids of many runs at once, so a report that shows several lists of runs reads
+    their test results in one query.
+
+    A run whose results hold no failure maps to a zero count and no names.
+    """
+    if not event_ids:
+        return {}
+    out: dict[int, tuple[int, list[str]]] = {}
+    # Failed results sort first, so the cut keeps them and a run with none still yields a row.
+    for event_id, test, failed, fails in conn.execute(
+        "SELECT event_id, name, failed, fails FROM ("
+        " SELECT test_results.event_id AS event_id, tests.name AS name,"
+        " test_results.outcome = 'fail' AS failed,"
+        " SUM(test_results.outcome = 'fail') OVER (PARTITION BY test_results.event_id) AS fails,"
+        " ROW_NUMBER() OVER (PARTITION BY test_results.event_id"
+        " ORDER BY test_results.outcome != 'fail', tests.name) AS rn"
+        " FROM test_results JOIN tests ON tests.id = test_results.test_id"
+        # One JSON parameter, so a long id list never hits SQLite's bound-parameter limit.
+        " WHERE test_results.event_id IN (SELECT value FROM json_each(?)))"
+        " WHERE rn <= ? ORDER BY event_id, rn",
+        [json.dumps(sorted(set(event_ids))), FAILED_TESTS_SHOWN],
+    ):
+        _, names = out.setdefault(event_id, (fails, []))
+        if failed:
+            names.append(test)
+    return out
+
+
+def gate_variants(
+    conn: sqlite3.Connection, filters: Filters, *, repo: str | None, name: str
+) -> list[dict[str, Any]]:
+    """Return every keyed name (`name@key`) the gate ever recorded, with its runs in the range.
+
+    Each name carries the paths of its own newest run over the whole record, since keys of
+    one gate can watch different paths. A name with runs in the range comes first, newest
+    run first; a name with none has `runs` 0 and `last_run` None.
+    """
+    where, params = _where(Filters(), gate=name, exact_repo=(repo,))
+    bounds = [
+        (clause, value)
+        for clause, value in (("ts >= ?", filters.start), ("ts < ?", filters.end))
+        if value is not None
+    ]
+    in_range = " AND ".join(clause for clause, _ in bounds) or "1"
+    range_params = [value for _, value in bounds]
+    rows = conn.execute(
+        "SELECT name, paths, runs, last FROM ("  # noqa: S608
+        "SELECT name, paths,"
+        " ROW_NUMBER() OVER (PARTITION BY name ORDER BY ts DESC, id DESC) AS rn,"
+        f" SUM({in_range}) OVER (PARTITION BY name) AS runs,"
+        f" MAX(CASE WHEN {in_range} THEN ts END) OVER (PARTITION BY name) AS last"
+        " FROM events" + _and(where, "name <> gate") + ") WHERE rn = 1",
+        [*range_params, *range_params, *params],
+    )
+    variants = [
+        {"name": n, "runs": runs, "last_run": last, "paths": json.loads(paths)}
+        for n, paths, runs, last in rows
+    ]
+    variants.sort(key=lambda v: (v["last_run"] is None, -(v["last_run"] or 0), v["name"]))
+    return variants
+
+
+def gate_summary(
+    conn: sqlite3.Connection, filters: Filters, *, repo: str | None, name: str
+) -> dict[str, Any]:
+    """Return the gate's totals, run times, resource use, and spot checks over the range."""
+    where, params = _where(filters, gate=name, exact_repo=(repo,))
+    row = next(iter(_gate_rows(conn, where, params)), None)
+    keys = (*SUMMARY_KEYS, "cpu_ratio", "peak_rss", "median_rss", *SPOT_CHECK_KEYS)
+    out = {key: row[key] if row else None for key in keys}
+    if row is None:
+        out.update(runs=0, failures=0, time_spent=0.0, time_saved=0.0, fail_time=0.0)
+        out.update(dict.fromkeys(SPOT_CHECK_KEYS, 0))
+    out["overhead"] = gate_overhead(conn, filters, gate_key=(repo, name)).get((repo, name), 0.0)
+    return out

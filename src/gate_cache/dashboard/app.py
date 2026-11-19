@@ -18,6 +18,12 @@ from gate_cache.stats.recorder import INBOX_NAME
 if TYPE_CHECKING:
     from pathlib import Path
 
+DASHBOARD_RUNNING = "dashboard already running at {url}"
+DASHBOARD_BUSY = (
+    "dashboard already running, or stats clear or a stats report is in progress. "
+    "A report ends in a moment, so try again."
+)
+
 
 def _bind(port: int | None, state: Path, static_dir: Path) -> server_module.DashboardServer | None:
     """Bind the server, falling back to a free port only when no port was requested."""
@@ -62,12 +68,9 @@ def run_dashboard(*, port: int | None, open_browser: bool) -> int:
         return 1
     if lock is None:
         url = running_url(state)
-        # The lock without a URL is a dashboard still starting or `stats clear` at its prompt.
-        say(
-            f"dashboard already running at {url}"
-            if url
-            else "dashboard already running, or stats clear is in progress"
-        )
+        # The lock without a URL is a dashboard still starting, `stats clear` at its prompt,
+        # or `stats report` reading the record.
+        say(DASHBOARD_RUNNING.format(url=url) if url else DASHBOARD_BUSY)
         if url and open_browser:
             webbrowser.open(url)
         return 0
