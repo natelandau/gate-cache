@@ -245,7 +245,7 @@ def test_passed_names_lists_gates_for_tree(tmp_path: Path) -> None:
     """Verify only gates recorded for the given tree are listed, sorted by name."""
     for tree, name in ((TREE, "pytest"), (TREE, "api-lint"), (OTHER_TREE, "ruff")):
         write_marker(marker_path(tmp_path, tree, name), tree=tree, name=name, command=["x"])
-    assert passed_names(tmp_path, TREE) == ["api-lint", "pytest"]
+    assert passed_names(tmp_path, TREE, max_age_days=30) == ["api-lint", "pytest"]
 
 
 def test_passed_names_skips_unreadable_and_mismatched_files(tmp_path: Path) -> None:
@@ -258,12 +258,12 @@ def test_passed_names_skips_unreadable_and_mismatched_files(tmp_path: Path) -> N
     (directory / ("f" * 64)).write_text(json.dumps({"tree": TREE, "name": "forged"}))
     (directory / ".tmp-abc").write_text(json.dumps({"tree": TREE, "name": "partial"}))
     (directory / "subdir").mkdir()
-    assert passed_names(tmp_path, TREE) == ["pytest"]
+    assert passed_names(tmp_path, TREE, max_age_days=30) == ["pytest"]
 
 
 def test_passed_names_missing_dir_is_empty(tmp_path: Path) -> None:
     """Verify a repo with no marker directory lists no gates."""
-    assert passed_names(tmp_path, TREE) == []
+    assert passed_names(tmp_path, TREE, max_age_days=30) == []
 
 
 def test_missed_records_list_misses_without_a_pass(tmp_path: Path) -> None:
@@ -286,9 +286,9 @@ def test_missed_records_list_misses_without_a_pass(tmp_path: Path) -> None:
         reason="exit code 1",
     )
     write_marker(marker_path(tmp_path, TREE, "ty"), tree=TREE, name="ty", command=["x"])
-    records = missed_records(tmp_path, TREE)
+    records = missed_records(tmp_path, TREE, max_age_days=30)
     assert [(r["name"], r["exit_code"]) for r in records] == [("pytest", 2), ("ruff", 1)]
-    assert passed_names(tmp_path, TREE) == ["ty"]
+    assert passed_names(tmp_path, TREE, max_age_days=30) == ["ty"]
 
 
 def test_miss_record_is_not_a_marker(tmp_path: Path) -> None:
@@ -323,7 +323,7 @@ def test_missed_records_skip_gates_with_contentless_marker(tmp_path: Path) -> No
         reason="exit code 1",
     )
     marker_path(tmp_path, TREE, "ruff").touch()
-    assert missed_records(tmp_path, TREE) == []
+    assert missed_records(tmp_path, TREE, max_age_days=30) == []
 
 
 def test_miss_record_reads_one_gate(tmp_path: Path) -> None:

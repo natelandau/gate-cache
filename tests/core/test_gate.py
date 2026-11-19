@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -399,12 +400,31 @@ def test_max_age_env_lengthens_pruning(
     assert kept.exists()
 
 
+def test_expired_marker_neither_skips_nor_reports_a_hit(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a marker past GATE_CACHE_MAX_AGE_DAYS counts as no pass before any prune runs."""
+    run_gate(NAME, counter.argv())
+    (marker,) = markers(git_repo)
+    stale = time.time() - 10 * 86400
+    os.utime(marker, (stale, stale))
+    monkeypatch.setenv("GATE_CACHE_MAX_AGE_DAYS", "1")
+
+    named, named_code = gate_status(NAME)
+    listed, listed_code = gate_status(None)
+    assert (named["result"], named_code) == ("miss", 1)
+    assert (listed["passed"], listed_code) == ([], 1)
+
+    assert run_gate(NAME, counter.argv(exit_code=3)) == 3
+    assert counter.count == 2
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(None, 30), ("", 30), ("7", 7), (" 14 ", 14), ("365", 365)],
+    [(None, 30), ("", 30), ("7", 7), (" 14 ", 14), ("365", 365), ("9" * 400, 1_000_000)],
 )
 def test_marker_max_age_days_valid(value: str | None, expected: int) -> None:
-    """Verify valid or unset values give the configured or default age."""
+    """Verify valid or unset values give the configured or default age, capped to stay finite."""
     environ = {} if value is None else {"GATE_CACHE_MAX_AGE_DAYS": value}
     assert marker_max_age_days(environ) == expected
 
@@ -592,14 +612,14 @@ def test_marker_check_error_is_a_miss(
     """An OSError while checking for a marker counts as a miss, so the command runs."""
     run_gate(NAME, counter.argv())
 
-    real_exists = Path.exists
+    real_stat = Path.stat
 
-    def fail_for_markers(self: Path, **kwargs: bool) -> bool:
+    def fail_for_markers(self: Path, **kwargs: bool) -> os.stat_result:
         if self.parent.name == "gate-cache":
             raise PermissionError(13, "Permission denied")
-        return real_exists(self, **kwargs)
+        return real_stat(self, **kwargs)
 
-    monkeypatch.setattr(Path, "exists", fail_for_markers)
+    monkeypatch.setattr(Path, "stat", fail_for_markers)
     assert run_gate(NAME, counter.argv()) == 0
     assert counter.count == 2
 
@@ -1678,9 +1698,9 @@ def test_new_holder_recorded_before_prerun_checks(
     seen: list[Holder | None] = []
     real = gate_module.marker_exists
 
-    def marker_exists(marker: Path) -> bool:
+    def marker_exists(marker: Path, **kwargs: Any) -> bool:
         seen.append(read_holder(path))
-        return real(marker)
+        return real(marker, **kwargs)
 
     monkeypatch.setattr(gate_module, "marker_exists", marker_exists)
     assert run_gate(NAME, counter.argv()) == 0

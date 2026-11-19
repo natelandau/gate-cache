@@ -9,6 +9,7 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass, replace
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -60,6 +61,8 @@ if TYPE_CHECKING:
 DISABLE_ENV = "GATE_CACHE_DISABLE"
 MAX_AGE_ENV = "GATE_CACHE_MAX_AGE_DAYS"
 DEFAULT_MAX_AGE_DAYS = 30
+# Keeps the expiry cutoff a finite float; any longer limit already means never expire.
+_MAX_AGE_LIMIT_DAYS = 1_000_000
 _DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
 _CI_REASON = f"caching disabled in CI ({DISABLE_ENV}=0 keeps it on)"
 _NO_COMMON_DIR_REASON = "could not locate git directory"
@@ -100,7 +103,7 @@ def disabled_reason(environ: Mapping[str, str] | None = None) -> str | None:
 
 
 def marker_max_age_days(environ: Mapping[str, str] | None = None) -> int:
-    """Read how many days a marker lives before pruning deletes it.
+    """Read how many days a marker counts as a pass before it expires and pruning deletes it.
 
     An invalid value warns and falls back to the default, so a typo in the setting
     can never fail a gate.
@@ -125,7 +128,7 @@ def marker_max_age_days(environ: Mapping[str, str] | None = None) -> int:
             f"using {DEFAULT_MAX_AGE_DAYS}"
         )
         return DEFAULT_MAX_AGE_DAYS
-    return days
+    return min(days, _MAX_AGE_LIMIT_DAYS)
 
 
 def _round(value: float | None, digits: int) -> float | None:
@@ -354,6 +357,7 @@ class _Attempt:
         command: Command and arguments that run.
         snapshot: The snapshot the run is keyed on.
         key: The snapshot's key, known to be set.
+        max_age_days: Age in days past which a marker no longer counts as a pass.
         spot_check: Whether the run replaces a skip on a recorded pass of the key.
     """
 
@@ -362,6 +366,7 @@ class _Attempt:
     command: Sequence[str]
     snapshot: Snapshot
     key: str
+    max_age_days: int
     spot_check: bool = False
 
     @property
@@ -427,10 +432,9 @@ class _Attempt:
 
     def prune(self) -> None:
         """Delete old markers, miss records, run times, and free lock files, ignoring errors."""
-        max_age_days = marker_max_age_days()
-        prune_markers(marker_dir(self.common_dir), max_age_days=max_age_days)
-        prune_markers(durations_dir(self.common_dir), max_age_days=max_age_days)
-        prune_locks(self.common_dir, max_age_days=max_age_days)
+        prune_markers(marker_dir(self.common_dir), max_age_days=self.max_age_days)
+        prune_markers(durations_dir(self.common_dir), max_age_days=self.max_age_days)
+        prune_locks(self.common_dir, max_age_days=self.max_age_days)
 
     def record_if_unchanged(self, duration: float) -> bool:
         """Record the pass only when the run left the content it was keyed on untouched.
@@ -511,6 +515,11 @@ class _GateRun:
     force_spot_check: bool = False
     check: SpotCheck | None = None
 
+    @cached_property
+    def max_age_days(self) -> int:
+        """Read the marker age limit once, so an invalid setting warns only once per run."""
+        return marker_max_age_days()
+
     def run(self, snapshot: Snapshot) -> int:
         """Skip on a recorded pass, else run the command, waiting for a run with the same key.
 
@@ -567,9 +576,14 @@ class _GateRun:
         if common_dir is None:
             return self.run_uncached(_NO_COMMON_DIR_REASON, snapshot)
         attempt = _Attempt(
-            common_dir=common_dir, name=self.name, command=self.command, snapshot=snapshot, key=key
+            common_dir=common_dir,
+            name=self.name,
+            command=self.command,
+            snapshot=snapshot,
+            key=key,
+            max_age_days=self.max_age_days,
         )
-        if marker_exists(attempt.marker):
+        if marker_exists(attempt.marker, max_age_days=attempt.max_age_days):
             return self._on_marker(attempt)
         return attempt
 
@@ -656,7 +670,7 @@ class _GateRun:
             The exit code of the run.
         """
         # Another run may have recorded a pass after the first marker check.
-        if marker_exists(attempt.marker):
+        if marker_exists(attempt.marker, max_age_days=attempt.max_age_days):
             checked = self._on_marker(attempt)
             if isinstance(checked, int):
                 return checked
@@ -974,6 +988,7 @@ def current_status(
     paths: Sequence[str],
     *,
     snapshots: dict[tuple[str, ...], Snapshot] | None = None,
+    max_age_days: int | None = None,
 ) -> dict[str, Any] | None:
     """Look up one gate on the current content, the way `status --name` does.
 
@@ -982,6 +997,8 @@ def current_status(
         paths: Pathspecs of a scoped gate. Empty for an unscoped gate.
         snapshots: Snapshots taken so far, by pathspecs. Share one across the lookups of a
             report, so gates that watch the same paths hash the working tree once.
+        max_age_days: Marker age limit. Share one across the lookups of a report, so an
+            invalid setting warns once. None reads it from the environment.
 
     Returns:
         The key the gate is looked up under, `hit` or `miss`, and the last run of a
@@ -997,7 +1014,12 @@ def current_status(
     common_dir = snapshot.common_dir if snapshot.known else None
     if snapshot.key is None or common_dir is None:
         return None
-    lookup = _lookup_gate(name, snapshot.key, common_dir)
+    lookup = _lookup_gate(
+        name,
+        snapshot.key,
+        common_dir,
+        max_age_days=marker_max_age_days() if max_age_days is None else max_age_days,
+    )
     return {
         "tree": snapshot.key,
         "result": "hit" if lookup.hit else "miss",
@@ -1057,11 +1079,12 @@ class _Lookup:
     duration: float | None
 
 
-def _lookup_gate(name: str, key: str, common_dir: Path) -> _Lookup:
-    """Read the marker, or the miss record, of one gate under one key."""
+def _lookup_gate(name: str, key: str, common_dir: Path, *, max_age_days: int) -> _Lookup:
+    """Read the marker, or the unexpired miss record, of one gate under one key."""
     path = marker_path(common_dir, key, name)
-    hit = marker_exists(path)
-    record = None if hit else miss_record(common_dir, key, name)
+    hit = marker_exists(path, max_age_days=max_age_days)
+    missed = not hit and marker_exists(miss_path(common_dir, key, name), max_age_days=max_age_days)
+    record = miss_record(common_dir, key, name) if missed else None
     return _Lookup(
         path=path,
         hit=hit,
@@ -1080,7 +1103,7 @@ def _named_status(
     last_run: dict[str, Any] | None = None
     duration: float | None = None
     if key is not None and common_dir is not None:
-        lookup = _lookup_gate(name, key, common_dir)
+        lookup = _lookup_gate(name, key, common_dir, max_age_days=marker_max_age_days())
         path, hit, last_run, duration = lookup.path, lookup.hit, lookup.last_run, lookup.duration
     report = {
         "enabled": True,
@@ -1104,7 +1127,11 @@ def _list_gates() -> tuple[dict[str, Any], int]:
     """List the gates that passed or missed on the current tree, or on their paths' content."""
     # Scoped gates are found by recomputing each recorded path set's scope, all from one staging.
     common_dir = git_common_dir()
-    index = RecordIndex.load(common_dir) if common_dir is not None else None
+    index = (
+        RecordIndex.load(common_dir, max_age_days=marker_max_age_days())
+        if common_dir is not None
+        else None
+    )
     path_sets = index.scoped_path_sets() if index is not None else []
     snapshot, *scoped = take_snapshots([(), *path_sets])
     tree = snapshot.tree

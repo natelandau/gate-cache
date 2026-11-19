@@ -240,12 +240,30 @@ def miss_record(common_dir: Path, tree: str, name: str) -> dict[str, Any] | None
     return data
 
 
-def marker_exists(path: Path) -> bool:
-    """Return True only when the path is known to exist."""
+def marker_exists(path: Path, *, max_age_days: int, now: float | None = None) -> bool:
+    """Return True only when the marker is known to exist and has not expired.
+
+    A marker expires at the same age that pruning deletes it, so the age limit holds even
+    before a later run prunes the marker.
+
+    Args:
+        path: The marker file.
+        max_age_days: Age in days past which the marker no longer counts as a pass.
+        now: Current epoch time; defaults to the system clock.
+
+    Returns:
+        True when the marker exists and is younger than the age limit.
+    """
     try:
-        return path.exists()
+        mtime = path.stat().st_mtime
     except OSError:
         return False
+    return not _expired(mtime, max_age_days=max_age_days, now=now)
+
+
+def _expired(mtime: float, *, max_age_days: int, now: float | None = None) -> bool:
+    """Return whether a file last written at mtime is older than the age limit."""
+    return mtime < (time.time() if now is None else now) - max_age_days * DAY_SECONDS
 
 
 def read_json(path: Path) -> object:
@@ -327,18 +345,21 @@ class RecordIndex:
 
     Attributes:
         common_dir: Absolute path to the git common directory.
-        entries: Each record file with its parsed JSON content.
+        entries: Each unexpired record file with its parsed JSON content.
+        max_age_days: Age in days past which a record no longer counts.
     """
 
     common_dir: Path
     entries: tuple[tuple[Path, dict[str, Any]], ...]
+    max_age_days: int
 
     @classmethod
-    def load(cls, common_dir: Path) -> RecordIndex:
-        """Read every finished record file, skipping temp files and unparsable content.
+    def load(cls, common_dir: Path, *, max_age_days: int) -> RecordIndex:
+        """Read every finished record file, skipping temp files, expired records, and bad content.
 
         Args:
             common_dir: Absolute path to the git common directory.
+            max_age_days: Age in days past which a record no longer counts.
 
         Returns:
             The index, empty when the marker directory is missing or unreadable.
@@ -349,12 +370,14 @@ class RecordIndex:
             paths = []
         entries = []
         for path in paths:
-            if path.name.startswith(TEMP_PREFIX):
+            if path.name.startswith(TEMP_PREFIX) or not marker_exists(
+                path, max_age_days=max_age_days
+            ):
                 continue
             data = read_record(path)
             if data is not None:
                 entries.append((path, data))
-        return cls(common_dir=common_dir, entries=tuple(entries))
+        return cls(common_dir=common_dir, entries=tuple(entries), max_age_days=max_age_days)
 
     def passed_names(self, *trees: str) -> list[str]:
         """List the gates with a recorded pass on any of the trees, for reporting what would skip.
@@ -387,7 +410,10 @@ class RecordIndex:
         records = [
             record
             for record in self._matching(trees, suffix=MISS_SUFFIX)
-            if not marker_exists(marker_path(self.common_dir, record["tree"], record["name"]))
+            if not marker_exists(
+                marker_path(self.common_dir, record["tree"], record["name"]),
+                max_age_days=self.max_age_days,
+            )
         ]
         return sorted(records, key=lambda record: record["name"])
 
@@ -416,30 +442,32 @@ class RecordIndex:
         ]
 
 
-def passed_names(common_dir: Path, *trees: str) -> list[str]:
+def passed_names(common_dir: Path, *trees: str, max_age_days: int) -> list[str]:
     """List the gates with a recorded pass on any of the trees; see RecordIndex.passed_names.
 
     Args:
         common_dir: Absolute path to the git common directory.
         *trees: Git tree hashes or scope values to match.
+        max_age_days: Age in days past which a record no longer counts.
 
     Returns:
         Sorted, unique gate names.
     """
-    return RecordIndex.load(common_dir).passed_names(*trees)
+    return RecordIndex.load(common_dir, max_age_days=max_age_days).passed_names(*trees)
 
 
-def missed_records(common_dir: Path, *trees: str) -> list[dict[str, Any]]:
+def missed_records(common_dir: Path, *trees: str, max_age_days: int) -> list[dict[str, Any]]:
     """List the gates that ran on any of the trees without passing; see RecordIndex.
 
     Args:
         common_dir: Absolute path to the git common directory.
         *trees: Git tree hashes or scope values to match.
+        max_age_days: Age in days past which a record no longer counts.
 
     Returns:
         Each miss record's JSON content, sorted by gate name.
     """
-    return RecordIndex.load(common_dir).missed_records(*trees)
+    return RecordIndex.load(common_dir, max_age_days=max_age_days).missed_records(*trees)
 
 
 def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None = None) -> None:
@@ -450,11 +478,14 @@ def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None 
         max_age_days: Age in days beyond which a file is deleted.
         now: Current epoch time; defaults to the system clock.
     """
-    cutoff = (time.time() if now is None else now) - max_age_days * DAY_SECONDS
     try:
         for entry in directory.iterdir():
             with contextlib.suppress(OSError):
-                if entry.is_file() and not entry.is_symlink() and entry.stat().st_mtime < cutoff:
+                if (
+                    entry.is_file()
+                    and not entry.is_symlink()
+                    and _expired(entry.stat().st_mtime, max_age_days=max_age_days, now=now)
+                ):
                     entry.unlink()
     except OSError:
         return
