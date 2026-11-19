@@ -16,7 +16,13 @@ from typing import TYPE_CHECKING, Any
 from gate_cache import __version__
 from gate_cache.config import current_dir
 from gate_cache.console import format_duration, say, stdin_isatty
-from gate_cache.durations import durations_dir, durations_path, record_duration, usual_duration
+from gate_cache.durations import (
+    DURATIONS_NAME,
+    durations_dir,
+    durations_path,
+    record_duration,
+    usual_duration,
+)
 from gate_cache.env import CI_ENV, flag_on
 from gate_cache.gate_lock import (
     GateLock,
@@ -433,7 +439,9 @@ class _Attempt:
     def prune(self) -> None:
         """Delete old markers, miss records, run times, and free lock files, ignoring errors."""
         prune_markers(marker_dir(self.common_dir), max_age_days=self.max_age_days)
-        prune_markers(durations_dir(self.common_dir), max_age_days=self.max_age_days)
+        prune_markers(
+            durations_dir(self.common_dir), names=DURATIONS_NAME, max_age_days=self.max_age_days
+        )
         prune_locks(self.common_dir, max_age_days=self.max_age_days)
 
     def record_if_unchanged(self, duration: float) -> bool:
@@ -1169,9 +1177,14 @@ def clear_cache(common_dir: Path, selection: MarkerSelection | None = None) -> i
     """
     if selection is None or selection.gate is None:
         count = clear_markers(common_dir)
-        shutil.rmtree(durations_dir(common_dir), ignore_errors=True)
+        durations = durations_dir(common_dir)
+        if durations.is_symlink():
+            durations.unlink()
+        else:
+            shutil.rmtree(durations, ignore_errors=True)
         return count
     count = delete_markers(selection)
-    for name in {selection.gate, *selection.names}:
-        durations_path(common_dir, name).unlink(missing_ok=True)
+    if not durations_dir(common_dir).is_symlink():
+        for name in {selection.gate, *selection.names}:
+            durations_path(common_dir, name).unlink(missing_ok=True)
     return count

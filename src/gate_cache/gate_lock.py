@@ -263,6 +263,8 @@ def prune_locks(common_dir: Path, *, max_age_days: int, now: float | None = None
     """
     now = time.time() if now is None else now
     lock_dir = common_dir / LOCK_DIRNAME
+    if lock_dir.is_symlink():
+        return
     stamp = lock_dir / _PRUNE_STAMP
     with contextlib.suppress(OSError):
         if now - stamp.stat().st_mtime < DAY_SECONDS:
