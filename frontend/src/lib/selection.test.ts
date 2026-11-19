@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  rangeDays,
+  spanFromInputs,
   clampScope,
   cursorKey,
   dayCursor,
@@ -206,5 +208,33 @@ describe("spanAt", () => {
     expect(spanAt(days, [0, 2])).toEqual({ from: "2026-11-03", to: "2026-11-05" });
     expect(spanAt(days, null)).toBeUndefined();
     expect(spanAt(days, [0, 9])).toBeUndefined();
+  });
+});
+
+describe("spanFromInputs", () => {
+  it.each([
+    ["2025-03-02", "2025-03-04", undefined, undefined, { from: "2025-03-02", to: "2025-03-04" }],
+    ["2025-03-02", "", undefined, undefined, { from: "2025-03-02", to: "2025-03-02" }],
+    ["", "2025-03-04", undefined, undefined, undefined],
+    ["2025-03-05", "2025-03-04", undefined, undefined, undefined],
+    ["2025-03-01", "2025-03-04", "2025-03-02", undefined, undefined],
+    ["2025-03-02", "2025-03-09", "2025-03-02", "2025-03-08", undefined],
+  ])("%s to %s within %s..%s", (from, to, min, max, expected) => {
+    expect(spanFromInputs(from, to, min, max)).toEqual(expected);
+  });
+});
+
+describe("rangeDays", () => {
+  const now = new Date(2025, 2, 10, 15, 0);
+
+  it("ends a custom range on its last day, not the day after", () => {
+    expect(rangeDays({ kind: "custom", start: "2025-03-02", end: "2025-03-04" }, now)).toEqual({
+      min: "2025-03-02",
+      max: "2025-03-04",
+    });
+  });
+
+  it("ends at today for a range that reaches now, with no start for all time", () => {
+    expect(rangeDays({ kind: "preset", preset: "all" }, now)).toEqual({ min: undefined, max: "2025-03-10" });
   });
 });

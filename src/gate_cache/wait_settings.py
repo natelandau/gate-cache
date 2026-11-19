@@ -3,20 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypeVar
+from typing import Literal
 
-from gate_cache.config import config_table
-from gate_cache.console import say
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from gate_cache.config import (
+    config_whole_number,
+    valid_config_value,
+)
 
 DEFAULT_WAIT_TIMEOUT = 900
-# Far beyond any real wait, and small enough to add to a float clock without overflow.
-MAX_WAIT_TIMEOUT = 10**15
 FailedBehavior = Literal["rerun", "report"]
 _FAILED_BEHAVIORS: dict[str, FailedBehavior] = {"rerun": "rerun", "report": "report"}
-_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -25,26 +21,6 @@ class WaitSettings:
 
     timeout: int = DEFAULT_WAIT_TIMEOUT
     failed: FailedBehavior = "rerun"
-
-
-def parse_timeout(text: str) -> int | None:
-    """Parse a whole number of seconds, or return None when it is not one.
-
-    Args:
-        text: The value to parse.
-
-    Returns:
-        The seconds, capped at MAX_WAIT_TIMEOUT, or None when the text is not a
-        non-negative integer.
-    """
-    stripped = text.strip()
-    if not (stripped.isascii() and stripped.isdigit()):
-        return None
-    # int() refuses strings past a few thousand digits, so cap by length first.
-    digits = stripped.lstrip("0") or "0"
-    if len(digits) > len(str(MAX_WAIT_TIMEOUT)):
-        return MAX_WAIT_TIMEOUT
-    return min(int(digits), MAX_WAIT_TIMEOUT)
 
 
 def parse_failed(text: str) -> FailedBehavior | None:
@@ -59,28 +35,8 @@ def parse_failed(text: str) -> FailedBehavior | None:
     return _FAILED_BEHAVIORS.get(text.strip())
 
 
-def _config_timeout(value: object) -> int | None:
-    # bool is an int subclass, so reject it first.
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-        return min(value, MAX_WAIT_TIMEOUT)
-    return None
-
-
 def _config_failed(value: object) -> FailedBehavior | None:
     return parse_failed(value) if isinstance(value, str) else None
-
-
-def _config_value(
-    table: dict[str, object], key: str, *, parse: Callable[[object], _T | None], hint: str
-) -> _T | None:
-    """Read one `[wait]` value, warning and returning None when it is set but invalid."""
-    value = table.get(key)
-    if value is None:
-        return None
-    if (parsed := parse(value)) is not None:
-        return parsed
-    say(f"warning: ignoring invalid [wait] {key} {value!r}; {hint}")
-    return None
 
 
 def wait_settings(
@@ -97,13 +53,14 @@ def wait_settings(
     Returns:
         The settings to use.
     """
-    table = config_table("wait") if timeout is None or failed is None else {}
     if timeout is None:
-        timeout = _config_value(
-            table, "timeout", parse=_config_timeout, hint="use whole seconds, 0 or more"
+        timeout = valid_config_value(
+            "wait_timeout", parse=config_whole_number, hint="use whole seconds, 0 or more"
         )
     if failed is None:
-        failed = _config_value(table, "failed", parse=_config_failed, hint="use rerun or report")
+        failed = valid_config_value(
+            "wait_on_failure", parse=_config_failed, hint="use rerun or report"
+        )
     return WaitSettings(
         timeout=DEFAULT_WAIT_TIMEOUT if timeout is None else timeout,
         failed="rerun" if failed is None else failed,

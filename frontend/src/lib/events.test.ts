@@ -16,6 +16,7 @@ function event(overrides: Partial<EventRow>): EventRow {
     reason: null,
     tree: "0123456789abcdef0123",
     reported: false,
+    spot_check: false,
     ...overrides,
   };
 }

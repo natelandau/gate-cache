@@ -9,8 +9,8 @@ export interface DayBucket {
   skips: number;
   /** Runs that checked the cache: the skip rate's denominator. */
   ran: number;
-  /** Seconds of gate-cache overhead plus waits for concurrent runs. */
-  cost: number;
+  spot_checks: number;
+  spot_check_failures: number;
 }
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
@@ -38,7 +38,7 @@ export function dayKey(ts: number, tz: string): string {
 }
 
 export function zeroBucket(day: string): DayBucket {
-  return { day, saved: 0, failures: 0, runs: 0, spent: 0, skips: 0, ran: 0, cost: 0 };
+  return { day, saved: 0, failures: 0, runs: 0, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 };
 }
 
 /** Return the calendar day after `day`, both `YYYY-MM-DD`. */

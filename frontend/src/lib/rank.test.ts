@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FlakyGate, GateRow } from "./api";
+import type { GateRow, TriageItem } from "./api";
 import { gateRunText, partShares, rankGates, rankValue, topFlaky } from "./rank";
 
 function gate(name: string, overrides: Partial<GateRow> = {}): GateRow {
@@ -19,6 +19,8 @@ function gate(name: string, overrides: Partial<GateRow> = {}): GateRow {
     peak_rss: null,
     median_rss: null,
     failures: 0,
+    spot_checks: 0,
+    spot_check_failures: 0,
     last_run: 0,
     flaky: false,
     ...overrides,
@@ -92,13 +94,30 @@ describe("rankGates", () => {
   });
 });
 
-function flaky(name: string, tree_count: number): FlakyGate {
-  return { repo: null, repo_name: "-", name, tree_count, last_seen: 0, trees: [], tests: [], retried: [] };
+function flaky(name: string, treeCount: number): TriageItem {
+  const trees = Array.from({ length: treeCount }, (_, i) => ({ tree: `t${i}`, runs: [] }));
+  return {
+    repo: null,
+    repo_name: "-",
+    name,
+    reason: "flaky",
+    last_seen: 0,
+    evidence: { trees, tests: [], retried: [] },
+  };
 }
 
 describe("topFlaky", () => {
-  it("returns the five gates with the most flaky trees, ties by name", () => {
+  it("returns the five flaky gates with the most flaky trees, ties by name", () => {
+    const spot: TriageItem = {
+      repo: null,
+      repo_name: "-",
+      name: "z",
+      reason: "failed_spot_check",
+      last_seen: 0,
+      evidence: { count: 9, runs: [] },
+    };
     const gates = [
+      spot,
       flaky("a", 1),
       flaky("f", 2),
       flaky("b", 5),

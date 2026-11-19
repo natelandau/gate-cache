@@ -31,11 +31,9 @@ export interface Summary {
   time_spent: number;
   /** Seconds of `time_spent` that went to failed runs. */
   fail_time: number;
-  /** `time_saved` minus `overhead` and `waited`; negative when the cache cost more than it saved. */
-  net_saved: number;
   /**
    * Runs that checked the cache but came from a gate-cache that recorded no overhead or no
-   * wait time, so `net_saved` leaves out their cost.
+   * wait time, so `overhead` and `waited` leave out their cost.
    */
   cost_unknown_runs: number;
   /** Every recorded event, including uncached runs. */
@@ -46,6 +44,11 @@ export interface Summary {
   uncached: number;
   failures: number;
   flaky_gates: number;
+  /** Rows on the Triage page: one per gate and reason. */
+  triage_items: number;
+  /** Runs that ran a command the cache would have skipped, and how many of them failed. */
+  spot_checks: number;
+  spot_check_failures: number;
   /** Event counts per outcome. */
   outcomes: Record<Outcome, number>;
   /**
@@ -60,16 +63,12 @@ export interface Summary {
 export interface PreviousTotals {
   time_saved: number;
   time_spent: number;
-  /**
-   * Null when either window holds runs with no recorded cost, since the two windows would then
-   * subtract different costs.
-   */
-  net_saved: number | null;
   runs: number;
   skips: number;
   skip_rate: number | null;
   failures: number;
   flaky_gates: number;
+  spot_check_failures: number;
   /** Length of the previous window in days. */
   days: number;
 }
@@ -161,6 +160,10 @@ export interface GateRow {
   /** Median peak memory over runs, in bytes; null when none recorded. */
   median_rss: number | null;
   failures: number;
+  /** Runs that ran a command the cache would have skipped. */
+  spot_checks: number;
+  /** Spot checks whose command failed. */
+  spot_check_failures: number;
   last_run: number;
   flaky: boolean;
 }
@@ -181,6 +184,8 @@ export interface EventRow {
   tree: string | null;
   /** True when the run reported the failure of the run it waited for, without running. */
   reported: boolean;
+  /** True when the run ran a command the cache would have skipped. */
+  spot_check: boolean;
 }
 
 export interface FlakyTree {
@@ -352,20 +357,35 @@ export interface ActivityGroup {
   label: string;
 }
 
-/** The Activity page's page-local filters. */
+/** One gate; a null repo is the unknown repo. */
+export interface GateRef {
+  repo: string | null;
+  name: string;
+}
+
+/**
+ * The Activity page's page-local filters. A list holds at least one value and keeps runs that
+ * match any of them; separate filters must all match.
+ */
 export interface ActivityFilter {
-  outcome?: Outcome;
-  reason?: string;
+  outcome?: Outcome[];
+  reason?: string[];
   group?: ActivityGroup;
   /** Local days, in the hash as `from` and `to`. */
   span?: DaySpan;
-  /** One local weekday (0 for Sunday) and hour (0 to 23), in the hash as `weekday` and `hour`. */
-  slot?: { weekday: number; hour: number };
-  /** One gate; a null repo is the unknown repo. */
-  gate?: { repo: string | null; name: string };
+  gate?: GateRef[];
   /** Only runs on trees that both failed and passed. */
   flaky?: true;
+  /** Only runs that ran a command the cache would have skipped. */
+  spotCheck?: true;
 }
+
+/** An Activity filter as a link from another page sets it, with one outcome, reason, and gate. */
+export type ActivityLink = Omit<ActivityFilter, "outcome" | "reason" | "gate"> & {
+  outcome?: Outcome;
+  reason?: string;
+  gate?: GateRef;
+};
 
 export interface ActivityPage {
   events: EventRow[];
@@ -373,22 +393,42 @@ export interface ActivityPage {
   next_before: string | null;
 }
 
-export interface FlakyGate {
+/** Why a gate is on the Triage page. */
+export type TriageReason = "flaky" | "failed_spot_check";
+
+interface TriageBase {
   repo: string | null;
   repo_name: string;
   name: string;
-  tree_count: number;
+  /** Unix seconds of the newest run that put the gate on the list for this reason. */
   last_seen: number;
-  /** Each flaky tree with its runs, oldest first; empty for a gate with only retried tests. */
-  trees: { tree: string; runs: EventRow[] }[];
-  /** Tests that both failed and passed on one of the gate's flaky trees, newest first. */
-  tests: FlakyTest[];
-  /** Tests that passed on a retry, newest first. */
-  retried: RetriedTest[];
 }
 
-export interface FlakyPage {
-  gates: FlakyGate[];
+/** A gate whose trees both failed and passed, or whose tests passed on a retry. */
+export interface FlakyItem extends TriageBase {
+  reason: "flaky";
+  evidence: {
+    /** Each flaky tree, newest first, with its runs oldest first; empty for a gate with only retried tests. */
+    trees: { tree: string; runs: EventRow[] }[];
+    /** Tests that both failed and passed on one of the gate's flaky trees, newest first. */
+    tests: FlakyTest[];
+    /** Tests that passed on a retry, newest first. */
+    retried: RetriedTest[];
+  };
+}
+
+/** A gate with spot checks that failed. */
+export interface FailedSpotCheckItem extends TriageBase {
+  reason: "failed_spot_check";
+  /** How many failed, and the newest of them, newest first. */
+  evidence: { count: number; runs: EventRow[] };
+}
+
+/** One row of the Triage page: a gate and one reason it needs a look. */
+export type TriageItem = FlakyItem | FailedSpotCheckItem;
+
+export interface TriagePage {
+  items: TriageItem[];
   /** Where per-test retention starts, when the range reaches further back; else null. */
   tests_cutoff: number | null;
 }
@@ -548,7 +588,7 @@ export function getSpent(status: SpentStatus, options: RequestOptions = {}): Pro
 
 /**
  * Fetch one page of events, newest first. Pass the previous page's `next_before` to continue.
- * The filter narrows the feed; its weekday and hour are in the scope's zone. Days come from
+ * The filter narrows the feed; Days come from
  * the scope, so the filter takes no span.
  */
 export function getActivity(
@@ -560,8 +600,10 @@ export function getActivity(
   return request("activity", params, options.signal);
 }
 
-export async function getFlaky(options: RequestOptions = {}): Promise<FlakyPage> {
-  return request<FlakyPage>("flaky", scoped(options), options.signal);
+/** Fetch the gates that need a look, one row per gate and reason, newest first; only `reason`'s rows when given. */
+export function getTriage(options: RequestOptions & { reason?: TriageReason } = {}): Promise<TriagePage> {
+  const params = { ...scoped(options), reason: options.reason };
+  return request<TriagePage>("triage", params, options.signal);
 }
 
 /** Fetch activity for each of the 168 hours of the week, Sunday first. */

@@ -7,6 +7,7 @@
   import { createQuery } from "./lib/query.svelte";
   import { repoOptions, repoSelectionLabel } from "./lib/repos";
   import { loadSummary } from "./lib/summary";
+  import { TRIAGE } from "./lib/terms";
   import { closeGatePanel } from "./lib/panel";
   import { panelHost, router, startRouter } from "./lib/router.svelte";
   import type { DaySpan } from "./lib/selection";
@@ -21,10 +22,10 @@
     timeZone,
   } from "./lib/state.svelte";
   import Activity from "./pages/Activity.svelte";
-  import Flaky from "./pages/Flaky.svelte";
   import GateDetail from "./pages/GateDetail.svelte";
   import Gates from "./pages/Gates.svelte";
   import Overview from "./pages/Overview.svelte";
+  import Triage from "./pages/Triage.svelte";
 
   onMount(() => {
     const stops = [
@@ -42,7 +43,7 @@
     { repos: false, range: false },
   );
 
-  // One summary feeds both the Overview page and the flaky badge, which follows the filters.
+  // One summary feeds both the Overview page and the triage badge, which follows the filters.
   const summary = createQuery(loadSummary);
 
   const options = $derived(repoOptions(repos.data ?? []));
@@ -53,7 +54,7 @@
     gates: "Gates",
     gate: "Gate",
     activity: "Activity",
-    flaky: "Flaky",
+    triage: TRIAGE.title,
   } as const;
 
   const page = $derived(router.route.page);
@@ -113,7 +114,7 @@
   </div>
   <div class="body">
     <aside class="nav">
-      <Sidebar current={navPage} flakyCount={summary.data?.summary.flaky_gates ?? null} />
+      <Sidebar current={navPage} triageCount={summary.data?.summary.triage_items ?? null} />
     </aside>
     <main bind:this={main} tabindex="-1">
       {#if freshness.recording === false}
@@ -146,8 +147,8 @@
       {:else if router.route.page === "activity"}
         {@const { page: _, ...filter } = router.route}
         <Activity repoLabel={selectedRepo} {filter} />
-      {:else}
-        <Flaky repoLabel={selectedRepo} />
+      {:else if router.route.page === "triage"}
+        <Triage repoLabel={selectedRepo} reason={router.route.reason} total={summary.data?.summary.triage_items ?? null} />
       {/if}
     </main>
   </div>

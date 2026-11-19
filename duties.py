@@ -50,6 +50,8 @@ SUITES: dict[str, tuple[str, ...]] = {
         "src/gate_cache/console.py",
         "src/gate_cache/env.py",
         "src/gate_cache/__init__.py",
+        "src/gate_cache/spot_check.py",
+        "src/gate_cache/wait_settings.py",
         "tests/server/",
         ".github/workflows/tests-server.yml",
         *PY_SHARED,

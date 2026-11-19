@@ -17,6 +17,7 @@ from gate_cache import config as core_config
 from gate_cache.gate_lock import HELD_ENV
 from gate_cache.git import GitResult
 from gate_cache.markers import MISS_SUFFIX, marker_dir
+from gate_cache.spot_check import SPOT_CHECK_ENV
 from gate_cache.stats import config as stats_config
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -65,6 +66,12 @@ def isolate_user_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _no_held_locks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear the held-locks variable that a gate-cache run wrapping the test suite sets."""
     monkeypatch.delenv(HELD_ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_spot_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn random spot checks off, so a test that expects a skip never runs the command."""
+    monkeypatch.setenv(SPOT_CHECK_ENV, "0")
 
 
 @pytest.fixture
@@ -251,7 +258,7 @@ def stats_on(stats_dirs: tuple[Path, Path]) -> None:
     """Turn stats recording on through the config file."""
     config_file = stats_dirs[0]
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text("[stats]\nenabled = true\n", encoding="utf-8")
+    config_file.write_text("stats_enabled = true\n", encoding="utf-8")
 
 
 @pytest.fixture

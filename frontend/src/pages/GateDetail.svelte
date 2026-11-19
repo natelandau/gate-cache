@@ -138,6 +138,12 @@
         value: formatCount(row.failures),
         tone: row.failures ? "danger" : "default",
       },
+      {
+        label: TERMS.spotChecks.label,
+        value: formatCount(row.spot_checks),
+        hint: row.spot_check_failures ? `${formatCount(row.spot_check_failures)} failed` : undefined,
+        title: TERMS.spotChecks.about,
+      },
       { label: "CPU/wall", value: formatRatio(row.cpu_ratio) },
       {
         label: "Peak memory",
@@ -250,7 +256,7 @@
 {#snippet savedCell(e: EventRow)}<TimeValue value={savedText(e)} />{/snippet}
 
 {#snippet when(e: Recent)}{formatRelative(e.ts, clock.now)}{/snippet}
-{#snippet outcome(e: Recent)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} />{/snippet}
+{#snippet outcome(e: Recent)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} spotCheck={e.spot_check} />{/snippet}
 {#snippet runName(e: Recent)}<GateName name={e.name} gate={e.gate} />{/snippet}
 {#snippet tree(e: Recent)}{shortTree(e.tree)}{/snippet}
 {#snippet flakyTree(t: FlakyTree)}{shortTree(t.tree)}{/snippet}

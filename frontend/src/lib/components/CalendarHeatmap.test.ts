@@ -4,9 +4,9 @@ import CalendarHeatmap from "./CalendarHeatmap.svelte";
 
 // 2026-11-03 is a Tuesday, so the first week has two padding cells.
 const days = [
-  { day: "2026-11-03", saved: 0, failures: 0, runs: 0, spent: 0, skips: 0, ran: 0, cost: 0 },
-  { day: "2026-11-04", saved: 60, failures: 1, runs: 2, spent: 0, skips: 0, ran: 0, cost: 0 },
-  { day: "2026-11-05", saved: 120, failures: 0, runs: 10, spent: 0, skips: 0, ran: 0, cost: 0 },
+  { day: "2026-11-03", saved: 0, failures: 0, runs: 0, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 },
+  { day: "2026-11-04", saved: 60, failures: 1, runs: 2, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 },
+  { day: "2026-11-05", saved: 120, failures: 0, runs: 10, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 },
 ];
 
 function cellStyles(body: string): string[] {
@@ -34,7 +34,7 @@ describe("CalendarHeatmap", () => {
   it("lays out a long range as week columns", () => {
     const long = Array.from({ length: 60 }, (_, i) => {
       const d = new Date(Date.UTC(2026, 8, 1 + i));
-      return { day: d.toISOString().slice(0, 10), saved: 0, failures: 0, runs: i % 3, spent: 0, skips: 0, ran: 0, cost: 0 };
+      return { day: d.toISOString().slice(0, 10), saved: 0, failures: 0, runs: i % 3, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 };
     });
     const { body } = render(CalendarHeatmap, { props: { days: long, metric: "runs" } });
     expect(body).toMatch(/class="calendar layout-weeks/);

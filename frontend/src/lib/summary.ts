@@ -7,8 +7,6 @@ import {
   formatCount,
   formatDuration,
   formatPercent,
-  formatSignedDuration,
-  isNegativeDuration,
   plural,
 } from "./format";
 import { clampScope, selectedRange, spanOf, type DaySpan } from "./selection";
@@ -28,115 +26,117 @@ export async function loadSummary(signal: AbortSignal, span?: DaySpan): Promise<
   return { summary, days: fillDays(summary.daily, scope.from, scope.to ?? now, scope.tz, zeroBucket) };
 }
 
+interface StatContext {
+  s: Summary;
+  options: SummaryStatOptions;
+  deltas: ReturnType<typeof statDeltas> | undefined;
+  spark: (...series: SparkLine[]) => Stat["spark"];
+}
+
+/** A sparkline's CSS color and the value it plots for each day. */
+type SparkLine = [color: string, value: (d: DayBucket) => number | null];
+
+interface SummaryStatOptions {
+  runsHref?: string;
+  flakyHref?: string;
+  failuresHref?: string;
+  spotChecksHref?: string;
+}
+
+const STAT_BUILDERS: ((c: StatContext) => Stat)[] = [
+  (c) => ({
+    label: TERMS.calls.label,
+    value: formatCount(c.s.runs),
+    title: TERMS.calls.about,
+    // Every call counts, so the hint splits the calls that ran from the ones the cache skipped.
+    hint: c.s.runs ? `${formatCount(c.s.runs - c.s.skips)} ran · ${formatCount(c.s.skips)} skipped` : undefined,
+    href: c.s.runs ? c.options.runsHref : undefined,
+    delta: c.deltas?.runs,
+    spark: c.spark(["var(--chart-runs)", (d) => d.runs]),
+  }),
+  (c) => ({
+    label: TERMS.ran.label,
+    value: formatDuration(c.s.time_spent),
+    hint: c.s.fail_time > 0 ? `${formatDuration(c.s.fail_time)} on failures` : undefined,
+    title: TERMS.ran.about,
+    delta: c.deltas?.time_spent,
+    spark: c.spark(["var(--chart-runs)", (d) => d.spent]),
+  }),
+  (c) => ({
+    label: TERMS.saved.label,
+    value: formatDuration(c.s.time_saved),
+    title: TERMS.saved.about,
+    delta: c.deltas?.time_saved,
+    spark: c.spark(["var(--chart-saved)", (d) => d.saved]),
+  }),
+  (c) => ({
+    label: TERMS.failures.label,
+    value: formatCount(c.s.failures),
+    title:
+      "Calls whose command failed, plus calls that reported the failure of a concurrent run " +
+      "they waited for instead of running again.",
+    tone: c.s.failures ? "danger" : "default",
+    href: c.s.failures ? c.options.failuresHref : undefined,
+    delta: c.deltas?.failures,
+    spark: c.spark(["var(--chart-failures)", (d) => d.failures]),
+  }),
+  (c) => ({
+    label: TERMS.flaky.label,
+    value: formatCount(c.s.flaky_gates),
+    title: "Gates that both failed and passed on the same content, so the result changed with no code change.",
+    tone: c.s.flaky_gates ? "flaky" : "default",
+    href: c.s.flaky_gates ? c.options.flakyHref : undefined,
+    delta: c.deltas?.flaky_gates,
+  }),
+  (c) => ({
+    label: TERMS.spotChecks.label,
+    value: [
+      { value: formatCount(c.s.spot_checks), unit: TERMS.spotChecks.ran },
+      {
+        value: formatCount(c.s.spot_check_failures),
+        unit: TERMS.spotChecks.failed,
+        tone: c.s.spot_check_failures ? "danger" : undefined,
+      },
+    ],
+    title: TERMS.spotChecks.aboutCard,
+    href: c.s.spot_checks ? c.options.spotChecksHref : undefined,
+    delta: c.deltas?.spot_check_failures,
+    spark: c.spark(["var(--chart-runs)", (d) => d.spot_checks], ["var(--chart-failures)", (d) => d.spot_check_failures]),
+  }),
+  (c) => ({
+    label: TERMS.skipRate.label,
+    value: formatPercent(c.s.skip_rate),
+    title: TERMS.skipRate.about,
+    hint: `${formatCount(c.s.skips)} of ${formatCount(c.s.runs - c.s.uncached)} skipped`,
+    delta: c.deltas?.skip_rate,
+    spark: c.spark(["var(--chart-runs)", (d) => (d.ran ? d.skips / d.ran : null)]),
+  }),
+];
+
+/** How many stats `summaryStats` returns, for skeleton cards that stand in while it loads. */
+export const SUMMARY_STAT_COUNT = STAT_BUILDERS.length;
+
 /**
- * Return the headline numbers of a summary for a stat strip, the gates' own numbers first and
- * what the cache saved last. The hrefs link the run, flaky
- * gate, and failure counts when they are not zero. Each stat carries its change against the
- * previous window when the summary has one, and a sparkline of `daily` when given.
+ * Return the headline numbers of a summary for a stat strip. The hrefs link the run, flaky
+ * gate, failure, and spot check counts when they are not zero. Each stat carries its change
+ * against the previous window when the summary has one, and a sparkline of `daily` when given.
  */
 export function summaryStats(
   s: Summary,
-  options: {
-    runsHref?: string;
-    flakyHref?: string;
-    failuresHref?: string;
-    /** Runs with unknown cost in the range `daily` covers, when wider than the summary's. */
-    costUnknownRuns?: number;
-  } = {},
+  options: SummaryStatOptions = {},
   daily?: DayBucket[],
 ): Stat[] {
-  const costUnknown = options.costUnknownRuns ?? s.cost_unknown_runs;
   const deltas = s.previous ? statDeltas(s, s.previous) : undefined;
-  const spark = (color: string, value: (d: DayBucket) => number | null) =>
-    daily && daily.length > 0 ? { values: daily.map(value), color } : undefined;
-  return [
-    {
-      label: TERMS.calls.label,
-      value: formatCount(s.runs),
-      title: TERMS.calls.about,
-      // Every call counts, so the hint splits the calls that ran from the ones the cache skipped.
-      hint: s.runs ? `${formatCount(s.runs - s.skips)} ran · ${formatCount(s.skips)} skipped` : undefined,
-      href: s.runs ? options.runsHref : undefined,
-      delta: deltas?.runs,
-      spark: spark("var(--chart-runs)", (d) => d.runs),
-    },
-    {
-      label: TERMS.ran.label,
-      value: formatDuration(s.time_spent),
-      hint: s.fail_time > 0 ? `${formatDuration(s.fail_time)} on failures` : undefined,
-      title: TERMS.ran.about,
-      delta: deltas?.time_spent,
-      spark: spark("var(--chart-runs)", (d) => d.spent),
-    },
-    {
-      label: TERMS.failures.label,
-      value: formatCount(s.failures),
-      title:
-        "Calls whose command failed, plus calls that reported the failure of a concurrent run " +
-        "they waited for instead of running again.",
-      tone: s.failures ? "danger" : "default",
-      href: s.failures ? options.failuresHref : undefined,
-      delta: deltas?.failures,
-      spark: spark("var(--chart-failures)", (d) => d.failures),
-    },
-    {
-      label: TERMS.flaky.label,
-      value: formatCount(s.flaky_gates),
-      title: "Gates that both failed and passed on the same content, so the result changed with no code change.",
-      tone: s.flaky_gates ? "flaky" : "default",
-      href: s.flaky_gates ? options.flakyHref : undefined,
-      delta: deltas?.flaky_gates,
-    },
-    {
-      label: TERMS.skipRate.label,
-      value: formatPercent(s.skip_rate),
-      title: TERMS.skipRate.about,
-      hint: `${formatCount(s.skips)} of ${formatCount(s.runs - s.uncached)} skipped`,
-      delta: deltas?.skip_rate,
-      spark: spark("var(--chart-runs)", (d) => (d.ran ? d.skips / d.ran : null)),
-    },
-    {
-      label: TERMS.saved.label,
-      value: formatDuration(s.time_saved),
-      title: TERMS.saved.about,
-      delta: deltas?.time_saved,
-      spark: spark("var(--chart-saved)", (d) => d.saved),
-    },
-    {
-      label: TERMS.net.label,
-      value: formatSignedDuration(s.net_saved),
-      hint: `after ${formatDuration(s.overhead + s.waited)} of cache cost`,
-      title:
-        "Time saved minus the time gate-cache spent deciding whether to skip, and minus the " +
-        "time runs waited for a concurrent run of the same gate. Negative means the cache cost " +
-        "more than it saved.",
-      tone: isNegativeDuration(s.net_saved) ? "danger" : "default",
-      delta: deltas?.net_saved,
-      // Days with runs that recorded no cost would overstate net saved, as the delta would.
-      spark: costUnknown > 0 ? undefined : spark("var(--chart-saved)", (d) => d.saved - d.cost),
-    },
-  ];
+  const spark = (...series: SparkLine[]) =>
+    daily && daily.length > 0 ? series.map(([color, value]) => ({ values: daily.map(value), color })) : undefined;
+  return STAT_BUILDERS.map((build) => build({ s, options, deltas, spark }));
 }
 
-/**
- * Return the footnote for numbers the range cannot fully back: skips that add nothing to time
- * saved, and runs whose cost net saved leaves out. Undefined when the range has neither.
- */
+/** Return the footnote for skips that add nothing to time saved, or undefined when there are none. */
 export function summaryNote(s: Summary): string | undefined {
-  const notes: string[] = [];
   const unknown = s.unknown_saved_skips;
-  if (unknown) {
-    notes.push(
-      `${plural(unknown, "skipped call", "skipped calls")} had no recorded duration, so ${unknown === 1 ? "it adds" : "they add"} nothing to time saved by cache.`,
-    );
-  }
-  const costless = s.cost_unknown_runs;
-  if (costless) {
-    notes.push(
-      `${plural(costless, "call", "calls")} came from an older gate-cache that did not record overhead or wait time, so net saved by cache leaves out ${costless === 1 ? "its" : "their"} cost.`,
-    );
-  }
-  return notes.length ? notes.join(" ") : undefined;
+  if (!unknown) return undefined;
+  return `${plural(unknown, "skipped call", "skipped calls")} had no recorded duration, so ${unknown === 1 ? "it adds" : "they add"} nothing to time saved by cache.`;
 }
 
 /**

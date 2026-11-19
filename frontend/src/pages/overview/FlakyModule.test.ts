@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { FlakyGate } from "../../lib/api";
+import type { FlakyItem, TriagePage } from "../../lib/api";
 import { html } from "../../lib/render.test-utils";
 import { emptyTitle } from "../../lib/scope";
 import { filters } from "../../lib/state.svelte";
@@ -12,20 +12,22 @@ vi.mock("../../lib/query.svelte", () => ({
 
 const { default: FlakyModule } = await import("./FlakyModule.svelte");
 
-const gate: FlakyGate = {
+const item: FlakyItem = {
   repo: "/work/app/.git",
   repo_name: "app",
   name: "test",
-  tree_count: 0,
+  reason: "flaky",
   last_seen: 1,
-  trees: [],
-  tests: [],
-  retried: [{ name: "tests/test_net.py::test_fetch", runs: 4, last: 1 }],
+  evidence: {
+    trees: [],
+    tests: [],
+    retried: [{ name: "tests/test_net.py::test_fetch", runs: 4, last: 1 }],
+  },
 };
 
 describe("FlakyModule", () => {
   it("shows the empty state when the only gates have retried tests and no flaky tree", () => {
-    loaded.data = { gates: [gate], tests_cutoff: null };
+    loaded.data = { items: [item], tests_cutoff: null } satisfies TriagePage;
     const body = html(FlakyModule, { props: { repoLabel: null } });
     expect(body).toContain(emptyTitle("flaky gates", { range: filters.range, repoLabel: null }));
     expect(body).not.toContain("<table");

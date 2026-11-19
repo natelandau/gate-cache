@@ -9,6 +9,7 @@ import {
   getReasons,
   getSlowdowns,
   getSummary,
+  getTriage,
 } from "./api";
 
 const scope = { repos: ["/work/app/.git"], from: 100, tz: "Europe/Paris" };
@@ -85,25 +86,36 @@ describe("fetchers", () => {
   it("send the activity outcome, reason, limit, and repo override", async () => {
     respond(200, { events: [], next_before: null });
     await getActivity(
-      { limit: 20, outcome: "uncached", reason: "dirty tree" },
+      { limit: 20, outcome: ["uncached", "fail"], reason: ["dirty tree"] },
       { scope, repos: ["/work/other/.git"] },
     );
     const params = calledUrl().searchParams;
-    expect(params.get("outcome")).toBe("uncached");
+    expect(params.getAll("outcome")).toEqual(["uncached", "fail"]);
     expect(params.get("reason")).toBe("dirty tree");
     expect(params.get("limit")).toBe("20");
     expect(params.getAll("repo")).toEqual(["/work/other/.git"]);
   });
 
-  it("send the activity weekday, hour, gate, and flaky filters", async () => {
+  it("send the activity gate, and flaky filters", async () => {
     respond(200, { events: [], next_before: null });
-    await getActivity({ slot: { weekday: 0, hour: 23 }, gate: { repo: null, name: "lint" }, flaky: true }, { scope });
+    const gate = [
+      { repo: null, name: "lint" },
+      { repo: "/r/.git", name: "test" },
+    ];
+    await getActivity({ gate, flaky: true }, { scope });
     const params = calledUrl().searchParams;
-    expect(params.get("weekday")).toBe("0");
-    expect(params.get("hour")).toBe("23");
-    expect(params.get("gate")).toBe("lint");
-    expect(params.get("gate_repo")).toBe("-");
+    expect(params.getAll("gate")).toEqual(["-\0lint", "/r/.git\0test"]);
     expect(params.get("flaky")).toBe("1");
+  });
+
+  it("send the triage reason only when one is picked", async () => {
+    respond(200, { items: [] });
+    await getTriage({ scope, reason: "flaky" });
+    expect(calledUrl().searchParams.get("reason")).toBe("flaky");
+    vi.unstubAllGlobals();
+    respond(200, { items: [] });
+    await getTriage({ scope });
+    expect(calledUrl().searchParams.has("reason")).toBe(false);
   });
 
   it("unwrap the hourly cells and the reasons", async () => {

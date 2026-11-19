@@ -4,16 +4,15 @@ from pathlib import Path
 
 import pytest
 
+from gate_cache.config import MAX_WHOLE_NUMBER, parse_whole_number
 from gate_cache.wait_settings import (
-    MAX_WAIT_TIMEOUT,
     WaitSettings,
     parse_failed,
-    parse_timeout,
     wait_settings,
 )
 
 Dirs = tuple[Path, Path]
-CONFIG = '[wait]\ntimeout = 60\nfailed = "report"\n'
+CONFIG = 'wait_timeout = 60\nwait_on_failure = "report"\n'
 
 
 def _write(dirs: Dirs, text: str) -> None:
@@ -27,7 +26,7 @@ def test_defaults_without_config(stats_dirs: Dirs) -> None:
 
 
 def test_config_values_used(stats_dirs: Dirs) -> None:
-    """The `[wait]` table sets both values."""
+    """The flat wait keys set both values."""
     _write(stats_dirs, CONFIG)
     assert wait_settings() == WaitSettings(60, "report")
 
@@ -41,18 +40,18 @@ def test_flags_override_config(stats_dirs: Dirs) -> None:
 @pytest.mark.parametrize(
     ("line", "key"),
     [
-        ("timeout = -1", "timeout"),
-        ('timeout = "x"', "timeout"),
-        ("timeout = 1.5", "timeout"),
-        ("timeout = true", "timeout"),
-        ('failed = "skip"', "failed"),
+        ("wait_timeout = -1", "wait_timeout"),
+        ('wait_timeout = "x"', "wait_timeout"),
+        ("wait_timeout = 1.5", "wait_timeout"),
+        ("wait_timeout = true", "wait_timeout"),
+        ('wait_on_failure = "skip"', "wait_on_failure"),
     ],
 )
 def test_invalid_config_warns_and_defaults(
     stats_dirs: Dirs, capsys: pytest.CaptureFixture[str], line: str, key: str
 ) -> None:
     """An invalid value warns and falls back to the default."""
-    _write(stats_dirs, f"[wait]\n{line}\n")
+    _write(stats_dirs, f"{line}\n")
     assert wait_settings() == WaitSettings(900, "rerun")
     err = capsys.readouterr().err
     assert "warning:" in err
@@ -63,28 +62,50 @@ def test_invalid_config_ignored_when_flag_given(
     stats_dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A flag skips reading the config value, so no warning appears."""
-    _write(stats_dirs, "[wait]\ntimeout = -1\n")
+    _write(stats_dirs, "wait_timeout = -1\n")
     assert wait_settings(timeout=5).timeout == 5
     assert capsys.readouterr().err == ""
 
 
-@pytest.mark.parametrize("text", ["not = [valid", "wait = 3\n"])
-def test_unreadable_or_invalid_toml_uses_defaults_silently(
-    stats_dirs: Dirs, capsys: pytest.CaptureFixture[str], text: str
+def test_invalid_toml_uses_defaults_silently(
+    stats_dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A broken file or table never warns or fails."""
-    _write(stats_dirs, text)
+    """A file that is not valid TOML never warns or fails."""
+    _write(stats_dirs, "not = [valid")
     assert wait_settings() == WaitSettings(900, "rerun")
+    assert capsys.readouterr().err == ""
+
+
+def test_old_tables_are_ignored(stats_dirs: Dirs, capsys: pytest.CaptureFixture[str]) -> None:
+    """The old `[wait]` table sets nothing and warns of nothing."""
+    _write(stats_dirs, "[wait]\ntimeout = 5\n")
+    assert wait_settings() == WaitSettings()
     assert capsys.readouterr().err == ""
 
 
 @pytest.mark.parametrize(
     ("text", "expected"),
-    [("0", 0), ("900", 900), ("-1", None), ("1.5", None), ("x", None), ("", None)],
+    [
+        ("0", 0),
+        ("50", 50),
+        ("900", 900),
+        (" 7 ", 7),
+        ("0" * 50 + "7", 7),
+        (str(10**12), 10**12),
+        ("-1", None),
+        ("1.5", None),
+        ("1/50", None),
+        ("abc", None),
+        ("", None),
+        ("9" * 40, MAX_WHOLE_NUMBER),
+        ("9" * 400, MAX_WHOLE_NUMBER),
+        ("9" * 5000, MAX_WHOLE_NUMBER),
+        (str(MAX_WHOLE_NUMBER + 1), MAX_WHOLE_NUMBER),
+    ],
 )
-def test_parse_timeout(text: str, expected: int | None) -> None:
-    """Only non-negative whole numbers parse."""
-    assert parse_timeout(text) == expected
+def test_parse_whole_number(text: str, expected: int | None) -> None:
+    """Only a non-negative whole number parses, ignoring padding, and a huge one is capped."""
+    assert parse_whole_number(text) == expected
 
 
 @pytest.mark.parametrize(
@@ -114,24 +135,12 @@ def test_unknown_keys_ignored_silently(
     stats_dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Keys the settings do not know never warn."""
-    _write(stats_dirs, "[wait]\nextra = 1\ntimeout = 7\n")
+    _write(stats_dirs, "extra = 1\nwait_timeout = 7\n")
     assert wait_settings() == WaitSettings(7, "rerun")
     assert capsys.readouterr().err == ""
 
 
 def test_huge_timeout_accepted(stats_dirs: Dirs) -> None:
     """A very large integer is kept as written."""
-    _write(stats_dirs, f"[wait]\ntimeout = {10**12}\n")
+    _write(stats_dirs, f"wait_timeout = {10**12}\n")
     assert wait_settings().timeout == 10**12
-    assert parse_timeout(str(10**12)) == 10**12
-
-
-@pytest.mark.parametrize("text", ["9" * 400, "9" * 5000, str(MAX_WAIT_TIMEOUT + 1)])
-def test_oversized_timeout_capped(text: str) -> None:
-    """Verify a timeout too large for the clock is capped instead of crashing."""
-    assert parse_timeout(text) == MAX_WAIT_TIMEOUT
-
-
-def test_padded_timeout_parsed() -> None:
-    """Verify leading zeros do not count toward the size cap."""
-    assert parse_timeout("0" * 50 + "7") == 7

@@ -23,19 +23,20 @@ describe("zeroBucket", () => {
       spent: 0,
       skips: 0,
       ran: 0,
-      cost: 0,
+      spot_checks: 0,
+      spot_check_failures: 0,
     });
   });
 });
 
 describe("fillDays", () => {
   it("inserts zero days between and around recorded days", () => {
-    const daily = [{ day: "2026-11-11", saved: 5, failures: 1, runs: 3, spent: 0, skips: 0, ran: 0, cost: 0 }];
+    const daily = [{ day: "2026-11-11", saved: 5, failures: 1, runs: 3, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 }];
     const out = fillDays(daily, NOV10, NOV10 + 3 * 86400, UTC, zeroBucket);
     expect(out).toEqual([
-      { day: "2026-11-10", saved: 0, failures: 0, runs: 0, spent: 0, skips: 0, ran: 0, cost: 0 },
-      { day: "2026-11-11", saved: 5, failures: 1, runs: 3, spent: 0, skips: 0, ran: 0, cost: 0 },
-      { day: "2026-11-12", saved: 0, failures: 0, runs: 0, spent: 0, skips: 0, ran: 0, cost: 0 },
+      { day: "2026-11-10", saved: 0, failures: 0, runs: 0, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 },
+      { day: "2026-11-11", saved: 5, failures: 1, runs: 3, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 },
+      { day: "2026-11-12", saved: 0, failures: 0, runs: 0, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 },
     ]);
   });
 
@@ -46,8 +47,8 @@ describe("fillDays", () => {
 
   it("starts at the first data day when there is no lower bound", () => {
     const daily = [
-      { day: "2026-11-10", saved: 1, failures: 0, runs: 1, spent: 0, skips: 0, ran: 0, cost: 0 },
-      { day: "2026-11-12", saved: 2, failures: 0, runs: 1, spent: 0, skips: 0, ran: 0, cost: 0 },
+      { day: "2026-11-10", saved: 1, failures: 0, runs: 1, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 },
+      { day: "2026-11-12", saved: 2, failures: 0, runs: 1, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 },
     ];
     const out = fillDays(daily, undefined, NOV10 + 4 * 86400, UTC, zeroBucket);
     expect(out.map((d) => d.day)).toEqual(["2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"]);
@@ -65,7 +66,7 @@ describe("fillDays", () => {
   });
 
   it("keeps recorded days outside the bounds rather than dropping data", () => {
-    const daily = [{ day: "2026-11-09", saved: 1, failures: 0, runs: 1, spent: 0, skips: 0, ran: 0, cost: 0 }];
+    const daily = [{ day: "2026-11-09", saved: 1, failures: 0, runs: 1, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 }];
     const out = fillDays(daily, NOV10, NOV10 + 86400, UTC, zeroBucket);
     expect(out.map((d) => d.day)).toEqual(["2026-11-09", "2026-11-10"]);
   });

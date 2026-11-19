@@ -1,20 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { durationTicks, formatAxisDuration, formatBytes, formatCount, formatDuration, formatGap, formatIdle, formatLongDay, formatPercent, formatRatio, formatRelative, formatShortDay, formatSignedDuration, plural, valueParts } from "./format";
+import { durationTicks, formatAxisDuration, formatBytes, formatCount, formatDuration, formatGap, formatIdle, formatLongDay, formatPercent, formatRatio, formatRelative, formatShortDay, plural, valueParts, valueText } from "./format";
 
 const HOUR = 3600;
 const DAY = 86400;
-
-describe("formatSignedDuration", () => {
-  it("prefixes a negative duration with a minus sign", () => {
-    expect(formatSignedDuration(-90)).toBe("\u22121m 30s");
-    expect(formatSignedDuration(90)).toBe("1m 30s");
-  });
-
-  it("drops the sign for less than a second below zero", () => {
-    expect(formatSignedDuration(-0.7)).toBe("<1s");
-    expect(formatSignedDuration(-1)).toBe("\u22121s");
-  });
-});
 
 describe("formatDuration", () => {
   it("matches the Python format_duration table", () => {
@@ -154,6 +142,15 @@ describe("valueParts", () => {
 
   it("keeps a sign with its number", () => {
     expect(valueParts("−2m")[0]).toEqual({ text: "−2", unit: false });
+  });
+});
+
+describe("valueText", () => {
+  it("reads a value of several parts as one comma-separated phrase", () => {
+    expect(valueText("6h 38m")).toBe("6h 38m");
+    expect(valueText([{ value: "21", unit: "ran" }, { value: "6", unit: "failed", tone: "danger" }, { value: "3" }])).toBe(
+      "21 ran, 6 failed, 3",
+    );
   });
 });
 

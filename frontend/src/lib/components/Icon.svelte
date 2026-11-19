@@ -18,12 +18,15 @@
   import Calendar from "@lucide/svelte/icons/calendar";
   import CheckCheck from "@lucide/svelte/icons/check-check";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import ChevronLeft from "@lucide/svelte/icons/chevron-left";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
   import FolderGit2 from "@lucide/svelte/icons/folder-git-2";
   import Inbox from "@lucide/svelte/icons/inbox";
   import Info from "@lucide/svelte/icons/info";
   import LayoutDashboard from "@lucide/svelte/icons/layout-dashboard";
   import ListChecks from "@lucide/svelte/icons/list-checks";
+  import ListFilter from "@lucide/svelte/icons/list-filter";
   import Moon from "@lucide/svelte/icons/moon";
   import Sun from "@lucide/svelte/icons/sun";
   import SunMoon from "@lucide/svelte/icons/sun-moon";
@@ -41,12 +44,15 @@
     calendar: Calendar,
     "check-check": CheckCheck,
     "chevron-down": ChevronDown,
+    "chevron-left": ChevronLeft,
+    "chevron-right": ChevronRight,
     "circle-alert": CircleAlert,
     "folder-git-2": FolderGit2,
     inbox: Inbox,
     info: Info,
     "layout-dashboard": LayoutDashboard,
     "list-checks": ListChecks,
+    "list-filter": ListFilter,
     moon: Moon,
     sun: Sun,
     "sun-moon": SunMoon,

@@ -9,7 +9,6 @@ const current: Summary = {
   unknown_saved_skips: 0,
   overhead: 0,
   waited: 0,
-  net_saved: 100,
   cost_unknown_runs: 0,
   runs: 10,
   skips: 5,
@@ -17,6 +16,9 @@ const current: Summary = {
   uncached: 0,
   failures: 50,
   flaky_gates: 2,
+  triage_items: 0,
+  spot_checks: 0,
+  spot_check_failures: 0,
   outcomes: { skip: 5, pass: 5, pass_unrecorded: 0, fail: 0, uncached: 0 },
   previous: null,
   daily: [],
@@ -25,12 +27,12 @@ const current: Summary = {
 const previous: PreviousTotals = {
   time_saved: 100,
   time_spent: 100,
-  net_saved: 100,
   runs: 10,
   skips: 5,
   skip_rate: 0.5,
   failures: 50,
   flaky_gates: 2,
+  spot_check_failures: 0,
   days: 30,
 };
 
@@ -43,15 +45,6 @@ describe("statDeltas", () => {
   it("marks more time spent as bad", () => {
     const deltas = statDeltas({ ...current, time_spent: 150 }, previous);
     expect(deltas.time_spent).toEqual({ text: "50%", tone: "bad", dir: "up" });
-  });
-
-  it("shows net saved as an absolute duration, even across zero", () => {
-    const deltas = statDeltas({ ...current, net_saved: -20 }, previous);
-    expect(deltas.net_saved).toEqual({ text: "2m 0s", tone: "bad", dir: "down" });
-  });
-
-  it("leaves net saved out when the previous window has no comparable value", () => {
-    expect(statDeltas(current, { ...previous, net_saved: null }).net_saved).toBeUndefined();
   });
 
   it("shows failures as a percentage, up is bad", () => {
@@ -75,6 +68,11 @@ describe("statDeltas", () => {
   it("shows an absolute change when the previous value is zero", () => {
     const deltas = statDeltas({ ...current, runs: 5 }, { ...previous, runs: 0 });
     expect(deltas.runs).toEqual({ text: "5", tone: "good", dir: "up" });
+  });
+
+  it("marks more failed spot checks as bad", () => {
+    const deltas = statDeltas({ ...current, spot_check_failures: 3 }, previous);
+    expect(deltas.spot_check_failures).toEqual({ text: "3", tone: "bad", dir: "up" });
   });
 
   it("shows a drop in runs as bad", () => {

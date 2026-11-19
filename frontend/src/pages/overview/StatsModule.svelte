@@ -1,8 +1,8 @@
 <!--
   @component
   The homepage stat strip: the headline numbers of the shared summary, each with its change
-  against the previous window when the range has one. The run, flaky gate, and failure counts
-  open Activity filtered to those runs.
+  against the previous window when the range has one. The run, flaky gate, failure, and spot
+  check counts open Activity filtered to those runs.
 
   Props:
   - `query`: the summary query for the page's days
@@ -17,7 +17,13 @@
   import type { Query } from "../../lib/query.svelte";
   import { activityHref } from "../../lib/router.svelte";
   import type { DaySpan } from "../../lib/selection";
-  import { pickedRange, summaryNote, summaryStats, type SummaryView } from "../../lib/summary";
+  import {
+    pickedRange,
+    summaryNote,
+    summaryStats,
+    SUMMARY_STAT_COUNT,
+    type SummaryView,
+  } from "../../lib/summary";
 
   interface Props {
     /** Has no data until a summary for the picked days loads. */
@@ -35,7 +41,7 @@
           runsHref: activityHref({}, span),
           flakyHref: activityHref({ flaky: true }, span),
           failuresHref: activityHref({ outcome: "fail" }, span),
-          costUnknownRuns: range?.summary.cost_unknown_runs,
+          spotChecksHref: activityHref({ spotCheck: true }, span),
         }, range?.days)
       : [],
   );
@@ -52,7 +58,7 @@
     <StatStrip {stats} {note} deltaLabel={label} busy={query.loading} {highlight} />
   {:else if query.loading}
     <p class="visually-hidden" aria-live="polite">Loading summary</p>
-    <StatStrip stats={[]} placeholders={7} />
+    <StatStrip stats={[]} placeholders={SUMMARY_STAT_COUNT} />
   {/if}
 </div>
 

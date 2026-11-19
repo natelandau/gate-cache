@@ -15,6 +15,8 @@ from platformdirs import user_state_path
 
 from gate_cache import config as core_config
 from gate_cache.env import CI_ENV, flag_on
+from gate_cache.spot_check import DEFAULT_ONE_RUN_IN
+from gate_cache.wait_settings import DEFAULT_WAIT_TIMEOUT
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -22,9 +24,9 @@ if TYPE_CHECKING:
 STATS_ENV = "GATE_CACHE_STATS"
 DATA_DIR_ENV = "GATE_CACHE_DATA_DIR"
 _APP = "gate-cache"
-_TABLE = "[stats]"
-_STATS_HEADER = re.compile(r"^\s*\[\s*stats\s*\]\s*(#.*)?$")
-_ENABLED_KEY = re.compile(r"^\s*enabled\s*=")
+_ENABLED_KEY = re.compile(r"^\s*stats_enabled\s*=")
+# A header ends in `]`, so a row of a multi-line array such as `[1, 2],` is not one.
+_TABLE_HEADER = re.compile(r"^\s*\[.*\]\s*(#.*)?$")
 _NEW_FILE_MODE = 0o644
 # The stats data holds paths and host names, so only the user may read it.
 STATE_DIR_MODE = 0o700
@@ -47,7 +49,7 @@ def state_dir(environ: Mapping[str, str] | None = None) -> Path:
     """Return the directory that holds stats data.
 
     GATE_CACHE_DATA_DIR, when not empty, decides, and a relative value resolves against
-    the current directory. Otherwise `[stats] data_dir` in the config file decides, and a
+    the current directory. Otherwise `stats_data_dir` in the config file decides, and a
     relative value resolves against the config file's directory so every repository sees
     the same data. Otherwise the data lives in the platform state directory. A leading
     `~` expands in both.
@@ -63,7 +65,7 @@ def state_dir(environ: Mapping[str, str] | None = None) -> Path:
         # absolute() reads the cwd only for a relative path, so an absolute value still
         # works from a deleted directory.
         return _expand_user(value).absolute()
-    configured = _stats_table().get("data_dir")
+    configured = core_config.config_value("stats_data_dir")
     if isinstance(configured, str) and configured.strip():
         return core_config.config_path().parent / _expand_user(configured.strip())
     return user_state_path(_APP, appauthor=False)
@@ -82,14 +84,9 @@ def _expand_user(value: str) -> Path:
         return path
 
 
-def _stats_table() -> dict[str, object]:
-    """Return the `[stats]` table of the config file, or an empty one when unusable."""
-    return core_config.config_table("stats")
-
-
 def _config_value() -> bool | None:
-    """Return `[stats] enabled` from the config file, or None when absent or invalid."""
-    value = _stats_table().get("enabled")
+    """Return `stats_enabled` from the config file, or None when absent or invalid."""
+    value = core_config.config_value("stats_enabled")
     return value if isinstance(value, bool) else None
 
 
@@ -118,24 +115,44 @@ def stats_setting(environ: Mapping[str, str] | None = None) -> StatsSetting:
 
 
 def _with_enabled(text: str, *, enabled: bool) -> str:
-    """Return config text with `[stats] enabled` set, keeping every other line."""
-    line = f"enabled = {'true' if enabled else 'false'}"
+    """Return config text with `stats_enabled` set, keeping every other line."""
+    line = f"stats_enabled = {'true' if enabled else 'false'}"
     lines = text.splitlines()
-    insert_at: int | None = None
-    in_stats = False
     for index, current in enumerate(lines):
-        if current.lstrip().startswith("["):
-            in_stats = _STATS_HEADER.match(current) is not None
-            if in_stats:
-                insert_at = index + 1
-        elif in_stats and _ENABLED_KEY.match(current):
+        # A top-level key can only appear before the first table header.
+        if _TABLE_HEADER.match(current):
+            break
+        if _ENABLED_KEY.match(current):
             lines[index] = line
             return "\n".join(lines) + "\n"
-    if insert_at is not None:
-        lines.insert(insert_at, line)
-        return "\n".join(lines) + "\n"
-    prefix = "\n".join(lines) + "\n\n" if lines else ""
-    return f"{prefix}{_TABLE}\n{line}\n"
+    return "\n".join([line, *lines]) + "\n"
+
+
+def config_template(*, enabled: bool) -> str:
+    """Return the commented config file written when none exists.
+
+    Only `stats_enabled` is active; every other setting is commented out at its default.
+    """
+    return f"""\
+# gate-cache settings. Environment variables override these values.
+# https://natelandau.github.io/gate-cache/reference/configuration/
+
+# Record run stats for the dashboard. `gate-cache stats on` and `stats off` set this.
+stats_enabled = {"true" if enabled else "false"}
+
+# The directory for recorded stats. A relative path starts from this file's directory.
+# stats_data_dir = "~/gate-cache-stats"
+
+# The longest wait, in whole seconds, for another run of the same gate. 0 never waits.
+# wait_timeout = {DEFAULT_WAIT_TIMEOUT}
+
+# What to do when the run this run waited for failed: "rerun" runs the command,
+# "report" exits with that failure.
+# wait_on_failure = "rerun"
+
+# Run about 1 in N runs that would skip, to check that the skip is still right. 0 turns this off.
+# spot_check_one_run_in = {DEFAULT_ONE_RUN_IN}
+"""
 
 
 def _updated_text(text: str, *, enabled: bool) -> str:
@@ -146,13 +163,15 @@ def _updated_text(text: str, *, enabled: bool) -> str:
         except tomllib.TOMLDecodeError as error:
             msg = f"the file is not valid TOML ({error}); fix it first"
             raise ConfigError(msg) from error
-    updated = _with_enabled(text, enabled=enabled)
+    updated = (
+        _with_enabled(text, enabled=enabled) if text.strip() else config_template(enabled=enabled)
+    )
     try:
-        stats = tomllib.loads(updated).get("stats")
+        value = tomllib.loads(updated).get("stats_enabled")
     except tomllib.TOMLDecodeError:
-        stats = None
-    if not isinstance(stats, dict) or stats.get("enabled") is not enabled:
-        msg = "could not set [stats] enabled safely; set it by hand in a [stats] table"
+        value = None
+    if value is not enabled:
+        msg = "could not set stats_enabled safely; set it by hand at the top of the file"
         raise ConfigError(msg)
     return updated
 

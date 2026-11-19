@@ -41,6 +41,7 @@ from gate_cache.markers import (
 )
 from gate_cache.runner import Terminated, raise_on_termination, run_child
 from gate_cache.snapshot import git_common_dir, normalize_paths, take_snapshot, take_snapshots
+from gate_cache.spot_check import SpotCheck, decide
 from gate_cache.stats import config as stats_config
 from gate_cache.stats import context as run_context
 from gate_cache.stats.recorder import Event, Outcome, record_event
@@ -61,6 +62,12 @@ _NO_COMMON_DIR_REASON = "could not locate git directory"
 _FILES_CHANGED = "files changed during the run"
 FILES_CHANGED_NOTICE = f"{_FILES_CHANGED}, not recording pass"
 REPORTED_FAILURE_REASON = "failed in another run, not rerun"
+SPOT_CHECK_NOTICE = "{name} passed on {label}, spot-checking ({rate})"
+SPOT_CHECK_FAILED_NOTICE = (
+    "{name} failed a spot check on {label}, where it passed before. If the gate is not "
+    "flaky, its cache key is missing an input; see "
+    "https://natelandau.github.io/gate-cache/reference/configuration/#spot-checks"
+)
 USUAL_DURATION_NOTICE = "running {name} (usually {duration})"
 # A fast gate's usual time tells no one anything, so its runs stay quiet.
 USUAL_DURATION_MIN_SECONDS = 1.0
@@ -351,6 +358,7 @@ class _Attempt:
         command: Command and arguments that run.
         snapshot: The snapshot the run is keyed on.
         key: The snapshot's key, known to be set.
+        spot_check: Whether the run replaces a skip on a recorded pass of the key.
     """
 
     common_dir: Path
@@ -358,6 +366,7 @@ class _Attempt:
     command: Sequence[str]
     snapshot: Snapshot
     key: str
+    spot_check: bool = False
 
     @property
     def marker(self) -> Path:
@@ -490,6 +499,8 @@ class _GateRun:
         ran: The attempt whose command ran to completion, so its directory gets pruned.
         junit: JUnit report files or folders the command writes, relative to the working
             directory, read only when stats are on.
+        force_spot_check: Whether `--spot-check` asked for a spot check on a recorded pass.
+        check: The spot-check roll, made when the run first finds a recorded pass.
     """
 
     name: str
@@ -501,6 +512,8 @@ class _GateRun:
     wait_timed_out: bool = False
     ran: _Attempt | None = None
     junit: Sequence[str | Path] = ()
+    force_spot_check: bool = False
+    check: SpotCheck | None = None
 
     def run(self, snapshot: Snapshot) -> int:
         """Skip on a recorded pass, else run the command, waiting for a run with the same key.
@@ -561,8 +574,20 @@ class _GateRun:
             common_dir=common_dir, name=self.name, command=self.command, snapshot=snapshot, key=key
         )
         if marker_exists(attempt.marker):
-            return self._skip(attempt)
+            return self._on_marker(attempt)
         return attempt
+
+    def _on_marker(self, attempt: _Attempt) -> _Attempt | int:
+        """Skip on the attempt's recorded pass, or return it as a spot check when one is due."""
+        if self._roll().due:
+            return replace(attempt, spot_check=True)
+        return self._skip(attempt)
+
+    def _roll(self) -> SpotCheck:
+        """Roll for a spot check once per run, so a run that never finds a pass reads no setting."""
+        if self.check is None:
+            self.check = decide(forced=self.force_spot_check)
+        return self.check
 
     def _run_unlocked(self, snapshot: Snapshot) -> int:
         """Run without the lock after a wait that ended without it."""
@@ -636,11 +661,18 @@ class _GateRun:
         """
         # Another run may have recorded a pass after the first marker check.
         if marker_exists(attempt.marker):
-            return self._skip(attempt)
-        if wait is not None:
-            reported = self._reported_failure(attempt, wait)
-            if reported is not None:
-                return reported
+            checked = self._on_marker(attempt)
+            if isinstance(checked, int):
+                return checked
+            attempt = checked
+        else:
+            if attempt.spot_check:
+                # A pass gone since the first check leaves nothing to spot-check.
+                attempt = replace(attempt, spot_check=False)
+            if wait is not None:
+                reported = self._reported_failure(attempt, wait)
+                if reported is not None:
+                    return reported
         with held_env(attempt.lock_file):
             return self._execute(attempt)
 
@@ -700,6 +732,10 @@ class _GateRun:
 
     def _execute(self, attempt: _Attempt) -> int:
         """Run the command on the attempt's snapshot, then record its pass or miss."""
+        if attempt.spot_check:
+            check = self._roll()
+            rate = "requested" if check.forced else f"1 in {check.one_run_in}"
+            say(SPOT_CHECK_NOTICE.format(name=self.name, label=attempt.snapshot.label, rate=rate))
         usual = usual_duration(attempt.durations)
         if usual is not None and usual > USUAL_DURATION_MIN_SECONDS:
             say(USUAL_DURATION_NOTICE.format(name=self.name, duration=format_duration(usual)))
@@ -723,6 +759,8 @@ class _GateRun:
                     outcome = "pass"
             except Exception as error:  # noqa: BLE001
                 say(f"warning: could not record pass: {error}")
+        if attempt.spot_check and outcome != "pass":
+            self._drop_pass(attempt, failed=outcome == "fail")
         self._record(
             attempt.snapshot,
             common_dir=attempt.common_dir,
@@ -732,8 +770,26 @@ class _GateRun:
             outcome=outcome,
             duration=result.duration,
             exit_code=result.exit_code,
+            spot_check=attempt.spot_check,
         )
         return result.exit_code
+
+    def _drop_pass(self, attempt: _Attempt, *, failed: bool) -> None:
+        """Delete the pass a spot check could not confirm, so the next run executes.
+
+        A miss record never stops a skip while the marker exists, so only deleting the
+        marker leaves the state an ordinary run with the same outcome leaves.
+
+        Args:
+            attempt: The spot check that failed or changed the keyed files.
+            failed: Whether the command failed, which earns a line on what that means.
+        """
+        try:
+            attempt.marker.unlink(missing_ok=True)
+        except OSError as error:
+            say(f"warning: could not remove pass: {error}")
+        if failed:
+            say(SPOT_CHECK_FAILED_NOTICE.format(name=self.name, label=attempt.snapshot.label))
 
     def run_uncached(
         self,
@@ -842,6 +898,7 @@ def run_gate(
     *,
     wait: WaitSettings | None = None,
     junit: Sequence[str | Path] = (),
+    spot_check: bool = False,
 ) -> int:
     """Run a gate command unless it already passed on the content about to be tested.
 
@@ -858,6 +915,7 @@ def run_gate(
         junit: JUnit report files or folders the command writes, relative to the working
             directory. With stats on, a run that executes the command stores the tests they
             report; they never affect skipping.
+        spot_check: Run the command even when a recorded pass would skip it.
 
     Returns:
         The command's exit code, 0 when a recorded pass lets it skip, or the exit code of
@@ -871,7 +929,13 @@ def run_gate(
         )
 
     gate_run = _GateRun(
-        name=name, command=command, stats=stats, started=stats.now(), wait=wait, junit=junit
+        name=name,
+        command=command,
+        stats=stats,
+        started=stats.now(),
+        wait=wait,
+        junit=junit,
+        force_spot_check=spot_check,
     )
     try:
         return gate_run.run(take_snapshot(paths=paths))

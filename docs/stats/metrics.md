@@ -28,11 +28,11 @@ Gate calls
 Time gates ran
 :   The total run time of the commands that ran, failures included. Skips add nothing.
 
-Time saved by cache
+Saved by cache
 :   For each skip, the run time of the pass that it matched.
 
-Net saved by cache
-:   Time saved by the cache, less the time that gate-cache took to decide and the time that runs waited for other runs. It can be negative when the cache cost more than it saved.
+Spot checks
+:   The runs that would have skipped but ran the command to check the cache. The card shows how many spot checks ran and how many of them failed. A failed spot check means that an earlier pass was wrong. Click the card to see the spot check runs.
 
 Cache skip rate
 :   Skips divided by the runs that checked the cache. Uncached runs are not part of it.
@@ -66,7 +66,7 @@ Early and late failures
 :   A failure is early when it ended before half of the median passing run time of its gate. Any other failure is late.
 
 Flaky gates
-:   The gates that both failed and passed with the same hash. A different value after the `@` in the name counts as a different gate. Read [Find flaky gates](flaky-gates.md).
+:   The gates that both failed and passed with the same hash. A different value after the `@` in the name counts as a different gate. Read [Triage gates](triage.md).
 
 ## Periods
 

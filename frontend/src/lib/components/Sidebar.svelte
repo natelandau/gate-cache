@@ -4,25 +4,26 @@
 
   Props:
   - `current`: the active page; a gate panel over the Gates page highlights Gates
-  - `flakyCount`: flaky gates under the current filters, shown as a badge when above zero
+  - `triageCount`: Triage rows under the current filters, shown as a badge when above zero
 -->
 <script lang="ts">
   import { href, type Page } from "../router.svelte";
   import Badge from "./Badge.svelte";
   import Icon, { type IconName } from "./Icon.svelte";
+  import { TRIAGE } from "../terms";
 
   interface Props {
     current: Page;
-    flakyCount: number | null;
+    triageCount: number | null;
   }
 
-  let { current, flakyCount }: Props = $props();
+  let { current, triageCount }: Props = $props();
 
   const items: { page: Exclude<Page, "gate">; label: string; icon: IconName }[] = [
     { page: "overview", label: "Overview", icon: "layout-dashboard" },
     { page: "gates", label: "Gates", icon: "list-checks" },
     { page: "activity", label: "Activity", icon: "activity" },
-    { page: "flaky", label: "Flaky", icon: "triangle-alert" },
+    { page: "triage", label: TRIAGE.title, icon: "triangle-alert" },
   ];
 
   const active = $derived(current === "gate" ? "gates" : current);
@@ -38,8 +39,8 @@
         >
           <Icon name={item.icon} />
           <span class="label">{item.label}</span>
-          {#if item.page === "flaky" && flakyCount}
-            <Badge tone="flaky">{flakyCount}</Badge>
+          {#if item.page === "triage" && triageCount}
+            <Badge tone="danger">{triageCount}</Badge>
           {/if}
         </a>
       </li>

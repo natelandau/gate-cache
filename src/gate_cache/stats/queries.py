@@ -19,7 +19,7 @@ from gate_cache.stats.recorder import Outcome
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Sequence
 
 _RAN = "('skip', 'pass', 'pass_unrecorded', 'fail')"
 _GOOD = "('pass', 'pass_unrecorded')"
@@ -29,7 +29,9 @@ _MAX_PAGE = 500
 _OUTCOMES: frozenset[str] = frozenset(get_args(Outcome))
 # The archive keeps outcomes from newer gate-cache versions; only known ones count.
 _KNOWN = "outcome IN (" + ", ".join(f"'{o}'" for o in sorted(_OUTCOMES)) + ")"
-_ROW_COLUMNS = "ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported, gate"
+_ROW_COLUMNS = (
+    "ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported, gate, spot_check"
+)
 # Every real UTC offset is a whole number of quarter hours, so no bucket spans two local days.
 _BUCKET_SECONDS = 900
 # Floor division: CAST truncates toward zero, which is one bucket too high for negative ts.
@@ -178,7 +180,7 @@ def _where(
         known = [r for r in filters.repos if r is not None]
         parts: list[str] = []
         if known:
-            parts.append(f"repo IN ({', '.join('?' * len(known))})")
+            parts.append(_in("repo", known))
             params.extend(known)
         if None in filters.repos:
             parts.append("repo IS NULL")
@@ -200,11 +202,30 @@ def _and(where: str, condition: str) -> str:
     return f"{where} AND {condition}"
 
 
+def _with_gates(
+    where: str, params: list[Any], gates: Sequence[tuple[str | None, str]]
+) -> tuple[str, list[Any]]:
+    """Return `where` keeping only events of one of `gates`, as (repo, gate) pairs."""
+    if not gates:
+        return where, params
+    clause = " OR ".join(["(repo IS ? AND gate = ?)"] * len(gates))
+    return _and(where, f"({clause})"), [*params, *(value for gate in gates for value in gate)]
+
+
+def _in(column: str, values: Sequence[object]) -> str:
+    """Return `column IN (?, ...)` with one placeholder per value, for binding the values."""
+    return f"{column} IN ({', '.join('?' * len(values))})"
+
+
 def _skip_rate(skips: int, ran: int) -> float | None:
     """Return skips over ran, or None when nothing ran."""
     return skips / ran if ran else None
 
 
+# Events that count toward flakiness. A failed spot check can mean a missing cache input, not a
+# flaky test, so spot checks are left out of every flaky view.
+_NOT_SPOT_CHECK = "spot_check = 0"
+_FLAKY_EVENT = "tree IS NOT NULL AND " + _NOT_SPOT_CHECK
 # A flaky tree: one gate's content that both failed and passed. Every flaky view groups by this.
 # Grouped by the exact name, not the gate: two keys of one gate, such as two tool versions,
 # that split a tree's outcomes are a real difference, not a flake.
@@ -212,10 +233,11 @@ _FLAKY_GROUP = (
     " GROUP BY repo, name, tree"
     " HAVING SUM(outcome = 'fail') > 0 AND SUM(outcome IN " + _GOOD + ") > 0"
 )
-# Joins events to the flaky trees in `ft`, from _flaky_trees_cte.
+_FAILED_SPOT_CHECK = "spot_check = 1 AND outcome = 'fail'"
+# Keeps the counted events on the flaky trees in `ft`, from _flaky_trees_cte.
 _ON_FLAKY_TREE = (
-    "EXISTS (SELECT 1 FROM ft WHERE ft.repo IS events.repo AND ft.name = events.name"
-    " AND ft.tree = events.tree)"
+    _NOT_SPOT_CHECK + " AND EXISTS (SELECT 1 FROM ft WHERE ft.repo IS events.repo"  # noqa: S608
+    " AND ft.name = events.name AND ft.tree = events.tree)"
 )
 
 
@@ -227,7 +249,7 @@ def _flaky_trees_cte(where: str) -> str:
     """
     return (
         "WITH ft AS (SELECT repo, name, tree FROM events"  # noqa: S608
-        + _and(where, "tree IS NOT NULL")
+        + _and(where, _FLAKY_EVENT)
         + _FLAKY_GROUP
         + ") "
     )
@@ -246,16 +268,29 @@ def _flaky_trees(
         " SUM(outcome = 'fail') AS fails, SUM(outcome IN " + _GOOD + ") AS passes,"
         " MAX(ts) AS last"
         " FROM events"
-        + _and(where, "tree IS NOT NULL")
+        + _and(where, _FLAKY_EVENT)
         + _FLAKY_GROUP
         + ") GROUP BY repo, gate, tree ORDER BY MAX(last) DESC, tree"
     )
-    return [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in conn.execute(sql, params)]
+    return conn.execute(sql, params).fetchall()
 
 
 def _event_row(raw: tuple[Any, ...], names: dict[str | None, str]) -> dict[str, Any]:
     """Convert a row selected with _ROW_COLUMNS into an API dict."""
-    ts, repo, name, outcome, duration, saved, exit_code, reason, tree, reported, gate = raw
+    (
+        ts,
+        repo,
+        name,
+        outcome,
+        duration,
+        saved,
+        exit_code,
+        reason,
+        tree,
+        reported,
+        gate,
+        spot_check,
+    ) = raw
     return {
         "ts": ts,
         "repo": repo,
@@ -269,6 +304,7 @@ def _event_row(raw: tuple[Any, ...], names: dict[str | None, str]) -> dict[str, 
         "reason": reason,
         "tree": tree,
         "reported": bool(reported),
+        "spot_check": bool(spot_check),
     }
 
 
@@ -289,6 +325,12 @@ def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         " COALESCE(SUM(waited), 0.0),"
         " COALESCE(SUM(duration), 0.0),"
         " COALESCE(SUM(CASE WHEN outcome = 'fail' THEN duration END), 0.0),"
+        " COALESCE(SUM(spot_check), 0),"
+        " COALESCE(SUM(spot_check AND outcome = 'fail'), 0),"
+        # Distinct (repo, gate) pairs; char(0) keeps ('a', 'bc') apart from ('ab', 'c').
+        " COUNT(DISTINCT CASE WHEN "
+        + _FAILED_SPOT_CHECK
+        + " THEN COALESCE(repo, '') || char(0) || gate END),"
         # Uncached runs never record overhead, so only runs that checked the cache count.
         " COALESCE(SUM(outcome IN " + _RAN + " AND (overhead IS NULL OR wait_known = 0)), 0)"
         " FROM events" + where,
@@ -308,8 +350,12 @@ def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         waited,
         time_spent,
         fail_time,
+        spot_runs,
+        spot_failed,
+        spot_failed_gates,
         cost_unknown,
     ) = row
+    flaky_gates = len({(r[0], r[1]) for r in _flaky_trees(conn, where, params)})
     return {
         "time_saved": float(saved),
         "unknown_saved_skips": unknown,
@@ -317,14 +363,17 @@ def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         "waited": float(waited),
         "time_spent": float(time_spent),
         "fail_time": float(fail_time),
-        "net_saved": float(saved) - float(overhead) - float(waited),
         "cost_unknown_runs": cost_unknown,
         "runs": runs,
         "skips": skips,
         "skip_rate": _skip_rate(skips, ran),
         "uncached": uncached,
         "failures": failures,
-        "flaky_gates": len({(r[0], r[1]) for r in _flaky_trees(conn, where, params)}),
+        "spot_checks": spot_runs,
+        "spot_check_failures": spot_failed,
+        "flaky_gates": flaky_gates,
+        # One triage row per gate and reason, as `triage` lists them.
+        "triage_items": flaky_gates + spot_failed_gates,
         "outcomes": {
             "skip": skips,
             "pass": passes,
@@ -339,8 +388,7 @@ def _totals(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
 class _Tally:
     """Run counts and seconds summed over some events.
 
-    `ran` counts the runs that checked the cache, the skip rate's denominator, and `cost` is
-    gate-cache overhead plus time spent waiting for a concurrent run.
+    `ran` counts the runs that checked the cache, the skip rate's denominator.
     """
 
     runs: int = 0
@@ -349,7 +397,8 @@ class _Tally:
     spent: float = 0.0
     skips: int = 0
     ran: int = 0
-    cost: float = 0.0
+    spot_checks: int = 0
+    spot_check_failures: int = 0
 
     def add(self, other: _Tally) -> None:
         """Add another tally's counts to this one."""
@@ -372,14 +421,24 @@ def _local_buckets(
     """
     zone = _zone(filters.tz)
     where, params = _where(filters)
-    for bucket_id, saved, failures, runs, spent, skips, ran, cost in conn.execute(
+    for (
+        bucket_id,
+        saved,
+        failures,
+        runs,
+        spent,
+        skips,
+        ran,
+        spot_checks,
+        spot_check_failures,
+    ) in conn.execute(
         "SELECT " + _BUCKET + ","  # noqa: S608
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
         " SUM(outcome = 'fail'), COUNT(*),"
         " COALESCE(SUM(duration), 0.0),"
         " SUM(outcome = 'skip'),"
         " SUM(outcome IN " + _RAN + "),"
-        " COALESCE(SUM(overhead), 0.0) + COALESCE(SUM(waited), 0.0)"
+        " SUM(spot_check), SUM(spot_check AND outcome = 'fail')"
         " FROM events" + where + " GROUP BY 1",
         params,
     ):
@@ -394,7 +453,8 @@ def _local_buckets(
                 spent=float(spent),
                 skips=int(skips),
                 ran=int(ran),
-                cost=float(cost),
+                spot_checks=int(spot_checks),
+                spot_check_failures=int(spot_check_failures),
             ),
         )
 
@@ -447,19 +507,16 @@ def summary(
             key: totals[key]
             for key in (
                 "time_saved",
-                "net_saved",
                 "time_spent",
                 "runs",
                 "skips",
                 "skip_rate",
                 "failures",
                 "flaky_gates",
+                "spot_check_failures",
             )
         }
         previous["days"] = (window.end - window.start) / 86400
-        # Windows that leave out different costs cannot be compared.
-        if result["cost_unknown_runs"] or totals["cost_unknown_runs"]:
-            previous["net_saved"] = None
     days: dict[str, _Tally] = defaultdict(_Tally)
     for _, start, tally in _local_buckets(conn, filters):
         days[start.date().isoformat()].add(tally)
@@ -559,12 +616,26 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         " SUM(outcome = 'skip'), SUM(outcome IN " + _RAN + "),"
         " COALESCE(SUM(CASE WHEN outcome = 'skip' THEN saved END), 0.0),"
         " SUM(outcome = 'fail'), MAX(ts), COALESCE(SUM(duration), 0.0),"
-        " COALESCE(SUM(CASE WHEN outcome = 'fail' THEN duration END), 0.0)"
+        " COALESCE(SUM(CASE WHEN outcome = 'fail' THEN duration END), 0.0),"
+        " COALESCE(SUM(spot_check), 0), COALESCE(SUM(spot_check AND outcome = 'fail'), 0)"
         " FROM events" + where + " GROUP BY repo, gate",
         params,
     ).fetchall()
     out: list[dict[str, Any]] = []
-    for repo, gate, runs, skips, ran, saved, failures, last, spent, fail_time in rows:
+    for (
+        repo,
+        gate,
+        runs,
+        skips,
+        ran,
+        saved,
+        failures,
+        last,
+        spent,
+        fail_time,
+        spot_checks,
+        spot_check_failures,
+    ) in rows:
         durs = durations.get((repo, gate), [])
         avg_run, median_run = _run_stats(durs)
         cpu_ratio, peak_rss, rss_values = resources.get((repo, gate), (None, None, []))
@@ -579,6 +650,8 @@ def gates(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
                 "median_run": median_run,
                 "time_saved": float(saved),
                 "failures": failures,
+                "spot_checks": spot_checks,
+                "spot_check_failures": spot_check_failures,
                 "last_run": last,
                 "flaky": (repo, gate) in flaky_keys,
                 "time_spent": float(spent),
@@ -1248,45 +1321,18 @@ def _parse_cursor(cursor: str) -> tuple[float, int]:
     return ts, event_id
 
 
-def _hour_buckets(conn: sqlite3.Connection, filters: Filters, weekday: int, hour: int) -> list[int]:
-    """Return the ids of the event buckets in a local weekday and hour.
-
-    The buckets come from `_local_buckets`, as in `hourly`, so they hold exactly the events
-    the heatmap cell counts.
-    """
-    return [
-        bucket_id
-        for bucket_id, start, _ in _local_buckets(conn, filters)
-        if start.isoweekday() % 7 == weekday and start.hour == hour
-    ]
-
-
-def _check_slot(weekday: int | None, hour: int | None) -> None:
-    """Raise ValueError unless weekday and hour are both absent or both in range."""
-    if (weekday is None) != (hour is None):
-        msg = f"weekday and hour go together: weekday={weekday!r}, hour={hour!r}"
-        raise ValueError(msg)
-    if weekday is not None and not 0 <= weekday <= 6:  # noqa: PLR2004
-        msg = f"weekday must be 0 to 6: {weekday!r}"
-        raise ValueError(msg)
-    if hour is not None and not 0 <= hour <= 23:  # noqa: PLR2004
-        msg = f"hour must be 0 to 23: {hour!r}"
-        raise ValueError(msg)
-
-
 def activity(  # noqa: PLR0913
     conn: sqlite3.Connection,
     filters: Filters,
     *,
     limit: int = 100,
     before: str | None = None,
-    outcome: str | None = None,
-    reason: str | None = None,
+    outcomes: Sequence[str] = (),
+    reasons: Sequence[str] = (),
     group: tuple[str, str] | None = None,
-    weekday: int | None = None,
-    hour: int | None = None,
-    gate: tuple[str | None, str] | None = None,
+    gates: Sequence[tuple[str | None, str]] = (),
     flaky: bool = False,
+    spot_check: bool = False,
 ) -> dict[str, Any]:
     """Return one page of events, newest first.
 
@@ -1295,51 +1341,41 @@ def activity(  # noqa: PLR0913
         filters: Repo and range filters.
         limit: Page size, clamped to 1..500.
         before: Opaque cursor from a previous page's next_before.
-        outcome: Keep only events with this outcome, or every event when None.
-        reason: Keep only events with exactly this reason, or every event when None.
+        outcomes: Keep only events with one of these outcomes, or every event when empty.
+        reasons: Keep only events with exactly one of these reasons, or every event when empty.
         group: Keep only the events of one breakdown row, as its dimension and key.
-        weekday: With `hour`, keep only events in this local weekday (0 is Sunday).
-        hour: With `weekday`, keep only events in this local hour (0 to 23).
-        gate: Keep only events of this repo and gate, the name before any `@` key; None as the
-            repo is the unknown repo.
+        gates: Keep only events of one of these (repo, gate) pairs, the gate being the name
+            before any `@` key; None as the repo is the unknown repo. Empty keeps every gate.
         flaky: Keep only events on trees that both failed and passed in the window.
+        spot_check: Keep only spot-check runs.
 
     Returns:
         The events and the cursor for the next page, or None on the last page.
 
     Raises:
-        ValueError: If the cursor or group is malformed, the outcome is unknown, or the
-            weekday and hour are not both given and in range.
+        ValueError: If the cursor or group is malformed or an outcome is unknown.
     """
-    _check_slot(weekday, hour)
     limit = max(1, min(limit, _MAX_PAGE))
     where, params = _where(filters)
-    if weekday is not None and hour is not None:
-        # One JSON parameter, since a long range holds more buckets than SQLite allows as
-        # bound variables or OR terms.
-        buckets = _hour_buckets(conn, filters, weekday, hour)
-        where = _and(where, _BUCKET + " IN (SELECT value FROM json_each(?))")  # noqa: S608
-        params = [*params, json.dumps(buckets)]
-    if gate is not None:
-        where = _and(where, "repo IS ? AND gate = ?")
-        params = [*params, gate[0], gate[1]]
+    unknown = [o for o in outcomes if o not in _OUTCOMES]
+    if unknown:
+        msg = f"unknown outcome: {unknown[0]!r}"
+        raise ValueError(msg)
+    where, params = _with_gates(where, params, gates)
     prefix, prefix_params = "", []
     if flaky:
         # Flakiness is decided over every outcome in the window, whatever else is filtered.
-        tree_where, prefix_params = (
-            _where(filters, gate=gate[1], exact_repo=(gate[0],)) if gate else _where(filters)
-        )
+        tree_where, prefix_params = _with_gates(*_where(filters), gates)
         prefix = _flaky_trees_cte(tree_where)
         where = _and(where, _ON_FLAKY_TREE)
-    if outcome is not None:
-        if outcome not in _OUTCOMES:
-            msg = f"unknown outcome: {outcome!r}"
-            raise ValueError(msg)
-        where = _and(where, "outcome = ?")
-        params = [*params, outcome]
-    if reason is not None:
-        where = _and(where, "reason = ?")
-        params = [*params, reason]
+    if spot_check:
+        where = _and(where, "spot_check = 1")
+    if outcomes:
+        where = _and(where, _in("outcome", outcomes))
+        params = [*params, *outcomes]
+    if reasons:
+        where = _and(where, _in("reason", reasons))
+        params = [*params, *reasons]
     if group is not None:
         condition, values = group_filter(by=group[0], key=group[1])
         where = _and(where, condition)
@@ -1371,6 +1407,23 @@ def reasons(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         params,
     ).fetchall()
     return {"reasons": [{"outcome": o, "reason": r, "count": n} for o, r, n in rows]}
+
+
+TriageReason = Literal["flaky", "failed_spot_check"]
+# The newest failed spot checks a triage row shows; the row still counts every one.
+_SPOT_CHECK_EVIDENCE = 10
+
+
+@dataclass(frozen=True)
+class _TriageScope:
+    """What every triage reason reads: the archive, the filtered events, and repo labels."""
+
+    conn: sqlite3.Connection
+    where: str
+    params: list[Any]
+    names: dict[str | None, str]
+    # The oldest event time whose per-test results are kept.
+    tests_since: float
 
 
 # CROSS JOIN keeps SQLite from scanning every test result: the window's events lead and
@@ -1406,7 +1459,9 @@ def _retried_tests(
     out: dict[tuple[str | None, str], list[dict[str, Any]]] = defaultdict(list)
     for repo, gate, test, runs, last in conn.execute(
         "SELECT e.repo, e.gate, tests.name, COUNT(*), MAX(e.ts)"  # noqa: S608
-        " FROM (SELECT id, repo, gate, ts FROM events" + _and(where, "ts >= ?") + ") AS e"
+        " FROM (SELECT id, repo, gate, ts FROM events"
+        + _and(where, "ts >= ? AND " + _NOT_SPOT_CHECK)
+        + ") AS e"
         " CROSS JOIN test_results ON test_results.event_id = e.id"
         " JOIN tests ON tests.id = test_results.test_id"
         " WHERE test_results.outcome = 'retried'"
@@ -1417,24 +1472,13 @@ def _retried_tests(
     return out
 
 
-def flaky(
-    conn: sqlite3.Connection, filters: Filters, *, now: float | None = None
-) -> dict[str, Any]:
-    """Return gates with flaky trees or retried tests, newest first.
+def _flaky_items(scope: _TriageScope) -> list[dict[str, Any]]:
+    """Return one triage row per gate with flaky trees or retried tests, its trees newest first.
 
-    Each gate lists its flaky trees with their runs, the tests that both failed and passed on
+    The evidence lists the flaky trees with their runs, the tests that both failed and passed on
     one of those trees, and the tests that passed on a retry.
-
-    Args:
-        conn: Archive connection.
-        filters: Repo and range filters.
-        now: Current Unix time in seconds; defaults to the clock.
-
-    Returns:
-        The gates, and where per-test retention starts when the window reaches further back.
     """
-    where, params = _where(filters)
-    names = _all_repo_names(conn)
+    conn, where, params, names = scope.conn, scope.where, scope.params, scope.names
     runs: dict[tuple[str | None, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in conn.execute(
         f"{_flaky_trees_cte(where)}SELECT {_ROW_COLUMNS} FROM events"  # noqa: S608
@@ -1448,28 +1492,103 @@ def flaky(
     by_gate: dict[tuple[str | None, str], list[tuple[str, float]]] = defaultdict(list)
     for repo, gate, tree in sorted(last_seen, key=lambda k: (-last_seen[k], k[2])):
         by_gate[repo, gate].append((tree, last_seen[repo, gate, tree]))
-    since = tests_since(time.time() if now is None else now)
-    tests = _flaky_tests(conn, where, params, since=since)
-    retried = _retried_tests(conn, where, params, since=since)
-    out: list[dict[str, Any]] = []
-    # Not a set union, whose order varies between processes: gates that tie on last_seen
-    # keep a stable order through the sort below.
-    for repo, gate in dict.fromkeys([*by_gate, *retried]):
-        gate_trees = by_gate[repo, gate]
-        gate_retried = retried[repo, gate]
-        out.append(
-            {
-                "repo": repo,
-                "repo_name": names[repo],
-                "name": gate,
-                "tree_count": len(gate_trees),
-                "last_seen": max(
-                    [last for _, last in gate_trees] + [t["last"] for t in gate_retried]
-                ),
-                "trees": [{"tree": tree, "runs": runs[repo, gate, tree]} for tree, _ in gate_trees],
+    tests = _flaky_tests(conn, where, params, since=scope.tests_since)
+    retried = _retried_tests(conn, where, params, since=scope.tests_since)
+    return [
+        {
+            "repo": repo,
+            "repo_name": names[repo],
+            "name": gate,
+            "reason": "flaky",
+            "last_seen": max(
+                [last for _, last in by_gate[repo, gate]] + [t["last"] for t in retried[repo, gate]]
+            ),
+            "evidence": {
+                "trees": [
+                    {"tree": tree, "runs": runs[repo, gate, tree]}
+                    for tree, _ in by_gate[repo, gate]
+                ],
                 "tests": tests[repo, gate],
-                "retried": gate_retried,
-            }
-        )
-    out.sort(key=lambda g: -g["last_seen"])
-    return {"gates": out, "tests_cutoff": _tests_cutoff(filters, since)}
+                "retried": retried[repo, gate],
+            },
+        }
+        for repo, gate in dict.fromkeys([*by_gate, *retried])
+    ]
+
+
+def _failed_spot_check_items(scope: _TriageScope) -> list[dict[str, Any]]:
+    """Return one triage row per gate with failed spot checks, the newest of them first."""
+    conn, where, params, names = scope.conn, scope.where, scope.params, scope.names
+    runs: dict[tuple[str | None, str], list[dict[str, Any]]] = defaultdict(list)
+    counts: dict[tuple[str | None, str], int] = {}
+    for *row, count in conn.execute(
+        f"SELECT {_ROW_COLUMNS}, n FROM ("  # noqa: S608
+        f"SELECT {_ROW_COLUMNS}, id,"
+        " ROW_NUMBER() OVER (PARTITION BY repo, gate ORDER BY ts DESC, id DESC) AS pos,"
+        " COUNT(*) OVER (PARTITION BY repo, gate) AS n"
+        " FROM events"
+        + _and(where, _FAILED_SPOT_CHECK)
+        + ") WHERE pos <= ? ORDER BY ts DESC, id DESC",
+        [*params, _SPOT_CHECK_EVIDENCE],
+    ):
+        event = _event_row(tuple(row), names)
+        key = (event["repo"], event["gate"])
+        runs[key].append(event)
+        counts[key] = count
+    return [
+        {
+            "repo": repo,
+            "repo_name": names[repo],
+            "name": gate,
+            "reason": "failed_spot_check",
+            "last_seen": gate_runs[0]["ts"],
+            "evidence": {"count": counts[repo, gate], "runs": gate_runs},
+        }
+        for (repo, gate), gate_runs in runs.items()
+    ]
+
+
+# Each reason a gate needs a look, in the order a tie on last_seen lists them. A new reason adds
+# one entry here and one in the dashboard.
+_TRIAGE_REASONS: dict[TriageReason, Callable[[_TriageScope], list[dict[str, Any]]]] = {
+    "flaky": _flaky_items,
+    "failed_spot_check": _failed_spot_check_items,
+}
+
+
+def triage(
+    conn: sqlite3.Connection,
+    filters: Filters,
+    *,
+    reason: TriageReason | None = None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Return the gates that need a look, one row per gate and reason, newest first.
+
+    A gate with several reasons gets a row for each, so each row carries the evidence that fits
+    its reason: the flaky trees, their runs, and the tests that flaked, or the failed spot checks.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters.
+        reason: Build only this reason's rows, or every reason's when None.
+        now: Current Unix time in seconds; defaults to the clock.
+
+    Returns:
+        The triage rows, and where per-test retention starts when the window reaches further
+        back.
+
+    Raises:
+        ValueError: If the reason is unknown.
+    """
+    if reason is not None and reason not in _TRIAGE_REASONS:
+        msg = f"unknown triage reason: {reason!r}"
+        raise ValueError(msg)
+    where, params = _where(filters)
+    since = tests_since(time.time() if now is None else now)
+    scope = _TriageScope(conn, where, params, _all_repo_names(conn), since)
+    order = list(_TRIAGE_REASONS)
+    builders = [_TRIAGE_REASONS[reason]] if reason is not None else _TRIAGE_REASONS.values()
+    items = [item for build in builders for item in build(scope)]
+    items.sort(key=lambda i: (-i["last_seen"], order.index(i["reason"]), i["name"]))
+    return {"items": items, "tests_cutoff": _tests_cutoff(filters, since)}

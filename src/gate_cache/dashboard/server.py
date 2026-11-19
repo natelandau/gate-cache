@@ -147,6 +147,11 @@ def _text(params: dict[str, list[str]], key: str) -> str | None:
     return params[key][-1] or None if key in params else None
 
 
+def _texts(params: dict[str, list[str]], key: str) -> tuple[str, ...]:
+    """Return the distinct non-empty values of a repeated query parameter, in order."""
+    return tuple(dict.fromkeys(v for v in params.get(key, []) if v))
+
+
 def _repo_value(text: str) -> str | None:
     """Return the repo a parameter names; the unknown repo becomes None."""
     return None if text == UNKNOWN_REPO else text
@@ -315,18 +320,17 @@ def _activity(server: DashboardServer, params: dict[str, list[str]]) -> dict[str
     requested = _integer(params, "limit")
     limit = max(1, min(100 if requested is None else requested, _MAX_LIMIT))
     before = _text(params, "before")
-    outcome = _text(params, "outcome")
-    reason = _text(params, "reason")
+    outcomes = _texts(params, "outcome")
+    reasons = _texts(params, "reason")
     group_by = _text(params, "group")
     key = _text(params, "key")
     if (group_by is None) != (key is None):
         msg = "group and key must be given together"
         raise _BadRequestError(msg)
     group = (group_by, key) if group_by is not None and key is not None else None
-    weekday = _integer(params, "weekday")
-    hour = _integer(params, "hour")
-    gate = _gate(params)
+    gates = _gates(params)
     flaky = _text(params, "flaky") == "1"
+    spot_check = _text(params, "spot_check") == "1"
     return _query(
         server,
         lambda c: queries.activity(
@@ -334,13 +338,12 @@ def _activity(server: DashboardServer, params: dict[str, list[str]]) -> dict[str
             filters,
             limit=limit,
             before=before,
-            outcome=outcome,
-            reason=reason,
+            outcomes=outcomes,
+            reasons=reasons,
             group=group,
-            weekday=weekday,
-            hour=hour,
-            gate=gate,
+            gates=gates,
             flaky=flaky,
+            spot_check=spot_check,
         ),
     )
 
@@ -360,6 +363,12 @@ def _spent(server: DashboardServer, params: dict[str, list[str]]) -> dict[str, A
     return _query(server, lambda c: queries.spent(c, filters, status=status))  # ty: ignore[invalid-argument-type]
 
 
+def _triage(server: DashboardServer, params: dict[str, list[str]]) -> dict[str, Any]:
+    reason = _text(params, "reason")
+    filters = _filters(params)
+    return _query(server, lambda c: queries.triage(c, filters, reason=reason))  # ty: ignore[invalid-argument-type]
+
+
 def _integer(params: dict[str, list[str]], key: str) -> int | None:
     """Return an integer query parameter, or None when absent or empty."""
     text = _text(params, key)
@@ -371,16 +380,19 @@ def _integer(params: dict[str, list[str]], key: str) -> int | None:
     return int(text)
 
 
-def _gate(params: dict[str, list[str]]) -> tuple[str | None, str] | None:
-    """Return the gate an activity request names as (repo, name), or None when absent."""
-    name = _text(params, "gate")
-    if name is None:
-        return None
-    repo = _text(params, "gate_repo")
-    if repo is None:
-        msg = "gate_repo is required with gate"
-        raise _BadRequestError(msg)
-    return _repo_value(repo), name
+def _gates(params: dict[str, list[str]]) -> tuple[tuple[str | None, str], ...]:
+    """Return the gates an activity request names as (repo, name), in order.
+
+    Each `gate` is its repo and name joined by a NUL, which neither a path nor a command holds.
+    """
+    gates: list[tuple[str | None, str]] = []
+    for value in params.get("gate", []):
+        repo, _, name = value.partition("\x00")
+        if not repo or not name:
+            msg = "each gate must be <repo>\\0<name>"
+            raise _BadRequestError(msg)
+        gates.append((_repo_value(repo), name))
+    return tuple(dict.fromkeys(gates))
 
 
 def _simple(
@@ -425,7 +437,7 @@ _ROUTES: dict[str, Callable[[DashboardServer, dict[str, list[str]]], dict[str, A
     "repos": _simple(queries.repos),
     "breakdown": _breakdown,
     "activity": _activity,
-    "flaky": _simple(queries.flaky),
+    "triage": _triage,
     "slowdowns": _timed(queries.slowdowns),
     "spent": _spent,
 }

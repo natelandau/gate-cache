@@ -1,6 +1,6 @@
 <script lang="ts">
   import GateName from "../lib/components/GateName.svelte";
-  import { TERMS } from "../lib/terms";
+  import { ACTIVITY_FILTERS, TERMS } from "../lib/terms";
   import { tick } from "svelte";
   import {
     activityHint,
@@ -8,18 +8,19 @@
     addPage,
     feedView,
     filterParts,
+    without,
     PAGE_SIZE,
-    type FilterPart,
     type PagedFeed,
   } from "../lib/activity";
-  import { getActivity, spanScope, type ActivityFilter, type EventRow, type Outcome } from "../lib/api";
+  import { getActivity, spanScope, type ActivityFilter, type EventRow } from "../lib/api";
+  import { pickerEntry } from "../lib/filtermenu";
+  import FilterMenu from "./activity/FilterMenu.svelte";
   import Button from "../lib/components/Button.svelte";
   import DataTable, { type Column } from "../lib/components/DataTable.svelte";
   import EmptyState from "../lib/components/EmptyState.svelte";
   import FilterChip from "../lib/components/FilterChip.svelte";
   import Notice from "../lib/components/Notice.svelte";
   import OutcomeBadge from "../lib/components/OutcomeBadge.svelte";
-  import Select from "../lib/components/Select.svelte";
   import { eventKeys, eventTitle, OUTCOMES, ranText, savedText } from "../lib/events";
   import TimeValue from "../lib/components/TimeValue.svelte";
   import PageHeader from "../lib/components/PageHeader.svelte";
@@ -45,26 +46,17 @@
   // The first page follows the archive live; see lib/activity.ts for why later pages do not.
   const first = createQuery((signal) => fetchPage(null, signal), () => filter);
 
-  const outcomeOptions = [
-    { value: "", label: "All outcomes" },
-    ...Object.entries(OUTCOMES).map(([value, { label }]) => ({ value, label })),
-  ];
-
   // Filter changes replace the history entry, so going back leaves the page instead of
   // stepping through every filter tried.
   function show(next: ActivityFilter): void {
     navigate({ page: "activity", ...next }, { replace: true });
   }
 
-  function showOutcome(value: string): void {
-    const { outcome: _, ...rest } = filter;
-    show(value ? { ...rest, outcome: value as Outcome } : rest);
-  }
-
   const parts = $derived(filterParts(filter));
+  let menu: FilterMenu | undefined = $state();
 
-  function remove(part: FilterPart): void {
-    show(part.without);
+  function remove(next: ActivityFilter): void {
+    show(next);
     heading?.focus();
   }
 
@@ -159,7 +151,7 @@
 
 {#snippet when(e: Row)}{formatRelative(e.ts, clock.now)}{/snippet}
 {#snippet gate(e: Row)}<span class="gate"><GateName name={e.name} gate={e.gate} /></span>{/snippet}
-{#snippet outcomeCell(e: Row)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} />{/snippet}
+{#snippet outcomeCell(e: Row)}<OutcomeBadge outcome={e.outcome} title={eventTitle(e)} spotCheck={e.spot_check} />{/snippet}
 
 <section class="page" aria-labelledby="activity-title">
   <div class="head">
@@ -170,15 +162,20 @@
   </div>
 
   <div class="filters">
-    <Select label="Outcome" value={filter.outcome ?? ""} options={outcomeOptions} onchange={showOutcome} />
+    <FilterMenu bind:this={menu} {filter} onchange={show} />
     {#each parts as part (part.key)}
       <FilterChip
         label={part.label}
         title={part.title}
         removeLabel="Remove {part.noun} filter"
-        onremove={() => remove(part)}
+        onremove={() => remove(without(filter, part.key))}
+        onedit={pickerEntry(part.key) ? () => menu?.edit(part.key) : undefined}
+        editLabel="Edit {part.noun} filter"
       />
     {/each}
+    {#if parts.length}
+      <Button onclick={() => remove({})}>{ACTIVITY_FILTERS.clearAll}</Button>
+    {/if}
   </div>
 
   {#if first.error}

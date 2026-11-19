@@ -10,6 +10,7 @@ import pytest
 from platformdirs import user_state_path
 
 from gate_cache.config import config_path
+from gate_cache.spot_check import CONFIG_KEY
 from gate_cache.stats.config import (
     DATA_DIR_ENV,
     ConfigError,
@@ -34,21 +35,21 @@ def test_default_is_off(stats_dirs: Dirs) -> None:
 
 def test_config_turns_on(stats_dirs: Dirs) -> None:
     """The config file can turn recording on."""
-    _write(stats_dirs, "[stats]\nenabled = true\n")
+    _write(stats_dirs, "stats_enabled = true\n")
     assert stats_setting({}) == StatsSetting(enabled=True, source="config")
 
 
 def test_env_overrides_config(stats_dirs: Dirs) -> None:
     """GATE_CACHE_STATS beats the config file in both directions."""
-    _write(stats_dirs, "[stats]\nenabled = true\n")
+    _write(stats_dirs, "stats_enabled = true\n")
     assert stats_setting({"GATE_CACHE_STATS": "0"}) == StatsSetting(enabled=False, source="env")
-    _write(stats_dirs, "[stats]\nenabled = false\n")
+    _write(stats_dirs, "stats_enabled = false\n")
     assert stats_setting({"GATE_CACHE_STATS": "1"}) == StatsSetting(enabled=True, source="env")
 
 
 def test_ci_forces_off_unless_env(stats_dirs: Dirs) -> None:
     """CI turns recording off unless GATE_CACHE_STATS is set."""
-    _write(stats_dirs, "[stats]\nenabled = true\n")
+    _write(stats_dirs, "stats_enabled = true\n")
     assert stats_setting({"CI": "true"}) == StatsSetting(enabled=False, source="ci")
     assert stats_setting({"CI": "true", "GATE_CACHE_STATS": "1"}) == StatsSetting(
         enabled=True, source="env"
@@ -63,59 +64,60 @@ def test_invalid_toml_is_off(stats_dirs: Dirs) -> None:
 
 def test_non_bool_is_off(stats_dirs: Dirs) -> None:
     """A non-boolean value leaves recording off."""
-    _write(stats_dirs, '[stats]\nenabled = "yes"\n')
+    _write(stats_dirs, 'stats_enabled = "yes"\n')
     assert stats_setting({}) == StatsSetting(enabled=False, source="default")
 
 
-def test_write_enabled_creates_file(stats_dirs: Dirs) -> None:
-    """Writing creates the config file and its directory."""
-    write_enabled(enabled=True)
-    assert tomllib.loads(stats_dirs[0].read_text())["stats"]["enabled"] is True
+@pytest.mark.parametrize("enabled", [True, False])
+def test_write_enabled_creates_file(stats_dirs: Dirs, enabled: bool) -> None:
+    """A created file activates only `stats_enabled`; every other setting is commented out."""
+    write_enabled(enabled=enabled)
+    assert tomllib.loads(stats_dirs[0].read_text()) == {"stats_enabled": enabled}
 
 
-def test_write_enabled_creates_and_preserves(stats_dirs: Dirs) -> None:
-    """Writing keeps comments and other tables."""
-    _write(stats_dirs, "# mine\n[other]\nx = 1\n")
+def test_created_file_lists_every_setting(stats_dirs: Dirs) -> None:
+    """The created file names every top-level key that gate-cache reads."""
     write_enabled(enabled=True)
     text = stats_dirs[0].read_text()
-    assert "# mine" in text
-    assert "x = 1" in text
-    assert tomllib.loads(text)["stats"]["enabled"] is True
-    write_enabled(enabled=False)
-    assert tomllib.loads(stats_dirs[0].read_text())["stats"]["enabled"] is False
+    keys = ["stats_enabled", "stats_data_dir", "wait_timeout", "wait_on_failure", CONFIG_KEY]
+    assert [key for key in keys if key not in text] == []
 
 
-def test_write_enabled_edits_inside_existing_table(stats_dirs: Dirs) -> None:
-    """Writing edits the stats table, not a same-named key elsewhere."""
-    _write(stats_dirs, "[stats]\nother = 2\n[x]\nenabled = 5\n")
+def test_write_enabled_keeps_comments_and_tables(stats_dirs: Dirs) -> None:
+    """Writing keeps comments and tables as they were."""
+    _write(stats_dirs, "# mine\n[other]\nx = 1\n")
     write_enabled(enabled=True)
-    data = tomllib.loads(stats_dirs[0].read_text())
-    assert data == {"stats": {"enabled": True, "other": 2}, "x": {"enabled": 5}}
+    assert stats_dirs[0].read_text() == "stats_enabled = true\n# mine\n[other]\nx = 1\n"
 
 
-@pytest.mark.parametrize("header", ["[stats]  # note", "[ stats ]", "  [stats]"])
-def test_write_enabled_accepts_header_variants(stats_dirs: Dirs, header: str) -> None:
-    """Whitespace and a trailing comment on the table header still match."""
-    _write(stats_dirs, f"{header}\nenabled = false\n")
+def test_write_enabled_replaces_the_line_in_place(stats_dirs: Dirs) -> None:
+    """An existing top-level key is replaced where it stands."""
+    _write(stats_dirs, "a = 1\nstats_enabled = false\nb = 2\n")
     write_enabled(enabled=True)
-    assert tomllib.loads(stats_dirs[0].read_text())["stats"]["enabled"] is True
+    assert stats_dirs[0].read_text() == "a = 1\nstats_enabled = true\nb = 2\n"
 
 
 @pytest.mark.parametrize(
     "content",
     [
-        "stats.enabled = false\n",
-        "stats = {enabled = false}\n",
-        '[stats]\n"enabled" = false\n',
-        "[stats\n",
+        "wait_timeout = 5\n[tool]\nx = 1\n",
+        "[other]\nstats_enabled = false\n",
+        "rows = [\n  [1, 2],\n  [3, 4],\n]\nstats_enabled = false\n",
     ],
 )
-def test_write_enabled_refuses_what_it_cannot_edit(stats_dirs: Dirs, content: str) -> None:
-    """A file the line editor cannot handle is refused and left untouched."""
+def test_write_enabled_sets_the_top_level_key(stats_dirs: Dirs, content: str) -> None:
+    """The key lands at the top level, never inside a table or in place of a table's key."""
     _write(stats_dirs, content)
+    write_enabled(enabled=True)
+    assert tomllib.loads(stats_dirs[0].read_text())["stats_enabled"] is True
+
+
+def test_write_enabled_refuses_invalid_toml(stats_dirs: Dirs) -> None:
+    """A file that is not valid TOML is refused and left untouched."""
+    _write(stats_dirs, "[stats\n")
     with pytest.raises(ConfigError):
         write_enabled(enabled=True)
-    assert stats_dirs[0].read_text() == content
+    assert stats_dirs[0].read_text() == "[stats\n"
 
 
 def test_write_enabled_refuses_non_utf8(stats_dirs: Dirs) -> None:
@@ -129,7 +131,7 @@ def test_write_enabled_refuses_non_utf8(stats_dirs: Dirs) -> None:
 
 def test_whitespace_env_counts_as_unset(stats_dirs: Dirs) -> None:
     """A blank GATE_CACHE_STATS does not override the config file."""
-    _write(stats_dirs, "[stats]\nenabled = true\n")
+    _write(stats_dirs, "stats_enabled = true\n")
     assert stats_setting({"GATE_CACHE_STATS": "  "}) == StatsSetting(enabled=True, source="config")
 
 
@@ -142,7 +144,7 @@ def test_write_enabled_follows_a_symlink(stats_dirs: Dirs, tmp_path: Path) -> No
     stats_dirs[0].symlink_to(target)
     write_enabled(enabled=True)
     assert stats_dirs[0].is_symlink()
-    assert tomllib.loads(target.read_text())["stats"]["enabled"] is True
+    assert tomllib.loads(target.read_text())["stats_enabled"] is True
 
 
 def test_write_enabled_keeps_the_file_mode(stats_dirs: Dirs) -> None:
@@ -161,8 +163,8 @@ def _write_config(text: str) -> Path:
 
 
 def test_data_dir_env_beats_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """GATE_CACHE_DATA_DIR wins over `[stats] data_dir` and the default."""
-    _write_config(f'[stats]\ndata_dir = "{tmp_path / "from-config"}"\n')
+    """GATE_CACHE_DATA_DIR wins over `stats_data_dir` and the default."""
+    _write_config(f'stats_data_dir = "{tmp_path / "from-config"}"\n')
     monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path / "from-env"))
     assert state_dir() == tmp_path / "from-env"
 
@@ -184,27 +186,27 @@ def test_data_dir_env_relative_uses_cwd(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 def test_data_dir_from_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`[stats] data_dir` moves the data when GATE_CACHE_DATA_DIR is unset."""
+    """`stats_data_dir` moves the data when GATE_CACHE_DATA_DIR is unset."""
     monkeypatch.delenv(DATA_DIR_ENV)
-    _write_config(f'[stats]\ndata_dir = "{tmp_path / "from-config"}"\n')
+    _write_config(f'stats_data_dir = "{tmp_path / "from-config"}"\n')
     assert state_dir() == tmp_path / "from-config"
 
 
 def test_data_dir_config_relative_uses_config_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A relative `data_dir` resolves against the config file's directory, not the cwd."""
+    """A relative `stats_data_dir` resolves against the config file's directory, not the cwd."""
     monkeypatch.delenv(DATA_DIR_ENV)
     monkeypatch.chdir(tmp_path)
-    path = _write_config('[stats]\ndata_dir = "stats"\n')
+    path = _write_config('stats_data_dir = "stats"\n')
     assert state_dir() == path.parent / "stats"
 
 
 def test_data_dir_config_expands_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A leading ~ in `data_dir` expands to HOME."""
+    """A leading ~ in `stats_data_dir` expands to HOME."""
     monkeypatch.delenv(DATA_DIR_ENV)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    _write_config('[stats]\ndata_dir = "~/stats"\n')
+    _write_config('stats_data_dir = "~/stats"\n')
     assert state_dir() == tmp_path / "home" / "stats"
 
 
@@ -214,16 +216,16 @@ def test_blank_data_dir_env_falls_through_to_config(
 ) -> None:
     """A blank GATE_CACHE_DATA_DIR counts as unset."""
     monkeypatch.setenv(DATA_DIR_ENV, blank)
-    _write_config(f'[stats]\ndata_dir = "{tmp_path / "from-config"}"\n')
+    _write_config(f'stats_data_dir = "{tmp_path / "from-config"}"\n')
     assert state_dir() == tmp_path / "from-config"
 
 
 @pytest.mark.parametrize(
     "content",
     [
-        '[stats]\ndata_dir = ""\n',
-        "[stats]\ndata_dir = 5\n",
-        '[stats]\ndata_dir = ["a"]\n',
+        'stats_data_dir = ""\n',
+        "stats_data_dir = 5\n",
+        'stats_data_dir = ["a"]\n',
         "[stats\n",
     ],
     ids=["empty", "integer", "array", "invalid-toml"],
@@ -231,7 +233,7 @@ def test_blank_data_dir_env_falls_through_to_config(
 def test_unusable_data_dir_falls_through_to_default(
     monkeypatch: pytest.MonkeyPatch, content: str
 ) -> None:
-    """An empty or non-string `data_dir`, or an unreadable file, uses the default."""
+    """An empty or non-string `stats_data_dir`, or an unreadable file, uses the default."""
     monkeypatch.delenv(DATA_DIR_ENV)
     _write_config(content)
     assert state_dir() == user_state_path("gate-cache", appauthor=False)
@@ -295,7 +297,7 @@ def test_config_parsed_once_until_it_changes(
 ) -> None:
     """Repeated lookups reuse the parsed file, and an edit is picked up."""
     monkeypatch.delenv(DATA_DIR_ENV)
-    _write(stats_dirs, "[stats]\nenabled = true\ndata_dir = 'one'\n")
+    _write(stats_dirs, "stats_enabled = true\nstats_data_dir = 'one'\n")
     calls: list[str] = []
     real_loads = tomllib.loads
     monkeypatch.setattr(tomllib, "loads", lambda text: calls.append(text) or real_loads(text))
@@ -303,7 +305,7 @@ def test_config_parsed_once_until_it_changes(
     assert state_dir({}) == stats_dirs[0].parent / "one"
     assert state_dir({}) == stats_dirs[0].parent / "one"
     assert len(calls) == 1
-    _write(stats_dirs, "[stats]\nenabled = false\ndata_dir = 'two-longer'\n")
+    _write(stats_dirs, "stats_enabled = false\nstats_data_dir = 'two-longer'\n")
     assert state_dir({}) == stats_dirs[0].parent / "two-longer"
     assert not stats_setting({}).enabled
     assert len(calls) == 2

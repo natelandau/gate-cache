@@ -23,7 +23,7 @@ from gate_cache.gate import (
 )
 from gate_cache.markers import MARKER_DIRNAME
 from gate_cache.stats import config as stats_config
-from gate_cache.wait_settings import FailedBehavior, parse_failed, parse_timeout, wait_settings
+from gate_cache.wait_settings import FailedBehavior, parse_failed, wait_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -49,11 +49,12 @@ _NEEDS_VALUE = {
     ),
 }
 _NAME_REPEATED = "--name given more than once"
+_SPOT_CHECK_REPEATED = "--spot-check given more than once"
 # Each wait flag: the _WaitFlags field it sets, its parser, and the invalid-value message.
 _WAIT_FLAGS: dict[str, tuple[str, Callable[[str], object | None], str]] = {
     "--wait-timeout": (
         "timeout",
-        parse_timeout,
+        core_config.parse_whole_number,
         (
             "--wait-timeout takes whole seconds, 0 or more, "
             "e.g. gate-cache --wait-timeout 300 -- uv run pytest"
@@ -73,6 +74,7 @@ _NO_COMMAND = "no command given after --"
 _USAGE = """\
 gate-cache [--name NAME] [--path PATHSPEC]... [--junit PATH]...
                   [--wait-timeout SECONDS] [--on-wait-failure rerun|report]
+                  [--spot-check]
                   -- COMMAND [ARGS...]
        gate-cache status [--name NAME] [--path PATHSPEC]... [--json] [-- COMMAND...]
        gate-cache clear [--yes]
@@ -91,12 +93,12 @@ passed on tree aaff74984ccc, skipping", and exits 0.
 AI agents: run `gate-cache --skill` and read the guide before you run, add, or
 change a gate.
 
--- is required, and only --name, --path, --junit, --wait-timeout, and
---on-wait-failure can come before it. Everything after -- is the command,
-verbatim. gate-cache does not use a shell. Without --name, the gate name is the
-command itself, so each set of arguments has its own records. Give --name to
-share records between commands that check the same thing, or to key on inputs
-that the tree does not cover.
+-- is required, and only --name, --path, --junit, --wait-timeout,
+--on-wait-failure, and --spot-check can come before it. Everything after -- is
+the command, verbatim. gate-cache does not use a shell. Without --name, the gate
+name is the command itself, so each set of arguments has its own records. Give
+--name to share records between commands that check the same thing, or to key on
+inputs that the tree does not cover.
 
 Only the name and the file content are keyed. The working directory is not, so
 a command whose meaning depends on it needs a distinct --name. To also key on an
@@ -117,7 +119,13 @@ A run waits for another run of the same gate that is still in progress, then
 skips when that run passed. --wait-timeout SECONDS sets the longest wait (default
 900, 0 never waits). --on-wait-failure sets what happens when the awaited run
 failed: rerun (default) runs the command, report exits with the failure without
-a rerun. Both flags override the [wait] table of the config file.
+a rerun. Both flags override the `wait_timeout` and `wait_on_failure` keys of
+the config file.
+
+--spot-check runs the command even when it already passed on this tree, and
+records the run as a spot check. Without the flag, a run that would skip runs
+anyway about 1 time in 50; spot_check_one_run_in in the config file or
+GATE_CACHE_SPOT_CHECK_ONE_RUN_IN changes the rate, and 0 turns it off.
 
 A pass is recorded only when the command exits 0 and leaves the files
 unchanged. A command that changes files prints:
@@ -148,7 +156,7 @@ Environment:
   GATE_CACHE_STATS: if on, record run stats even in CI. If 0 or false, do not
   record. If empty or not set, CI and then the config file decide.
   GATE_CACHE_DATA_DIR: the directory for recorded stats. If empty or not set,
-  [stats] data_dir in the config file and then the platform default decide.
+  `stats_data_dir` in the config file and then the platform default decide.
 
 Typical use:
   gate-cache -- uv run pytest -x
@@ -212,10 +220,10 @@ Show or change whether gate-cache records run stats.
 
 Recording is off until you turn it on. Without an action, print whether
 recording is on, what decided it, the config file, and the data directory.
-`on` and `off` write [stats] enabled to the config file and keep its other
+`on` and `off` write `stats_enabled` to the config file and keep its other
 lines. The setting comes from the first of: GATE_CACHE_STATS when not empty
 (0 or false is off, any other value is on), CI (on means off), the config file,
-and then off. GATE_CACHE_DATA_DIR, or `data_dir` in the [stats] table of the
+and then off. GATE_CACHE_DATA_DIR, or `stats_data_dir` in the
 config file, moves the data directory.
 
 Recording never changes whether a command skips, its exit code, or its output,
@@ -486,6 +494,7 @@ class _RunArgs:
     wait_timeout: int | None = None
     on_wait_failure: FailedBehavior | None = None
     junit: list[str] = dataclasses.field(default_factory=list)
+    spot_check: bool = False
 
 
 def _option_value(tokens: list[str], index: int, option: str) -> tuple[str, int] | None:
@@ -541,18 +550,18 @@ def _split_run(tokens: list[str]) -> _RunArgs:
     """Split a run invocation into its options and the command after the first --.
 
     Only `--name`, `--path`, `--junit`, `--wait-timeout`, and `--on-wait-failure`, each as
-    `--opt X` or `--opt=X`, may precede `--`, so a stray option such as `--version` or the
-    first word of the command can never be mistaken for one of ours.
+    `--opt X` or `--opt=X`, and the bare `--spot-check` may precede `--`, so a stray option
+    such as `--version` or the first word of the command can never be mistaken for one of ours.
 
     Raises:
         _UsageError: When anything else precedes `--`, `--` is missing, an option is
-            missing its value or invalid, or `--name`, `--wait-timeout`, or
-            `--on-wait-failure` is given twice.
+            missing its value or invalid, or a flag other than `--path` is given twice.
     """
     name: str | None = None
     paths: list[str] = []
     junit: list[str] = []
     wait = _WaitFlags()
+    spot_check = False
     index = 0
     while index < len(tokens):
         if tokens[index] == "--":
@@ -563,6 +572,7 @@ def _split_run(tokens: list[str]) -> _RunArgs:
                 wait_timeout=wait.timeout,
                 on_wait_failure=wait.failed,
                 junit=junit,
+                spot_check=spot_check,
             )
         if (found := _option_value(tokens=tokens, index=index, option="--name")) is not None:
             if name is not None:
@@ -576,6 +586,11 @@ def _split_run(tokens: list[str]) -> _RunArgs:
             junit.append(value)
         elif (found := _wait_flag(tokens, index, wait)) is not None:
             index = found
+        elif tokens[index] == "--spot-check":
+            if spot_check:
+                raise _UsageError(_SPOT_CHECK_REPEATED)
+            spot_check = True
+            index += 1
         else:
             break
     raise _UsageError(_NEEDS_SEPARATOR)
@@ -621,7 +636,14 @@ def _run_command(tokens: list[str]) -> int:
         if run.wait_timeout is not None or run.on_wait_failure is not None
         else None
     )
-    return run_gate(name, run.command, paths=run.paths, wait=wait, junit=run.junit)
+    return run_gate(
+        name,
+        run.command,
+        paths=run.paths,
+        wait=wait,
+        junit=run.junit,
+        spot_check=run.spot_check,
+    )
 
 
 def _enter_hook_environment() -> None:

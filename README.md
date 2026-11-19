@@ -170,9 +170,7 @@ Click a gate to see its run time over time, the spread of its run times, and its
 
 ![The details of one gate, with stat cards, a chart of passing run times, and a histogram of run times](https://raw.githubusercontent.com/natelandau/gate-cache/main/docs/images/dashboard-gate-detail.png)
 
-The Flaky page lists each gate that both failed and passed with the same hash, with the runs for each hash:
-
-![The Flaky page, a list of hashes with which one gate both failed and passed](https://raw.githubusercontent.com/natelandau/gate-cache/main/docs/images/dashboard-flaky.png)
+The Triage page lists each gate that needs a look: a gate that both failed and passed with the same hash, or a gate that failed a spot check. Each row says what to check and shows the runs behind it.
 
 The dashboard follows the theme of your system, and it has a light and a dark theme:
 

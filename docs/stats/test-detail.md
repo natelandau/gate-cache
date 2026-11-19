@@ -85,12 +85,12 @@ The details page of a gate lists its slowest tests. For each test, it shows:
 
 ### Flaky tests
 
-The **Flaky** page lists the tests of each gate in two groups:
+On the **Triage** page, each row with the **Flaky** reason lists the tests of its gate in two groups:
 
 - **Flaky tests** both failed and passed with the same hash, that is, on identical files. Each one cost at least one failed run of the whole gate.
 - **Passed on retry** lists tests that failed and then passed when the test tool ran them again in the same run. Only tools that run failed tests again write this into their report. The gate passed, but each retry added run time.
 
-To find why a test is flaky, use the same patterns as for a flaky gate. Read [Find flaky gates](flaky-gates.md#read-the-pattern).
+To find why a test is flaky, use the same patterns as for a flaky gate. Read [Fix a flaky gate](triage.md#fix-a-flaky-gate).
 
 ## Fix a report problem
 

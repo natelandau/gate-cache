@@ -66,6 +66,8 @@ class Event:
             `missing`, `stale`, or `invalid`. None when the run read no report.
         junit_truncated: Whether the stored tests were cut at the per-run limit.
         junit_problem: When some reports were read, the worst status of those that were not.
+        spot_check: Whether the run executed the command where a recorded pass would
+            have let it skip.
     """
 
     ts: float
@@ -104,6 +106,7 @@ class Event:
     junit: int | str | None = None
     junit_truncated: bool = False
     junit_problem: str | None = None
+    spot_check: bool = False
 
     def _encode(self, paths: list[str], *, truncated: bool, name: str | None = None) -> bytes:
         """Encode the event as one newline-terminated JSON line.
@@ -157,6 +160,8 @@ class Event:
             data["wait_timed_out"] = True
         if self.reported:
             data["reported"] = True
+        if self.spot_check:
+            data["spot_check"] = True
         if self.command_truncated:
             data["command_truncated"] = True
         if self.name_truncated or name is not None:
