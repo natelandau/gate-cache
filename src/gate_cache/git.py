@@ -43,6 +43,7 @@ def run_git(
     cwd: Path | str | None = None,
     env: Mapping[str, str] | None = None,
     check: bool = True,
+    stdin: bytes | None = None,
 ) -> GitResult:
     """Run `git` with the given arguments and return its decoded output.
 
@@ -54,6 +55,7 @@ def run_git(
         cwd: Directory to run git in. None inherits the process working directory.
         env: Environment that replaces the inherited one, or None to inherit it.
         check: Raise GitFailedError when git exits with a non-zero code.
+        stdin: Bytes to feed git on standard input, or None for no input.
 
     Returns:
         The exit code and output of the command.
@@ -76,7 +78,9 @@ def run_git(
             argv,
             cwd=resolved,
             env=dict(env) if env is not None else None,
-            stdin=subprocess.DEVNULL,
+            input=stdin,
+            # subprocess.run rejects stdin= alongside input=.
+            stdin=subprocess.DEVNULL if stdin is None else None,
             capture_output=True,
             check=False,
         )
