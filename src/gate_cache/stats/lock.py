@@ -23,6 +23,7 @@ class InstanceLock:
         """Wrap a locked file descriptor."""
         self._state = state
         self._fd: int | None = fd
+        self._wrote_url = False
 
     @classmethod
     def acquire(cls, state: Path) -> Self | None:
@@ -55,13 +56,15 @@ class InstanceLock:
     def write_url(self, url: str) -> None:
         """Publish the URL of the running dashboard."""
         (self._state / _URL_NAME).write_text(url, encoding="utf-8")
+        self._wrote_url = True
 
     def release(self) -> None:
-        """Remove the published URL and drop the lock."""
+        """Drop the lock, removing the URL only when this holder published it."""
         if self._fd is None:
             return
-        with contextlib.suppress(OSError):
-            (self._state / _URL_NAME).unlink(missing_ok=True)
+        if self._wrote_url:
+            with contextlib.suppress(OSError):
+                (self._state / _URL_NAME).unlink(missing_ok=True)
         os.close(self._fd)  # closing the descriptor drops the flock
         self._fd = None
 

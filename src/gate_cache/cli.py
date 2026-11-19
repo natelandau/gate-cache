@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import os
 import shlex
 import sys
@@ -26,7 +27,11 @@ from gate_cache.stats import config as stats_config
 from gate_cache.wait_settings import FailedBehavior, parse_failed, wait_settings
 
 if TYPE_CHECKING:
+    import sqlite3
     from collections.abc import Callable, Sequence
+    from typing import Any
+
+    from gate_cache.stats.report import Window
 
 _USAGE_ERROR = 2
 _INTERRUPTED = 130
@@ -70,6 +75,14 @@ _WAIT_FLAGS: dict[str, tuple[str, Callable[[str], object | None], str]] = {
     ),
 }
 _NO_COMMAND = "no command given after --"
+NAME_OR_COMMAND = "give --name or a command after --, not both"
+STATS_JSON_ACTION = "--json only applies to stats with no action"
+ALL_REPOS_CONFLICT = "--all-repos cannot be combined with --repo or --name"
+NAME_NEEDS_REPO = "one gate needs a repository: run inside one, or give --repo"
+LIMIT_ERROR = "--limit takes a whole number, e.g. --limit 50"
+_STATS_SCHEMA = 1
+_LIMIT_DEFAULT = 20
+_LIMIT_MAX = 500
 
 _USAGE = """\
 gate-cache [--name NAME] [--path PATHSPEC]... [--junit PATH]...
@@ -78,7 +91,9 @@ gate-cache [--name NAME] [--path PATHSPEC]... [--junit PATH]...
                   -- COMMAND [ARGS...]
        gate-cache status [--name NAME] [--path PATHSPEC]... [--json] [-- COMMAND...]
        gate-cache clear [--yes]
-       gate-cache stats [on|off|clear [--yes]]
+       gate-cache stats [--json | on | off | clear [--yes]]
+       gate-cache stats report [--json] [--since DURATION] [--until WHEN] [--limit N]
+                  [--all-repos | --repo NAME|PATH] [--name NAME | -- COMMAND...]
        gate-cache dashboard [--port N] [--no-browser]
        gate-cache --skill | --prompt"""
 
@@ -143,6 +158,8 @@ Exit codes:
              current tree. 1 otherwise.
   clear      0 on success, 1 on failure or when not confirmed.
   stats      0 on success, 1 on failure or when clear is not confirmed.
+             stats report: 1 for an unknown gate or repository, 2 for a usage
+             error.
   dashboard  0 after a clean stop or when one already runs, 1 when it cannot
              start.
 
@@ -169,7 +186,8 @@ _RUN_HELP = """\
 subcommands:
   status       Report which gates skip on the current content. Nothing runs.
   clear        Delete every recorded pass for this repository.
-  stats        Show, turn on or off, or clear the opt-in recording of run stats.
+  stats        Show, turn on or off, or clear the opt-in recording of run stats,
+               or print a report of them.
   dashboard    Serve a local dashboard of the recorded stats.
 
 run:
@@ -220,6 +238,8 @@ Show or change whether gate-cache records run stats.
 
 Recording is off until you turn it on. Without an action, print whether
 recording is on, what decided it, the config file, and the data directory.
+--json prints the same as one object with "schema", "enabled", "decided_by",
+"config_file", and "data_dir".
 `on` and `off` write `stats_enabled` to the config file and keep its other
 lines. The setting comes from the first of: GATE_CACHE_STATS when not empty
 (0 or false is off, any other value is on), CI (on means off), the config file,
@@ -243,6 +263,27 @@ machine.
 first, and refuses when stdin is not a terminal unless you give --yes. It
 refuses while the dashboard is running. It does not delete markers. Use
 `gate-cache clear` for those.
+
+`report` prints what the recorded runs cost and how they fail. Run
+`gate-cache stats report --help` for its options.
+"""
+
+_STATS_REPORT_HELP = """\
+Print a report of the recorded stats: for each gate, its runs, skip rate,
+failures, run times, and the time it spent and saved. With --name, or a command
+after --, print one gate in detail: its status on the current content, trend,
+exit codes, flaky trees, where its runs came from, and its recent runs.
+
+The report covers the repository given with --repo, else every repository with
+--all-repos, else the current repository, else every repository when run
+outside one. A gate that ran without --name has the command line as its name.
+To look it up, give the same command after --. The report groups
+test@v22 under test, so give --name test.
+
+--json prints one object instead of text.
+
+Exits 0 on success, also when nothing was recorded, 1 for an unknown gate or
+repository, and 2 for a usage error.
 """
 
 _DASHBOARD_HELP = f"""\
@@ -379,12 +420,7 @@ def _status_parser() -> argparse.ArgumentParser:
         metavar="PATHSPEC",
         help="Look up the gate scoped to these paths. Repeat for each path. Needs --name.",
     )
-    parser.add_argument(
-        "--json",
-        dest="as_json",
-        action="store_true",
-        help="Print one JSON object to stdout instead of text. Exit codes are unchanged.",
-    )
+    _add_json(parser)
     return parser
 
 
@@ -405,6 +441,16 @@ def _clear_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_json(parser: argparse.ArgumentParser) -> None:
+    """Add the --json flag that prints one JSON object instead of text."""
+    parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Print one JSON object to stdout instead of text. Exit codes are unchanged.",
+    )
+
+
 def _stats_parser() -> argparse.ArgumentParser:
     """Build the parser for the stats subcommand."""
     parser = argparse.ArgumentParser(
@@ -416,10 +462,63 @@ def _stats_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "action",
         nargs="?",
+        # `report` never reaches this parser: _stats_command routes it to its own parser.
         choices=["on", "off", "clear"],
-        help="Turn recording on or off, or delete all recorded stats.",
+        help="Turn recording on or off, delete all recorded stats, or print a report.",
     )
     _add_yes(parser, "With clear, delete without asking for confirmation.")
+    _add_json(parser)
+    return parser
+
+
+def _limit(text: str) -> int:
+    """Parse --limit, pulling a value out of range into 1 to 500."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(LIMIT_ERROR) from None
+    return min(max(value, 1), _LIMIT_MAX)
+
+
+def _stats_report_parser() -> argparse.ArgumentParser:
+    """Build the parser for `stats report`."""
+    parser = argparse.ArgumentParser(
+        prog="gate-cache stats report",
+        usage="%(prog)s [--json] [--since DURATION] [--until WHEN] [--limit N]\n"
+        "       [--all-repos | --repo NAME|PATH] [--name NAME | -- COMMAND...]",
+        description=_STATS_REPORT_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
+    )
+    _add_json(parser)
+    parser.add_argument(
+        "--since",
+        default="30d",
+        metavar="DURATION",
+        help="Window length: a whole number and h, d, w, or y. Default 30d.",
+    )
+    parser.add_argument(
+        "--until",
+        metavar="WHEN",
+        help="Window end: a date, an ISO 8601 timestamp, or a duration ago. Default now.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=_limit,
+        default=_LIMIT_DEFAULT,
+        metavar="N",
+        help="Most items in each list, 1 to 500. Default 20.",
+    )
+    parser.add_argument("--all-repos", action="store_true", help="Cover every repository.")
+    parser.add_argument(
+        "--repo",
+        action=_StoreOnce,
+        metavar="NAME|PATH",
+        help="Cover one repository, by the name the report prints or a path inside it.",
+    )
+    parser.add_argument(
+        "--name", action=_StoreOnce, help="Report one gate, by its name without any @key."
+    )
     return parser
 
 
@@ -451,19 +550,159 @@ def _dashboard_parser() -> argparse.ArgumentParser:
 
 
 def _stats_command(tokens: list[str]) -> int:
-    """Parse the stats subcommand and run its action."""
+    """Parse the stats subcommand and run its action.
+
+    `report` has flags of its own, which one parser with a positional action cannot give
+    it, so its tokens go to a parser of their own.
+    """
+    action = next((token for token in tokens if not token.startswith("-")), None)
+    if action == "report":
+        # Only flags can come before `report`; its own parser accepts --json and rejects the rest.
+        split = tokens.index("report")
+        return _stats_report_command(tokens[:split] + tokens[split + 1 :])
     parser = _stats_parser()
     args = parser.parse_args(tokens)
     if args.yes and args.action != "clear":
         parser.error("--yes only applies to clear")
+    if args.as_json and args.action is not None:
+        parser.error(STATS_JSON_ACTION)
     if args.action == "clear":
         from gate_cache.stats.clear import stats_clear
 
         return stats_clear(confirmed=args.yes)
-    return _stats(args.action)
+    return _stats(args.action, as_json=args.as_json)
 
 
-def _stats(action: str | None) -> int:
+def _stats_report_command(tokens: list[str]) -> int:
+    """Parse `stats report`, check its flag combinations, and print the report."""
+    import time
+
+    from gate_cache.snapshot import git_common_dir
+    from gate_cache.stats.archive import gate_of
+    from gate_cache.stats.report import Window
+    from gate_cache.stats.report_text import KEYED_NAME_ERROR
+    from gate_cache.stats.window import local_zone, parse_window
+
+    parser = _stats_report_parser()
+    args, from_command = _parse_named(parser, tokens)
+    if not from_command and args.name is not None and (gate := gate_of(args.name)) != args.name:
+        parser.error(KEYED_NAME_ERROR.format(gate=gate))
+    if args.all_repos and (args.repo is not None or args.name is not None):
+        parser.error(ALL_REPOS_CONFLICT)
+    now, tz = time.time(), local_zone()
+    try:
+        start, end = parse_window(args.since, args.until, now=now, tz=tz)
+    except ValueError as error:
+        parser.error(str(error))
+    common = git_common_dir()
+    here = None if common is None else str(common)
+    if args.name is not None and args.repo is None and here is None:
+        parser.error(NAME_NEEDS_REPO)
+    scope = _ReportScope(
+        repo=args.repo, all_repos=args.all_repos, name=args.name, here=here, limit=args.limit
+    )
+    window = Window(start=start, end=end, tz=tz, ends_now=end >= now)
+    return _stats_report(scope, window=window, as_json=args.as_json)
+
+
+@dataclass(frozen=True)
+class _ReportScope:
+    """What a `stats report` covers: the flags that pick repos and a gate, and the current repo."""
+
+    repo: str | None
+    all_repos: bool
+    name: str | None
+    here: str | None
+    limit: int
+
+
+class _UnknownGateError(LookupError):
+    """The repo has no recorded run of the gate."""
+
+    def __init__(self, name: str, repo: str | None) -> None:
+        super().__init__(name)
+        self.name = name
+        self.repo = repo
+
+
+def _build_report(
+    conn: sqlite3.Connection | None, scope: _ReportScope, *, window: Window, recording: bool
+) -> dict[str, Any]:
+    """Return the report a scope asks for, from the open record.
+
+    Raises:
+        RepoNotFoundError: When --repo matches no recorded repo.
+        _UnknownGateError: When the repo never recorded the gate.
+    """
+    from functools import partial
+
+    from gate_cache.gate import current_status
+    from gate_cache.stats.report import RepoNotFoundError, gate_report, resolve_repo, suite_report
+
+    repo = scope.here
+    if scope.repo is not None:
+        if conn is None:
+            raise RepoNotFoundError(scope.repo)
+        repo = resolve_repo(conn, scope.repo)
+    if scope.name is None:
+        repos = None if scope.all_repos or repo is None else (repo,)
+        return suite_report(conn, repos=repos, window=window, recording=recording)
+    report = None
+    if conn is not None:
+        report = gate_report(
+            conn,
+            repo=repo,
+            name=scope.name,
+            window=window,
+            limit=scope.limit,
+            # The status on the current content says nothing about a gate of another repo.
+            current=partial(current_status, snapshots={}) if repo == scope.here else None,
+            recording=recording,
+        )
+    if report is None:
+        raise _UnknownGateError(scope.name, repo)
+    return report
+
+
+def _stats_report(scope: _ReportScope, *, window: Window, as_json: bool) -> int:
+    """Print the report for a scope and return the exit code."""
+    import sqlite3
+
+    from gate_cache.stats import report_text
+    from gate_cache.stats.archive import ArchiveVersionError
+    from gate_cache.stats.report import AmbiguousRepoError, RepoNotFoundError, open_record
+
+    recording = stats_config.stats_setting().enabled
+    try:
+        with open_record() as conn:
+            report = _build_report(conn, scope, window=window, recording=recording)
+    except RepoNotFoundError as error:
+        say(report_text.UNKNOWN_REPO.format(text=error.text))
+        return 1
+    except AmbiguousRepoError as error:
+        say(report_text.AMBIGUOUS_REPO.format(text=error.text))
+        for label, folder in error.matches:
+            say(f"  {label}: {folder}")
+        return _USAGE_ERROR
+    except _UnknownGateError as error:
+        say(report_text.UNKNOWN_GATE.format(name=error.name, repo=error.repo))
+        if not recording:
+            say(report_text.RECORDING_OFF_HINT)
+        return 1
+    except (ArchiveVersionError, sqlite3.Error, OSError) as error:
+        say(str(error))
+        return 1
+    if as_json:
+        text = json.dumps(report, indent=2) + "\n"
+    elif scope.name is None:
+        text = report_text.render_suite(report, window=window)
+    else:
+        text = report_text.render_gate(report, window=window, limit=scope.limit)
+    sys.stdout.write(text)
+    return 0
+
+
+def _stats(action: str | None, *, as_json: bool = False) -> int:
     """Show the stats setting, or change it when an action is given."""
     if action is not None:
         try:
@@ -473,6 +712,16 @@ def _stats(action: str | None) -> int:
             say(f"could not write {core_config.config_path()}: {reason or error}")
             return 1
     setting = stats_config.stats_setting()
+    if as_json:
+        data = {
+            "schema": _STATS_SCHEMA,
+            "enabled": setting.enabled,
+            "decided_by": setting.source,
+            "config_file": str(core_config.config_path()),
+            "data_dir": str(stats_config.state_dir()),
+        }
+        print(json.dumps(data, indent=2))  # noqa: T201
+        return 0
     kv(
         {
             "recording": "on" if setting.enabled else "off",
@@ -596,13 +845,23 @@ def _split_run(tokens: list[str]) -> _RunArgs:
     raise _UsageError(_NEEDS_SEPARATOR)
 
 
-def _status_command(tokens: list[str]) -> int:
-    """Look up a gate by --name, or by the command after -- as a run without --name names it.
+def _command_name(command: list[str]) -> str:
+    """Return the gate name of a run without --name: the command, quoted as a shell would."""
+    return shlex.join(command)
+
+
+def _parse_named(
+    parser: argparse.ArgumentParser, tokens: list[str]
+) -> tuple[argparse.Namespace, bool]:
+    """Parse tokens that name a gate by --name, or by the command after -- as a run names it.
+
+    Returns:
+        The parsed flags, with `name` set from the command when one is given, and whether
+        it was.
 
     Raises:
         _UsageError: When -- is given with no command after it.
     """
-    parser = _status_parser()
     command: list[str] | None = None
     if "--" in tokens:
         split = tokens.index("--")
@@ -612,8 +871,15 @@ def _status_command(tokens: list[str]) -> int:
         if not command:
             raise _UsageError(_NO_COMMAND)
         if args.name is not None:
-            parser.error("give --name or a command after --, not both")
-        args.name = shlex.join(command)
+            parser.error(NAME_OR_COMMAND)
+        args.name = _command_name(command)
+    return args, command is not None
+
+
+def _status_command(tokens: list[str]) -> int:
+    """Look up a gate by --name, or by the command after -- as a run without --name names it."""
+    parser = _status_parser()
+    args, _ = _parse_named(parser, tokens)
     if args.path and args.name is None:
         parser.error("--path needs --name or a command after --")
     if "" in args.path:
@@ -630,7 +896,7 @@ def _run_command(tokens: list[str]) -> int:
     run = _split_run(tokens)
     if not run.command:
         raise _UsageError(_NO_COMMAND)
-    name = shlex.join(run.command) if run.name is None else run.name
+    name = _command_name(run.command) if run.name is None else run.name
     wait = (
         wait_settings(timeout=run.wait_timeout, failed=run.on_wait_failure)
         if run.wait_timeout is not None or run.on_wait_failure is not None

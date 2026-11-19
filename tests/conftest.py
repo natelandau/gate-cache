@@ -4,9 +4,10 @@ import dataclasses
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,108 @@ from gate_cache.git import GitResult
 from gate_cache.markers import MISS_SUFFIX, marker_dir
 from gate_cache.spot_check import SPOT_CHECK_ENV
 from gate_cache.stats import config as stats_config
+from gate_cache.stats.archive import Archive
 
 ROOT = Path(__file__).resolve().parent.parent
+
+BASE = 1_699_920_000.0  # midnight UTC
+DAY = 86400.0
+REPO_A = "/x/proj/.git"
+REPO_B = "/x/other/.git"
+
+
+def insert(
+    conn: sqlite3.Connection,
+    ts: float,
+    outcome: str = "pass",
+    *,
+    repo: str | None = REPO_A,
+    name: str = "lint",
+    tree: str | None = "t1",
+    paths: Sequence[str] = ("src",),
+    duration: float | None = None,
+    saved: float | None = None,
+    reason: str | None = None,
+    overhead: float | None = None,
+    waited: float | None = None,
+    wait_known: bool = False,
+    reported: bool = False,
+    wait_timed_out: bool = False,
+    spot_check: bool = False,
+    exit_code: int | None = None,
+    raw: dict[str, object] | None = None,
+) -> None:
+    """Insert one event row."""
+    conn.execute(
+        "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome, duration, saved,"
+        " reason, overhead, waited, wait_known, reported, wait_timed_out, exit_code, raw,"
+        " spot_check) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            f"h{conn.total_changes}-{ts}",
+            ts,
+            repo,
+            name,
+            tree,
+            json.dumps(list(paths)),
+            outcome,
+            duration,
+            saved,
+            reason,
+            overhead,
+            waited,
+            wait_known,
+            reported,
+            wait_timed_out,
+            exit_code,
+            json.dumps(raw) if raw is not None else None,
+            spot_check,
+        ),
+    )
+    conn.commit()
+
+
+def insert_results(
+    conn: sqlite3.Connection,
+    results: dict[str, tuple[str, float | None]],
+    *,
+    repo: str | None = REPO_A,
+    gate: str = "test",
+) -> None:
+    """Attach per-test results to the newest event, as name -> (outcome, duration)."""
+    (event_id,) = conn.execute("SELECT MAX(id) FROM events").fetchone()
+    for name, (outcome, duration) in results.items():
+        conn.execute(
+            "INSERT INTO tests (repo, gate, name) SELECT ?, ?, ? WHERE NOT EXISTS"
+            " (SELECT 1 FROM tests WHERE repo IS ? AND gate = ? AND name = ?)",
+            (repo, gate, name, repo, gate, name),
+        )
+        (test_id,) = conn.execute(
+            "SELECT id FROM tests WHERE repo IS ? AND gate = ? AND name = ?", (repo, gate, name)
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO test_results (event_id, test_id, outcome, duration) VALUES (?, ?, ?, ?)",
+            (event_id, test_id, outcome, duration),
+        )
+    conn.commit()
+
+
+@pytest.fixture
+def empty_conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
+    """Provide the connection of an empty archive."""
+    with Archive.open(tmp_path / "a.sqlite3") as arch:
+        yield arch.connection
+
+
+@pytest.fixture
+def conn(empty_conn: sqlite3.Connection) -> sqlite3.Connection:
+    """Provide an archive with two repos, three gates, one flaky tree."""
+    insert(empty_conn, BASE + 100, "skip", saved=100.0)
+    insert(empty_conn, BASE + 200, "skip", saved=50.0)
+    insert(empty_conn, BASE + 300, "skip", saved=None)
+    insert(empty_conn, BASE + 400, "fail", name="test", tree="t2", duration=5.0)
+    insert(empty_conn, BASE + 500, "pass", name="test", tree="t2", duration=30.0)
+    insert(empty_conn, BASE + DAY + 100, "uncached", repo=REPO_B, tree=None)
+    return empty_conn
 
 
 def git(*args: str, cwd: Path) -> str:

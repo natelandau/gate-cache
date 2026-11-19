@@ -41,6 +41,7 @@
             { "How it works" = "reference/how-it-works.md" },
             { "Agent guide" = "reference/agent-guide.md" },
             { "Marker format" = "reference/marker-format.md" },
+            { "Report format" = "reference/report-format.md" },
             { "Privacy" = "privacy.md" },
         ] },
         { "Troubleshooting" = "troubleshooting.md" },

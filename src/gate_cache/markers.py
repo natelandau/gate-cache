@@ -174,10 +174,23 @@ def write_miss(  # noqa: PLR0913
     )
 
 
+def utc_timestamp(moment: float | datetime) -> str:
+    """Format a moment as ISO 8601 UTC with seconds precision and a `Z` suffix.
+
+    Args:
+        moment: Unix seconds, or an aware datetime.
+
+    Returns:
+        str: The timestamp, such as `2026-11-18T12:00:00Z`.
+    """
+    if not isinstance(moment, datetime):
+        moment = datetime.fromtimestamp(moment, UTC)
+    return moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     """Write a JSON record stamped with the current time."""
-    timestamp = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    write_json_atomic(path, {**payload, "timestamp": timestamp})
+    write_json_atomic(path, {**payload, "timestamp": utc_timestamp(datetime.now(UTC))})
 
 
 def write_json_atomic(path: Path, value: object) -> None:

@@ -42,6 +42,16 @@ The dashboard opens in your browser at `http://127.0.0.1:7878`. If that port is 
 
     A copy of gate-cache that the prek or pre-commit hook installs has no dashboard. Use a copy from PyPI. Read [Install](../get-started/install.md).
 
+## Read the stats in a terminal
+
+To print the stats in a terminal, run:
+
+```sh
+gate-cache stats report
+```
+
+The report shows each gate of the current repository. Add `--name NAME` to show one gate in detail. Add `--json` to print one JSON object for a script or a coding agent. Every copy of gate-cache has the report. Read [`gate-cache stats report`](../reference/commands.md#gate-cache-stats-report) for its options.
+
 ## What decides whether recording is on
 
 The first of these that applies decides:

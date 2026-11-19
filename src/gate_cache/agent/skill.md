@@ -47,16 +47,32 @@ To force a full run, set `GATE_CACHE_DISABLE=1` for one command, such as `GATE_C
 
 ## Find flaky and slow gates
 
-gate-cache can record each run of a gate. The record shows the user which gates are flaky, which gates are slow, and how much time the gates cost. A flaky gate fails and passes on the same content.
+gate-cache can record each run of a gate. The record shows which gates are flaky, which gates are slow, and how much time the gates cost. A flaky gate fails and passes on the same content.
 
 If the user asks which checks are flaky, slow, or cost the most time, do these steps:
 
-1. Run `gate-cache stats`. The output shows whether recording is on.
-2. If recording is off, tell the user that gate-cache can record the runs, and ask whether to turn recording on. Recording is a setting for the computer, not for the repository.
-3. If the user agrees, run `gate-cache stats on`. The record starts with the next run of each gate.
-4. If recording is on, tell the user to run `gate-cache dashboard`. The dashboard shows the flaky gates, the total time that each gate ran, and the average and median run time of each gate.
+1. Run `gate-cache stats --json`. The `enabled` key shows whether recording is on.
+2. If recording is off, tell the user that gate-cache can record the runs, and ask whether to turn recording on. Recording is a setting for the computer, not for the repository. If the user agrees, run `gate-cache stats on`. The record starts with the next run of each gate.
+3. If recording is on, run `gate-cache stats report --json`. The output has one row for each gate with its runs, skip rate, failures, run times, and the time it spent and saved.
+4. To look at one gate, run `gate-cache stats report --name NAME --json`. The report groups `test@v22` under `test`, so give `--name test`. For a gate that ran without `--name`, give the command after `--`.
 
-The dashboard is a page in a browser, for people. gate-cache has no command that prints the record for an agent. Only a copy of gate-cache installed from PyPI has the dashboard. A copy that the prek or pre-commit hook installs, or a copy from a git URL or a local path, has none. In that case, tell the user to run the dashboard from a copy installed from PyPI, such as with `pipx run gate-cache dashboard` or `uvx gate-cache dashboard`.
+In the one-gate view, look for these signs:
+
+- `flaky_trees` lists each tree on which the gate both failed and passed. Compare the `source` and `machine` of the failed runs and the passed runs. A failure from one source or one machine points to its environment.
+- `exit_codes` with 137 means that a signal killed the command, often because the system ran out of memory.
+- `uncached` shows why runs did not use the cache, such as files that changed during the run, or a reason that caching was off.
+- `waits` shows runs that waited for another run of the same gate. Many waits or timeouts mean that agents run the gate at the same time.
+- `slowdown` in the suite view shows a gate whose median run time grew since the window before. `trend` in the one-gate view shows the run time by day, week, or month, by the length of the window.
+- For a gate that records its tests with `--junit`, `tests` names the slowest, flaky, and retried tests, and `failed_tests` on each failed run names the tests that failed.
+- `spot_checks` lists the failed spot checks. A failed spot check means that a skip was not safe. The cause is a flaky test or an input that the gate's name and `--path` values do not cover. Fix the cause. Never run the gate again to get a skip.
+
+To compare two periods, use `--since` and `--until`. The default window is the last 30 days. `--since` sets the length of the window, counted back from `--until`. For example, `--since 7d` covers the last week, and `--since 7d --until 7d` covers the week before it.
+
+Inside a repository, the report covers that repository. Outside a repository, it covers every repository on the computer. `--repo NAME` or `--repo PATH` picks one repository, and `--all-repos` covers every repository. Outside a repository, `--name` needs `--repo`. In the one-gate view, `--limit N` sets the most items in each list. Each list shows `total` and `shown`, so you can tell when it is cut. Run `gate-cache stats report --help` for every option.
+
+Every duration is in seconds. The [report format](https://natelandau.github.io/gate-cache/reference/report-format/) lists every key.
+
+The dashboard is a page in a browser, for people. If the user wants to explore the record by hand, tell the user to run `gate-cache dashboard`. Only a copy of gate-cache installed from PyPI has the dashboard. A copy that the prek or pre-commit hook installs, or a copy from a git URL or a local path, has none. In that case, tell the user to run the dashboard from a copy installed from PyPI, such as with `pipx run gate-cache dashboard` or `uvx gate-cache dashboard`.
 
 ### Record the tests of a gate
 

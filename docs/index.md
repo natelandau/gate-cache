@@ -54,7 +54,7 @@ gate-cache: pytest already passed on tree aaff74984ccc, skipping (saved 1m 34s)
 - [Run only the tests that your change can affect](guides/scope-to-paths.md).
 - [Never skip a test that a new tool version or setting can break](guides/write-a-gate.md#cover-inputs-that-git-does-not-see).
 - [Know how long a check takes before it runs](reference/commands.md#messages).
-- [Explore your runs in a dashboard in your browser: flaky gates, slow gates, and the time each gate costs and saves](stats/dashboard.md).
+- [Explore your runs in a dashboard in your browser: flaky gates, slow gates, and the time each gate costs and saves](stats/dashboard.md). Or [print them in a terminal](stats/record-stats.md#read-the-stats-in-a-terminal).
 - [Integrate with JUnit reports to see which tests are slow or flaky and need a fix](stats/test-detail.md).
 - [Let a coding agent set up gate-cache in a project of any language](get-started/quick-start.md).
 - [Keep your data private: stats stay on your computer and are off until you turn them on](privacy.md).

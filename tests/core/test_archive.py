@@ -104,6 +104,21 @@ def test_unsettled_file_is_left(arch: Archive, inbox: Path) -> None:
     assert len(processing_files(inbox)) == 1
 
 
+def test_fresh_ingest_reads_unsettled_files_once(arch: Archive, inbox: Path) -> None:
+    """A fresh ingest reads files that have not settled, keeps them, and never duplicates."""
+    now = time.time()
+    inbox.write_bytes(make_event(now).to_line())
+    arch.ingest(inbox, now=now)
+    inbox.write_bytes(make_event(now - 1, name="test").to_line())
+
+    assert arch.ingest(inbox, now=now, fresh=True) == 2
+    assert len(processing_files(inbox)) == 2
+    assert arch.ingest(inbox, now=now, fresh=True) == 0
+    assert arch.ingest(inbox, now=now + 3) == 0
+    assert count(arch) == 2
+    assert processing_files(inbox) == []
+
+
 def test_late_append_into_renamed_file_is_kept(arch: Archive, inbox: Path) -> None:
     """A write through a descriptor opened before the rename still lands."""
     now = time.time()

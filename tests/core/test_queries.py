@@ -3,14 +3,14 @@
 import json
 import sqlite3
 import statistics
-from collections.abc import Iterator
-from pathlib import Path
+from collections.abc import Callable
 from typing import Any, get_args
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from gate_cache.stats import queries
-from gate_cache.stats.archive import Archive
+from gate_cache.stats.archive import gate_of
 from gate_cache.stats.context import Trigger
 from gate_cache.stats.queries import (
     REPORT_PROBLEM_RUNS,
@@ -18,6 +18,11 @@ from gate_cache.stats.queries import (
     activity,
     coalescing,
     gate_detail,
+    gate_flaky_counts,
+    gate_latest_command,
+    gate_overhead,
+    gate_uncached,
+    gate_waits,
     gates,
     hourly,
     previous_window,
@@ -28,11 +33,8 @@ from gate_cache.stats.queries import (
     summary,
     triage,
 )
-
-BASE = 1_699_920_000.0  # midnight UTC
-DAY = 86400.0
-REPO_A = "/x/proj/.git"
-REPO_B = "/x/other/.git"
+from gate_cache.stats.window import Bucket
+from tests.conftest import BASE, DAY, REPO_A, REPO_B, insert, insert_results
 
 
 def flaky(
@@ -40,74 +42,6 @@ def flaky(
 ) -> list[dict[str, Any]]:
     """Return the triage rows for flaky gates."""
     return triage(conn, filters, reason="flaky", now=now)["items"]
-
-
-def insert(
-    conn: sqlite3.Connection,
-    ts: float,
-    outcome: str,
-    *,
-    repo: str | None = REPO_A,
-    name: str = "lint",
-    tree: str | None = "t1",
-    duration: float | None = None,
-    saved: float | None = None,
-    reason: str | None = None,
-    overhead: float | None = None,
-    waited: float | None = None,
-    wait_known: bool = False,
-    reported: bool = False,
-    wait_timed_out: bool = False,
-    spot_check: bool = False,
-    exit_code: int | None = None,
-    raw: dict[str, object] | None = None,
-) -> None:
-    """Insert one event row."""
-    conn.execute(
-        "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome, duration, saved,"
-        " reason, overhead, waited, wait_known, reported, wait_timed_out, exit_code, raw, spot_check)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            f"h{conn.total_changes}-{ts}",
-            ts,
-            repo,
-            name,
-            tree,
-            json.dumps(["src"]),
-            outcome,
-            duration,
-            saved,
-            reason,
-            overhead,
-            waited,
-            wait_known,
-            reported,
-            wait_timed_out,
-            exit_code,
-            json.dumps(raw) if raw is not None else None,
-            spot_check,
-        ),
-    )
-    conn.commit()
-
-
-@pytest.fixture
-def empty_conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Provide the connection of an empty archive."""
-    with Archive.open(tmp_path / "a.sqlite3") as arch:
-        yield arch.connection
-
-
-@pytest.fixture
-def conn(empty_conn: sqlite3.Connection) -> sqlite3.Connection:
-    """Provide an archive with two repos, three gates, one flaky tree."""
-    insert(empty_conn, BASE + 100, "skip", saved=100.0)
-    insert(empty_conn, BASE + 200, "skip", saved=50.0)
-    insert(empty_conn, BASE + 300, "skip", saved=None)
-    insert(empty_conn, BASE + 400, "fail", name="test", tree="t2", duration=5.0)
-    insert(empty_conn, BASE + 500, "pass", name="test", tree="t2", duration=30.0)
-    insert(empty_conn, BASE + DAY + 100, "uncached", repo=REPO_B, tree=None)
-    return empty_conn
 
 
 def test_summary_values(conn: sqlite3.Connection) -> None:
@@ -277,6 +211,11 @@ def test_spot_check_failure_is_not_flaky(empty_conn: sqlite3.Connection) -> None
     assert gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["flaky_trees"] == []
     flaky_rows = activity(empty_conn, Filters(), flaky=True)["events"]
     assert [e["spot_check"] for e in flaky_rows] == [False, False]
+    assert gate_flaky_counts(empty_conn, Filters()).keys() == {(REPO_A, "other")}
+    tree_runs = queries.gate_runs(
+        empty_conn, Filters(), repo=REPO_A, name="other", limit=10, tree="b"
+    )
+    assert tree_runs[0] == 2
 
 
 def test_triage_lists_one_row_per_gate_and_reason_newest_first(
@@ -447,9 +386,10 @@ def test_activity_paging(conn: sqlite3.Connection) -> None:
 def test_gate_is_the_name_before_its_key(
     empty_conn: sqlite3.Connection, name: str, gate: str
 ) -> None:
-    """A name with no whitespace counts toward the gate before its first `@`."""
+    """A name with no whitespace counts toward the gate before its first `@`, in SQL and Python."""
     insert(empty_conn, BASE, "pass", name=name)
     assert [g["name"] for g in gates(empty_conn, Filters())["gates"]] == [gate]
+    assert gate_of(name) == gate
 
 
 def test_keys_of_one_gate_share_its_stats_but_not_its_flakiness(
@@ -1347,31 +1287,6 @@ def test_gate_detail_by_source_drops_sources_without_time(empty_conn: sqlite3.Co
     assert [r["label"] for r in rows] == ["Git hook"]
 
 
-def insert_results(
-    conn: sqlite3.Connection,
-    results: dict[str, tuple[str, float | None]],
-    *,
-    repo: str | None = REPO_A,
-    gate: str = "test",
-) -> None:
-    """Attach per-test results to the newest event, as name -> (outcome, duration)."""
-    (event_id,) = conn.execute("SELECT MAX(id) FROM events").fetchone()
-    for name, (outcome, duration) in results.items():
-        conn.execute(
-            "INSERT INTO tests (repo, gate, name) SELECT ?, ?, ? WHERE NOT EXISTS"
-            " (SELECT 1 FROM tests WHERE repo IS ? AND gate = ? AND name = ?)",
-            (repo, gate, name, repo, gate, name),
-        )
-        (test_id,) = conn.execute(
-            "SELECT id FROM tests WHERE repo IS ? AND gate = ? AND name = ?", (repo, gate, name)
-        ).fetchone()
-        conn.execute(
-            "INSERT INTO test_results (event_id, test_id, outcome, duration) VALUES (?, ?, ?, ?)",
-            (event_id, test_id, outcome, duration),
-        )
-    conn.commit()
-
-
 def test_slowest_tests(empty_conn: sqlite3.Connection) -> None:
     """Slowest tests take the median of passed and retried results inside the window."""
     insert(empty_conn, BASE - DAY, "pass", name="test", duration=10.0)
@@ -1489,6 +1404,8 @@ def test_retried_tests_listed_for_passing_gate(empty_conn: sqlite3.Connection) -
     assert gate["evidence"]["trees"] == []
     assert gate["evidence"]["tests"] == []
     assert gate["evidence"]["retried"] == [{"name": "wobbly", "runs": 2, "last": BASE + 5}]
+    counts = queries.gate_test_counts(empty_conn, Filters(), since=BASE)
+    assert counts[REPO_A, "test"]["retried"] == 1
 
 
 def test_per_test_queries_skip_results_past_retention(empty_conn: sqlite3.Connection) -> None:
@@ -1543,3 +1460,280 @@ def test_activity_spot_check_flag_and_filter(empty_conn: sqlite3.Connection) -> 
     assert [e["spot_check"] for e in events] == [False, False, True, True]
     only = activity(empty_conn, Filters(), spot_check=True)["events"]
     assert [e["ts"] for e in only] == [BASE + 2, BASE + 1]
+
+
+def test_gate_flaky_counts_per_gate(empty_conn: sqlite3.Connection) -> None:
+    """Flaky trees count once per gate, with a tree flaky under two keys summed into one."""
+    for key, ts in (("a", BASE), ("b", BASE + 10)):
+        insert(empty_conn, ts, "fail", name=f"test@{key}", tree="t1")
+        insert(empty_conn, ts + 1, "pass", name=f"test@{key}", tree="t1")
+    insert(empty_conn, BASE + 50, "fail", name="lint", tree="t2")
+    insert(empty_conn, BASE + 60, "pass", name="lint", tree="t2")
+    insert(empty_conn, BASE + 70, "pass", name="lint", tree="t3")
+    insert(empty_conn, BASE + 80, "fail", repo=REPO_B, name="lint", tree="t9")
+    insert(empty_conn, BASE + 90, "pass", repo=REPO_B, name="lint", tree="t9")
+    assert gate_flaky_counts(empty_conn, Filters()) == {
+        (REPO_A, "test"): {"trees": 1, "fails": 2, "passes": 2, "last_seen": BASE + 11},
+        (REPO_A, "lint"): {"trees": 1, "fails": 1, "passes": 1, "last_seen": BASE + 60},
+        (REPO_B, "lint"): {"trees": 1, "fails": 1, "passes": 1, "last_seen": BASE + 90},
+    }
+    assert set(gate_flaky_counts(empty_conn, Filters(repos=(REPO_B,)))) == {(REPO_B, "lint")}
+
+
+def test_gate_uncached_per_gate(empty_conn: sqlite3.Connection) -> None:
+    """Uncached runs group by outcome and reason per gate, most common first."""
+    insert(empty_conn, BASE, "uncached", reason="no tree", tree=None)
+    insert(empty_conn, BASE + 1, "uncached", reason="no tree", tree=None)
+    insert(empty_conn, BASE + 2, "pass_unrecorded", reason="cold")
+    insert(empty_conn, BASE + 3, "uncached", name="test", reason="dirty")
+    insert(empty_conn, BASE + 4, "uncached", repo=REPO_B, reason="dirty")
+    insert(empty_conn, BASE + 5, "uncached", reason=None)
+    assert gate_uncached(empty_conn, Filters()) == {
+        (REPO_A, "lint"): [
+            {"outcome": "uncached", "reason": "no tree", "count": 2},
+            {"outcome": "pass_unrecorded", "reason": "cold", "count": 1},
+        ],
+        (REPO_A, "test"): [{"outcome": "uncached", "reason": "dirty", "count": 1}],
+        (REPO_B, "lint"): [{"outcome": "uncached", "reason": "dirty", "count": 1}],
+    }
+
+
+def test_gate_waits_per_gate(empty_conn: sqlite3.Connection) -> None:
+    """Only gates with waits appear, with the coalescing keys that apply to one gate."""
+    insert(empty_conn, BASE, "skip", waited=2.0, saved=10.0, wait_known=True)
+    insert(empty_conn, BASE + 1, "pass", waited=4.0, wait_known=True, wait_timed_out=True)
+    insert(empty_conn, BASE + 2, "fail", name="test", waited=6.0, wait_known=True, reported=True)
+    insert(empty_conn, BASE + 3, "pass", repo=REPO_B, wait_known=True)
+    assert gate_waits(empty_conn, Filters()) == {
+        (REPO_A, "lint"): {
+            "waited": 2,
+            "skipped": 1,
+            "reported": 0,
+            "ran": 1,
+            "timed_out": 1,
+            "total_wait": 6.0,
+            "median_wait": 3.0,
+        },
+        (REPO_A, "test"): {
+            "waited": 1,
+            "skipped": 0,
+            "reported": 1,
+            "ran": 0,
+            "timed_out": 0,
+            "total_wait": 6.0,
+            "median_wait": 6.0,
+        },
+    }
+
+
+def test_gate_overhead_per_gate(empty_conn: sqlite3.Connection) -> None:
+    """Overhead sums per gate."""
+    insert(empty_conn, BASE, "pass", overhead=0.5)
+    insert(empty_conn, BASE + 1, "skip", overhead=0.25)
+    insert(empty_conn, BASE + 2, "pass", name="test", overhead=1.0)
+    insert(empty_conn, BASE + 3, "pass", repo=REPO_B)
+    assert gate_overhead(empty_conn, Filters()) == {
+        (REPO_A, "lint"): 0.75,
+        (REPO_A, "test"): 1.0,
+        (REPO_B, "lint"): 0.0,
+    }
+
+
+def test_gate_latest_command_uses_newest_event(empty_conn: sqlite3.Connection) -> None:
+    """The command is the newest event's raw command, else its name, with its paths."""
+    insert(empty_conn, BASE, "pass", raw={"command": "old pytest"})
+    insert(empty_conn, BASE + 5, "pass", raw={"command": "uv run pytest"})
+    insert(empty_conn, BASE + 6, "pass", name="test@v1")
+    insert(empty_conn, BASE + 7, "pass", repo=REPO_B)
+    got = gate_latest_command(empty_conn, Filters())
+    assert got == {
+        (REPO_A, "lint"): ("uv run pytest", ["src"]),
+        (REPO_A, "test"): ("test@v1", ["src"]),
+        (REPO_B, "lint"): ("lint", ["src"]),
+    }
+
+
+def test_gate_command_covers_one_gate_in_one_repo(empty_conn: sqlite3.Connection) -> None:
+    """One gate's newest command comes from any time range, in this repo only."""
+    insert(empty_conn, BASE, "pass", name="lint@v1", raw={"command": "ruff check"})
+    insert(empty_conn, BASE + 1, "pass", name="test", raw={"command": "pytest"})
+    assert queries.gate_command(empty_conn, repo=REPO_A, name="lint") == ("ruff check", ["src"])
+    assert queries.gate_command(empty_conn, repo=REPO_B, name="lint") is None
+    assert queries.gate_command(empty_conn, repo=REPO_A, name="build") is None
+
+
+@pytest.mark.parametrize("query", [gate_uncached, gate_waits, gate_overhead])
+def test_per_gate_queries_scope_to_one_gate(
+    empty_conn: sqlite3.Connection, query: Callable[..., dict[queries.GateKey, Any]]
+) -> None:
+    """A one-gate scope returns that gate's entry as the full scan does, and no other."""
+    for repo, name in ((REPO_A, "lint"), (REPO_A, "test"), (REPO_B, "lint")):
+        insert(empty_conn, BASE, "uncached", repo=repo, name=name, reason="dirty", overhead=0.5)
+        insert(empty_conn, BASE + 1, "skip", repo=repo, name=name, waited=2.0, wait_known=True)
+    key = (REPO_A, "lint")
+    assert query(empty_conn, Filters(), gate_key=key) == {key: query(empty_conn, Filters())[key]}
+
+
+@pytest.mark.parametrize(
+    ("bucket", "expected"),
+    [
+        ("day", [("2023-11-14", 2, 2.0), ("2023-11-15", 1, 4.0), ("2023-11-20", 1, None)]),
+        ("week", [("2023-11-13", 3, 3.0), ("2023-11-20", 1, None)]),
+        ("month", [("2023-11-01", 4, 3.0)]),
+    ],
+)
+def test_gate_trend_buckets(
+    empty_conn: sqlite3.Connection, bucket: Bucket, expected: list[tuple[str, int, float | None]]
+) -> None:
+    """Runs count every event; the median uses passes only; empty buckets are omitted."""
+    # BASE is Tue 2023-11-14 00:00 UTC.
+    insert(empty_conn, BASE + 60, "pass", duration=1.0)
+    insert(empty_conn, BASE + 120, "pass", duration=3.0)
+    insert(empty_conn, BASE + DAY, "pass", duration=4.0)
+    insert(empty_conn, BASE + 6 * DAY, "fail", duration=9.0, exit_code=1)
+    insert(empty_conn, BASE + DAY, "pass", name="test", duration=50.0)
+    got = queries.gate_trend(
+        empty_conn, Filters(), repo=REPO_A, name="lint", bucket=bucket, tz=ZoneInfo("UTC")
+    )
+    assert [(r["start"], r["runs"], r["median"]) for r in got] == [
+        (start, runs, median) for start, runs, median in expected
+    ]
+    assert all(r["p90"] is None for r in got)
+
+
+def test_gate_trend_uses_the_local_date(empty_conn: sqlite3.Connection) -> None:
+    """A late UTC event lands on the next local day east of UTC."""
+    insert(empty_conn, BASE + 23 * 3600, "pass", duration=1.0)
+    got = queries.gate_trend(
+        empty_conn,
+        Filters(),
+        repo=REPO_A,
+        name="lint",
+        bucket="day",
+        tz=ZoneInfo("Asia/Tokyo"),
+    )
+    assert [r["start"] for r in got] == ["2023-11-15"]
+
+
+def test_gate_exit_codes_count_failures_only(empty_conn: sqlite3.Connection) -> None:
+    """Passes and failures without a code are left out."""
+    insert(empty_conn, BASE, "fail", exit_code=1)
+    insert(empty_conn, BASE + 1, "fail", exit_code=2)
+    insert(empty_conn, BASE + 2, "fail", exit_code=1)
+    insert(empty_conn, BASE + 3, "fail")
+    insert(empty_conn, BASE + 4, "pass", exit_code=0)
+    assert queries.gate_exit_codes(empty_conn, Filters(), repo=REPO_A, name="lint") == {
+        "1": 2,
+        "2": 1,
+    }
+
+
+def test_gate_dimensions(empty_conn: sqlite3.Connection) -> None:
+    """Runs group by source, branch, and machine; a missing raw field groups as None."""
+    insert(
+        empty_conn,
+        BASE,
+        "pass",
+        duration=2.0,
+        raw={
+            "trigger": "agent",
+            "agent": "claude",
+            "branch": "main",
+            "machine": "m1",
+            "host": "old",
+        },
+    )
+    insert(
+        empty_conn,
+        BASE + 1,
+        "fail",
+        duration=3.0,
+        raw={
+            "trigger": "agent",
+            "agent": "claude",
+            "branch": "main",
+            "machine": "m1",
+            "host": "new",
+        },
+    )
+    insert(empty_conn, BASE + 2, "pass", raw={"trigger": "ci"})
+    insert(empty_conn, BASE + 3, "pass", raw=None)
+    got = queries.gate_dimensions(empty_conn, Filters(), repo=REPO_A, name="lint")
+    assert got["sources"] == [
+        {"source": "agent", "agent": "claude", "runs": 2, "failures": 1, "time_spent": 5.0},
+        {"source": None, "agent": None, "runs": 1, "failures": 0, "time_spent": 0.0},
+        {"source": "ci", "agent": None, "runs": 1, "failures": 0, "time_spent": 0.0},
+    ]
+    assert got["branches"] == [
+        {"branch": None, "runs": 2, "failures": 0},
+        {"branch": "main", "runs": 2, "failures": 1},
+    ]
+    assert got["machines"] == [
+        {"machine": None, "host": None, "runs": 2, "failures": 0},
+        {"machine": "m1", "host": "new", "runs": 2, "failures": 1},
+    ]
+
+
+def test_gate_runs_caps_rows_and_filters_by_tree(empty_conn: sqlite3.Connection) -> None:
+    """Total counts every event, rows are newest first, and tree narrows both."""
+    for i in range(4):
+        insert(
+            empty_conn,
+            BASE + i,
+            "pass",
+            tree="a" if i % 2 else "b",
+            raw={"head": "0123456789", "trigger": "hook"},
+        )
+    insert(empty_conn, BASE + 9, "pass", name="test")
+    total, rows = queries.gate_runs(empty_conn, Filters(), repo=REPO_A, name="lint", limit=3)
+    assert total == 4
+    assert [r["ts"] for r in rows] == [BASE + 3, BASE + 2, BASE + 1]
+    assert rows[0]["commit"] == "0123456"
+    assert rows[0]["source"] == "hook"
+    total, rows = queries.gate_runs(
+        empty_conn, Filters(), repo=REPO_A, name="lint", limit=10, tree="a"
+    )
+    assert (total, [r["ts"] for r in rows]) == (2, [BASE + 3, BASE + 1])
+
+
+def test_gate_variants(empty_conn: sqlite3.Connection) -> None:
+    """Keyed names count runs in the range and take paths from the whole record.
+
+    Names with runs in the range come first, newest run first; plain names are left out.
+    """
+    insert(empty_conn, BASE - 5, "pass", name="test@old", paths=["old"])
+    insert(empty_conn, BASE, "pass", name="test@a")
+    insert(empty_conn, BASE + 1, "pass", name="test@b")
+    insert(empty_conn, BASE + 2, "pass", name="test@a")
+    insert(empty_conn, BASE + 3, "pass", name="test")
+    insert(empty_conn, BASE + 4, "pass", name="npx eslint@9")
+    insert(empty_conn, BASE + 20, "pass", name="test@b", paths=["docs"])
+    window = Filters(start=BASE, end=BASE + 10)
+    assert queries.gate_variants(empty_conn, window, repo=REPO_A, name="test") == [
+        {"name": "test@a", "runs": 2, "last_run": BASE + 2, "paths": ["src"]},
+        {"name": "test@b", "runs": 1, "last_run": BASE + 1, "paths": ["docs"]},
+        {"name": "test@old", "runs": 0, "last_run": None, "paths": ["old"]},
+    ]
+    for plain in ("lint", "npx eslint@9"):
+        assert queries.gate_variants(empty_conn, window, repo=REPO_A, name=plain) == []
+
+
+def test_gate_summary(empty_conn: sqlite3.Connection) -> None:
+    """The summary matches the gate's row, scoped to its repo, and adds overhead."""
+    insert(empty_conn, BASE, "pass", duration=4.0, overhead=0.5)
+    insert(empty_conn, BASE + 1, "skip", saved=4.0, overhead=0.25)
+    insert(empty_conn, BASE + 2, "fail", duration=2.0, exit_code=1)
+    insert(empty_conn, BASE + 3, "pass", repo=REPO_B, duration=99.0)
+    got = queries.gate_summary(empty_conn, Filters(), repo=REPO_A, name="lint")
+    assert got["runs"] == 3
+    assert got["failures"] == 1
+    assert got["skip_rate"] == pytest.approx(1 / 3)
+    assert got["median_run"] == 4.0
+    assert got["time_spent"] == 6.0
+    assert got["time_saved"] == 4.0
+    assert got["fail_time"] == 2.0
+    assert got["overhead"] == 0.75
+    empty = queries.gate_summary(empty_conn, Filters(), repo=REPO_A, name="none")
+    assert empty["runs"] == 0
+    assert empty["skip_rate"] is None
+    assert empty["overhead"] == 0.0
