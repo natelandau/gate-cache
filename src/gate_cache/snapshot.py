@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import shutil
+import unicodedata
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -373,7 +374,13 @@ def _case_mismatch_reason(root: Path, paths: Iterable[str], label: str = "") -> 
         parent = root
         for part in path.split("/"):
             if parent not in listings:
-                listings[parent] = {child.name for child in parent.iterdir()}
+                # With core.precomposeunicode the index holds the NFC form of a name that
+                # macOS may store decomposed; both spell the same file.
+                listings[parent] = {
+                    name
+                    for child in parent.iterdir()
+                    for name in (child.name, unicodedata.normalize("NFC", child.name))
+                }
             if part not in listings[parent]:
                 return f"path differs from the index only by case: {label}{path}"
             parent = parent / part

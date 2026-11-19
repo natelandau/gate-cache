@@ -826,6 +826,16 @@ def test_case_only_rename_is_unknown(git_repo: Path) -> None:
     assert take_snapshot().reason == "path differs from the index only by case: a.txt"
 
 
+def test_decomposed_file_name_is_not_a_case_mismatch(git_repo: Path) -> None:
+    """A name stored decomposed on disk matches its precomposed index entry."""
+    decomposed = "e\u0301.txt"
+    (git_repo / decomposed).write_text("x\n")
+    if not (git_repo / "\u00e9.txt").exists() or not (git_repo / "A.TXT").exists():
+        pytest.skip("needs a case- and normalization-insensitive filesystem")
+    git("config", "core.precomposeunicode", "true", cwd=git_repo)
+    assert take_snapshot().known
+
+
 def test_case_only_rename_in_nested_submodule_is_unknown(git_repo: Path, tmp_path: Path) -> None:
     """Verify a case-only rename two submodule levels down makes the tree unknown."""
     sub = add_submodule(git_repo, tmp_path)
