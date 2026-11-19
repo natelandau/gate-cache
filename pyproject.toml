@@ -8,7 +8,9 @@
         "Programming Language :: Python :: 3.15",
     ]
     dependencies = [
+        "cyclopts>=5.5.2,<6",
         "platformdirs>=4.14.5,<5.0.0",
+        "rich>=15.0.0,<16",
 ]
     description = "Skip lint and test runs that already passed, and see what your checks cost."
     license = { file = "LICENSE" }
@@ -48,7 +50,6 @@
         "pytest-xdist>=3.8.0",
         "pytest>=9.2.0",
         "pyyaml>=6.0.3",
-        "rich>=15.0.0",
         "ruff>=0.17.5",
         "shellcheck-py>=0.11.0.1",
         "ty>=0.0.104",
