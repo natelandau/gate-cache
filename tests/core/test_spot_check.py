@@ -12,20 +12,16 @@ from gate_cache.spot_check import (
     decide,
     one_run_in,
 )
+from tests.conftest import write_config
 
 Dirs = tuple[Path, Path]
-
-
-def _write(dirs: Dirs, text: str) -> None:
-    dirs[0].parent.mkdir(parents=True, exist_ok=True)
-    dirs[0].write_text(text, encoding="utf-8")
 
 
 def test_one_run_in_precedence(stats_dirs: Dirs, monkeypatch: pytest.MonkeyPatch) -> None:
     """The environment beats the config file, which beats the default."""
     monkeypatch.delenv(SPOT_CHECK_ENV, raising=False)
     assert one_run_in() == DEFAULT_ONE_RUN_IN
-    _write(stats_dirs, f"{CONFIG_KEY} = 20\n")
+    write_config(stats_dirs[0], f"{CONFIG_KEY} = 20\n")
     assert one_run_in() == 20
     assert one_run_in({SPOT_CHECK_ENV: "10"}) == 10
     assert one_run_in({SPOT_CHECK_ENV: "  "}) == 20
@@ -35,7 +31,7 @@ def test_huge_config_value_is_capped_silently(
     stats_dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A config integer past the cap is capped without a warning."""
-    _write(stats_dirs, f"{CONFIG_KEY} = 99999999999999999999999\n")
+    write_config(stats_dirs[0], f"{CONFIG_KEY} = 99999999999999999999999\n")
     assert one_run_in({}) == MAX_WHOLE_NUMBER
     assert capsys.readouterr().err == ""
 
@@ -61,7 +57,7 @@ def test_invalid_values_warn_and_fall_back(
     named: str,
 ) -> None:
     """An invalid value warns, naming its key, and the next source applies."""
-    _write(stats_dirs, f"{config}\n")
+    write_config(stats_dirs[0], f"{config}\n")
     assert one_run_in({SPOT_CHECK_ENV: env}) == expected
     err = capsys.readouterr().err
     assert "warning:" in err

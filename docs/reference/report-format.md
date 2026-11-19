@@ -351,12 +351,13 @@ Keys of `tests`:
   "schema": 1,
   "enabled": true,
   "decided_by": "config",
+  "project": null,
   "config_file": "/home/me/.config/gate-cache/config.toml",
   "data_dir": "/home/me/.local/share/gate-cache"
 }
 ```
 
-`decided_by` is `env`, `ci`, `config`, or `default`. It names the first setting that decided the value. Read [Record stats](../stats/record-stats.md).
+`decided_by` is `env`, `ci`, `config`, or `default`. It names the first setting that decided the value. When a `[projects]` table of the configuration file decided, `project` is its pattern. Otherwise `project` is `null`. Read [Record stats](../stats/record-stats.md).
 
 ## Status view
 

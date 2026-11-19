@@ -6,17 +6,16 @@ from pathlib import Path
 
 import pytest
 
+from gate_cache.remote import config_remote_url, normalize_remote
 from gate_cache.stats import context
 from gate_cache.stats.context import (
     branch_from_head,
-    config_remote_url,
     detect_source,
     find_worktree,
     head_commit,
     host_name,
     machine_id,
     max_rss_bytes,
-    normalize_remote,
     read_head,
     relative_subdir,
     worktree_git_dir,

@@ -11,9 +11,9 @@ from typing import Any
 import pytest
 
 from gate_cache import scratch
-from gate_cache.git import GitFailedError, GitResult
+from gate_cache.git import GitFailedError, GitResult, git_common_dir
 from gate_cache.scratch import SCRATCH_PREFIX, runtime_area
-from gate_cache.snapshot import git_common_dir, take_snapshot
+from gate_cache.snapshot import take_snapshot
 from tests.conftest import add_submodule, expected_tree, git, intercept_run_git
 
 
@@ -174,6 +174,7 @@ def _raise_undecodable(*args: str, **kwargs: object) -> None:
 def test_undecodable_git_output_is_unknown(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Undecodable git output resolves to an unknown snapshot."""
     monkeypatch.setattr("gate_cache.snapshot.run_git", _raise_undecodable)
+    monkeypatch.setattr("gate_cache.git.run_git", _raise_undecodable)
     snap = take_snapshot()
     assert snap.known is False
     assert snap.reason == "could not inspect git state"
@@ -243,7 +244,7 @@ def test_git_common_dir_resolves_relative_output_against_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A relative common dir is resolved against the directory git ran in."""
-    monkeypatch.setattr("gate_cache.snapshot.run_git", lambda *_a, **_k: _FakeResult("../.git"))
+    monkeypatch.setattr("gate_cache.git.run_git", lambda *_a, **_k: _FakeResult("../.git"))
     sub = tmp_path / "sub"
     sub.mkdir()
     assert git_common_dir(sub) == tmp_path / ".git"

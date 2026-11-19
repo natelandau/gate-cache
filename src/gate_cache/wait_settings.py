@@ -44,7 +44,7 @@ def wait_settings(
 ) -> WaitSettings:
     """Resolve the wait settings from flags, then the config file, then defaults.
 
-    An invalid config value warns and falls back to the default; it never fails a run.
+    An invalid config value warns and falls through to the next source; it never fails a run.
 
     Args:
         timeout: The `--wait-timeout` flag value, if given.

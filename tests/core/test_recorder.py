@@ -14,8 +14,9 @@ import pytest
 
 from gate_cache import __version__
 from gate_cache.gate import run_gate
+from gate_cache.git import git_common_dir
 from gate_cache.runner import ChildResult
-from gate_cache.snapshot import Snapshot, git_common_dir
+from gate_cache.snapshot import Snapshot
 from gate_cache.stats import context
 from gate_cache.stats.config import DATA_DIR_ENV, STATS_ENV
 from gate_cache.stats.recorder import MAX_LINE_BYTES, Event, inbox_path, record_event
@@ -666,14 +667,13 @@ def test_stats_off_does_no_context_work(
         "read_head",
         "branch_from_head",
         "head_commit",
-        "config_remote_url",
-        "normalize_remote",
         "machine_id",
         "host_name",
         "child_usage",
     ):
         monkeypatch.setattr(context, helper, tripwire(helper))
-    monkeypatch.setattr("gate_cache.gate.stdin_isatty", tripwire("stdin_isatty"))
+    for helper in ("config_remote_url", "normalize_remote", "stdin_isatty"):
+        monkeypatch.setattr(f"gate_cache.gate.{helper}", tripwire(helper))
     monkeypatch.setattr(uuid, "uuid4", tripwire("uuid4"))
     if sys.platform != "win32":
         import resource

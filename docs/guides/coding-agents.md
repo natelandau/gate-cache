@@ -92,7 +92,7 @@ sequenceDiagram
 
 !!! warning "Tool time limits"
 
-    Some agents stop a command after a fixed time, such as 2 minutes. A wait can last longer. Run long gates in the background, raise the time limit of the tool, or give a smaller `--wait-timeout`. [Configuration](../reference/configuration.md#wait-for-a-run-in-progress) shows how to change the wait for every run.
+    Some agents stop a command after a fixed time, such as 2 minutes. A wait can last longer. Run long gates in the background, raise the time limit of the tool, or give a smaller `--wait-timeout`. [Configuration](../reference/configuration.md#wait-for-a-run-in-progress) shows how to change the wait for every repository or for one repository.
 
 Waiting works on macOS and Linux.
 

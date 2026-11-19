@@ -10,14 +10,10 @@ from gate_cache.wait_settings import (
     parse_failed,
     wait_settings,
 )
+from tests.conftest import write_config
 
 Dirs = tuple[Path, Path]
 CONFIG = 'wait_timeout = 60\nwait_on_failure = "report"\n'
-
-
-def _write(dirs: Dirs, text: str) -> None:
-    dirs[0].parent.mkdir(parents=True, exist_ok=True)
-    dirs[0].write_text(text, encoding="utf-8")
 
 
 def test_defaults_without_config(stats_dirs: Dirs) -> None:
@@ -27,13 +23,13 @@ def test_defaults_without_config(stats_dirs: Dirs) -> None:
 
 def test_config_values_used(stats_dirs: Dirs) -> None:
     """The flat wait keys set both values."""
-    _write(stats_dirs, CONFIG)
+    write_config(stats_dirs[0], CONFIG)
     assert wait_settings() == WaitSettings(60, "report")
 
 
 def test_flags_override_config(stats_dirs: Dirs) -> None:
     """Flag values win over the config file."""
-    _write(stats_dirs, CONFIG)
+    write_config(stats_dirs[0], CONFIG)
     assert wait_settings(timeout=0, failed="rerun") == WaitSettings(0, "rerun")
 
 
@@ -51,7 +47,7 @@ def test_invalid_config_warns_and_defaults(
     stats_dirs: Dirs, capsys: pytest.CaptureFixture[str], line: str, key: str
 ) -> None:
     """An invalid value warns and falls back to the default."""
-    _write(stats_dirs, f"{line}\n")
+    write_config(stats_dirs[0], f"{line}\n")
     assert wait_settings() == WaitSettings(900, "rerun")
     err = capsys.readouterr().err
     assert "warning:" in err
@@ -62,7 +58,7 @@ def test_invalid_config_ignored_when_flag_given(
     stats_dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A flag skips reading the config value, so no warning appears."""
-    _write(stats_dirs, "wait_timeout = -1\n")
+    write_config(stats_dirs[0], "wait_timeout = -1\n")
     assert wait_settings(timeout=5).timeout == 5
     assert capsys.readouterr().err == ""
 
@@ -71,14 +67,14 @@ def test_invalid_toml_uses_defaults_silently(
     stats_dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A file that is not valid TOML never warns or fails."""
-    _write(stats_dirs, "not = [valid")
+    write_config(stats_dirs[0], "not = [valid")
     assert wait_settings() == WaitSettings(900, "rerun")
     assert capsys.readouterr().err == ""
 
 
 def test_old_tables_are_ignored(stats_dirs: Dirs, capsys: pytest.CaptureFixture[str]) -> None:
     """The old `[wait]` table sets nothing and warns of nothing."""
-    _write(stats_dirs, "[wait]\ntimeout = 5\n")
+    write_config(stats_dirs[0], "[wait]\ntimeout = 5\n")
     assert wait_settings() == WaitSettings()
     assert capsys.readouterr().err == ""
 
@@ -126,7 +122,7 @@ def test_parse_failed(text: str, expected: str | None) -> None:
 
 def test_flag_and_config_combine(stats_dirs: Dirs) -> None:
     """A flag for one key leaves the other key to the config file."""
-    _write(stats_dirs, CONFIG)
+    write_config(stats_dirs[0], CONFIG)
     assert wait_settings(timeout=5) == WaitSettings(5, "report")
     assert wait_settings(failed="rerun") == WaitSettings(60, "rerun")
 
@@ -135,12 +131,12 @@ def test_unknown_keys_ignored_silently(
     stats_dirs: Dirs, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Keys the settings do not know never warn."""
-    _write(stats_dirs, "extra = 1\nwait_timeout = 7\n")
+    write_config(stats_dirs[0], "extra = 1\nwait_timeout = 7\n")
     assert wait_settings() == WaitSettings(7, "rerun")
     assert capsys.readouterr().err == ""
 
 
 def test_huge_timeout_accepted(stats_dirs: Dirs) -> None:
     """A very large integer is kept as written."""
-    _write(stats_dirs, f"wait_timeout = {10**12}\n")
+    write_config(stats_dirs[0], f"wait_timeout = {10**12}\n")
     assert wait_settings().timeout == 10**12

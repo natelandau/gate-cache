@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from gate_cache.snapshot import git_common_dir
+from gate_cache.git import git_common_dir
 from gate_cache.stats.archive import ARCHIVE_NAME, Archive
 from gate_cache.stats.lock import InstanceLock, running_url
 from gate_cache.stats.queries import FAILED_TESTS_SHOWN, REPORT_PROBLEM_RUNS

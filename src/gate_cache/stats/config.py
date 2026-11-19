@@ -43,6 +43,8 @@ class StatsSetting:
 
     enabled: bool
     source: Literal["env", "ci", "config", "default"]
+    # The `[projects]` pattern whose table decided, when the config file decided.
+    project: str | None = None
 
 
 def state_dir(environ: Mapping[str, str] | None = None) -> Path:
@@ -64,29 +66,20 @@ def state_dir(environ: Mapping[str, str] | None = None) -> Path:
     if value := env.get(DATA_DIR_ENV, "").strip():
         # absolute() reads the cwd only for a relative path, so an absolute value still
         # works from a deleted directory.
-        return _expand_user(value).absolute()
-    configured = core_config.config_value("stats_data_dir")
-    if isinstance(configured, str) and configured.strip():
-        return core_config.config_path().parent / _expand_user(configured.strip())
+        return core_config.expand_user(value).absolute()
+    configured = core_config.valid_config_value(
+        "stats_data_dir", parse=_non_blank, hint="use a directory path"
+    )
+    if configured is not None:
+        return core_config.config_path().parent / core_config.expand_user(configured)
     return user_state_path(_APP, appauthor=False)
 
 
-def _expand_user(value: str) -> Path:
-    """Expand a leading `~`, keeping the value as written when no home can be found.
-
-    A shell leaves `~unknown-user` as written too, so an unresolvable value never stops
-    the stats commands with a traceback.
-    """
-    path = Path(value)
-    try:
-        return path.expanduser()
-    except RuntimeError:
-        return path
+def _non_blank(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _config_value() -> bool | None:
-    """Return `stats_enabled` from the config file, or None when absent or invalid."""
-    value = core_config.config_value("stats_enabled")
+def _as_bool(value: object) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
@@ -108,9 +101,11 @@ def stats_setting(environ: Mapping[str, str] | None = None) -> StatsSetting:
         return StatsSetting(enabled=flag_on(value), source="env")
     if flag_on(env.get(CI_ENV, "")):
         return StatsSetting(enabled=False, source="ci")
-    configured = _config_value()
-    if configured is not None:
-        return StatsSetting(enabled=configured, source="config")
+    found = core_config.valid_config_entry(
+        "stats_enabled", parse=_as_bool, hint="use true or false"
+    )
+    if found is not None:
+        return StatsSetting(enabled=found[0], source="config", project=found[1].table)
     return StatsSetting(enabled=False, source="default")
 
 
@@ -132,6 +127,8 @@ def config_template(*, enabled: bool) -> str:
     """Return the commented config file written when none exists.
 
     Only `stats_enabled` is active; every other setting is commented out at its default.
+    The `[projects]` example stays last, because TOML puts every key below a table header
+    into that table.
     """
     return f"""\
 # gate-cache settings. Environment variables override these values.
@@ -152,6 +149,14 @@ stats_enabled = {"true" if enabled else "false"}
 
 # Run about 1 in N runs that would skip, to check that the skip is still right. 0 turns this off.
 # spot_check_one_run_in = {DEFAULT_ONE_RUN_IN}
+
+# Settings for one project. A table wins over the settings above for each repository
+# that its pattern matches. A pattern that starts with / or ~ matches the folder of the
+# repository. Any other pattern matches its remote, such as github.com/owner/repo.
+# * matches any characters. If several patterns match, the most specific one wins.
+# [projects."github.com/owner/*"]
+# wait_timeout = 1200
+# stats_enabled = false
 """
 
 

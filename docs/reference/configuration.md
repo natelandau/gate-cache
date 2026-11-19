@@ -42,11 +42,45 @@ stats_enabled = true
 
 # Run about 1 in N runs that would skip, to check that the skip is still right. 0 turns this off.
 # spot_check_one_run_in = 50
+
+# Settings for one project. A table wins over the settings above for each repository
+# that its pattern matches. A pattern that starts with / or ~ matches the folder of the
+# repository. Any other pattern matches its remote, such as github.com/owner/repo.
+# * matches any characters. If several patterns match, the most specific one wins.
+# [projects."github.com/owner/*"]
+# wait_timeout = 1200
+# stats_enabled = false
 ```
 
 To change a setting, remove the `#` at the start of its line and edit the value. Read [Spot checks](../guides/spot-checks.md) for how spot checks work and how to change their rate.
 
-If a value is not valid, gate-cache prints a warning and uses the default.
+If a value is not valid, gate-cache prints a warning and uses the next setting that applies, or the default.
+
+### Settings for one project
+
+A `[projects."PATTERN"]` table sets values for the repositories that its pattern matches. A value in a matching table wins over the same key at the top of the file. A key that the table does not set comes from the top of the file. Environment variables and command options win over both.
+
+```toml
+wait_timeout = 300
+
+# Every repository of the acme organization on GitHub
+[projects."github.com/acme/*"]
+wait_timeout = 1200
+
+# One repository in a folder on this computer
+[projects."~/work/big-monorepo"]
+stats_enabled = false
+spot_check_one_run_in = 10
+```
+
+A pattern matches one of two things:
+
+- A pattern that starts with `/` or `~` matches the folder of the repository. It also matches every git worktree of that repository. For a bare repository, the pattern names the folder of the bare repository.
+- Any other pattern matches the remote of the repository, in the form `HOST/OWNER/REPO`. gate-cache uses the `origin` remote, or the first remote when there is no `origin`. A repository without a remote matches only folder patterns.
+
+In a pattern, `*` matches any characters, `/` included. If more than one table matches, the most specific pattern wins. A pattern without `*` wins over a pattern with `*`, and a pattern with more fixed characters wins over one with fewer. The order of the tables in the file does not matter.
+
+Put all tables at the end of the file. TOML puts each key below a table heading into that table.
 
 ### Stats
 
@@ -58,9 +92,11 @@ The data directory comes from the first of these that applies:
 
 A leading `~` expands to your home directory.
 
+If a `[projects]` table sets `stats_data_dir`, the runs of those repositories go to that directory. The dashboard and the `gate-cache stats` commands read the directory that applies in the folder where you start them.
+
 ### Wait for a run in progress
 
-The `wait_timeout` and `wait_on_failure` keys set the wait for every run. The `--wait-timeout` and `--on-wait-failure` options override it for one run.
+The `wait_timeout` and `wait_on_failure` keys set the wait for every run, or for the runs of one project in a `[projects]` table. The `--wait-timeout` and `--on-wait-failure` options override it for one run.
 
 - Raise `wait_timeout` if a gate takes longer than 15 minutes, so that a waiting run does not start a second copy before the first one ends.
 - Lower `wait_timeout` if your coding agent stops commands after a shorter time.

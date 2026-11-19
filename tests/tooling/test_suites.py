@@ -73,7 +73,7 @@ ALL = {"core", "server", "frontend", "tooling"}
         # Tooling runs on every source and test change for its import and layout checks
         ("src/gate_cache/dashboard/server.py", {"server", "tooling"}),
         ("src/gate_cache/cli.py", {"core", "tooling"}),
-        ("src/gate_cache/git.py", {"core", "tooling"}),
+        ("src/gate_cache/runner.py", {"core", "tooling"}),
         ("tests/core/test_cli.py", {"core", "tooling"}),
         # A core test runs the shell snippets in this page
         ("docs/reference/marker-format.md", {"core"}),

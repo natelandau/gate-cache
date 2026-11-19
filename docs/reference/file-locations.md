@@ -25,7 +25,7 @@ All worktrees of a repository use the `.git` directory of the main checkout, so 
 | Configuration file | `~/.config/gate-cache/config.toml` | `~/Library/Application Support/gate-cache/config.toml` |
 | Stats directory | `~/.local/state/gate-cache/` | `~/Library/Application Support/gate-cache/` |
 
-If the `XDG_CONFIG_HOME` or `XDG_STATE_HOME` environment variable is set, gate-cache uses it in place of the default, on Linux and on macOS. `GATE_CACHE_DATA_DIR`, or `stats_data_dir` in the configuration file, moves the stats directory.
+If the `XDG_CONFIG_HOME` or `XDG_STATE_HOME` environment variable is set, gate-cache uses it in place of the default, on Linux and on macOS. `GATE_CACHE_DATA_DIR`, or `stats_data_dir` in the [configuration file](configuration.md#stats), moves the stats directory.
 
 gate-cache creates the configuration file when you run `gate-cache stats on` or `gate-cache stats off`.
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gate_cache import scratch
-from gate_cache.git import GitError, GitNotFoundError, run_git
+from gate_cache.git import GitError, GitNotFoundError, absolute_common_dir, git_common_dir, run_git
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -279,7 +279,7 @@ def _locate(cwd: Path | None, env: dict[str, str] | None) -> _Locations | None:
         root=Path(root),
         index=index,
         objects=objects,
-        common_dir=_absolute_common_dir(output=common, cwd=cwd) if env is None else None,
+        common_dir=absolute_common_dir(output=common, cwd=cwd) if env is None else None,
     )
 
 
@@ -568,32 +568,3 @@ def take_snapshots(path_sets: Iterable[Iterable[str]], cwd: Path | None = None) 
     if common_dir is None and any(snap.known for snap in snapshots):
         common_dir = git_common_dir(cwd)
     return [replace(snap, root=state.root, common_dir=common_dir) for snap in snapshots]
-
-
-def git_common_dir(cwd: Path | None = None) -> Path | None:
-    """Return the absolute git common directory shared by all linked worktrees.
-
-    Args:
-        cwd: Directory to run git in. Defaults to the process working directory.
-
-    Returns:
-        The absolute path, or None when git fails or its output is not a single path.
-    """
-    try:
-        result = run_git("rev-parse", "--git-common-dir", cwd=cwd)
-    except (GitError, UnicodeDecodeError):
-        return None
-    return _absolute_common_dir(output=result.stdout, cwd=cwd)
-
-
-def _absolute_common_dir(output: str, cwd: Path | None) -> Path | None:
-    """Turn `git rev-parse --git-common-dir` output into an absolute path, or None."""
-    output = output.strip()
-    if not output or "\n" in output:
-        return None
-    if Path(output).is_absolute():
-        return Path(output)
-    try:
-        return _from_cwd(path=output, cwd=cwd).resolve()
-    except (OSError, RuntimeError):
-        return None
