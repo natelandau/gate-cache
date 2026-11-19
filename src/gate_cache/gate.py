@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gate_cache import __version__
+from gate_cache.config import current_dir
 from gate_cache.console import confirm_deletion, format_duration, kv, say, stdin_isatty
 from gate_cache.durations import durations_dir, durations_path, record_duration, usual_duration
 from gate_cache.env import CI_ENV, flag_on
@@ -25,6 +26,7 @@ from gate_cache.gate_lock import (
     prune_locks,
     read_holder,
 )
+from gate_cache.git import git_common_dir
 from gate_cache.markers import (
     RecordIndex,
     clear_markers,
@@ -39,8 +41,9 @@ from gate_cache.markers import (
     write_marker,
     write_miss,
 )
+from gate_cache.remote import config_remote_url, normalize_remote
 from gate_cache.runner import Terminated, raise_on_termination, run_child
-from gate_cache.snapshot import git_common_dir, normalize_paths, take_snapshot, take_snapshots
+from gate_cache.snapshot import normalize_paths, take_snapshot, take_snapshots
 from gate_cache.spot_check import SpotCheck, decide
 from gate_cache.stats import config as stats_config
 from gate_cache.stats import context as run_context
@@ -139,14 +142,6 @@ def _marker_age(marker: Path | None) -> float | None:
     try:
         return round(time.time() - marker.stat().st_mtime, 1)
     except OSError:
-        return None
-
-
-def _cwd() -> Path | None:
-    """Return the resolved working directory, or None when it is gone."""
-    try:
-        return Path.cwd().resolve()
-    except (OSError, RuntimeError):
         return None
 
 
@@ -293,12 +288,12 @@ class _Stats:
         """Gather where and how the gate ran, from files and the environment only."""
         import uuid
 
-        cwd = _cwd()
+        cwd = current_dir()
         if worktree is None and cwd is not None:
             worktree = run_context.find_worktree(cwd)
         source = run_context.detect_source(os.environ, isatty=stdin_isatty())
         head = run_context.read_head(run_context.worktree_git_dir(worktree))
-        url = run_context.config_remote_url(common_dir)
+        url = config_remote_url(common_dir)
         joined = shlex.join(command)
         return {
             "id": uuid.uuid4().hex,
@@ -312,7 +307,7 @@ class _Stats:
             else None,
             "branch": run_context.branch_from_head(head),
             "head": run_context.head_commit(head, common_dir=common_dir),
-            "remote": run_context.normalize_remote(url) if url else None,
+            "remote": normalize_remote(url) if url else None,
             "machine": run_context.machine_id(stats_config.state_dir()),
             "host": run_context.host_name(),
             "platform": sys.platform,

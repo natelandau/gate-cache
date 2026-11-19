@@ -39,7 +39,7 @@ If you record stats, the dashboard counts spot checks on the Overview and lists 
 
 ## Change the rate
 
-The `spot_check_one_run_in` key of the [configuration file](../reference/configuration.md) sets the rate for every run. The `GATE_CACHE_SPOT_CHECK_ONE_RUN_IN` environment variable sets it for one shell and wins over the file.
+The `spot_check_one_run_in` key of the [configuration file](../reference/configuration.md) sets the rate for every repository, and a [`[projects]` table](../reference/configuration.md#settings-for-one-project) sets it for one repository. The `GATE_CACHE_SPOT_CHECK_ONE_RUN_IN` environment variable sets it for one shell and wins over the file.
 
 | Value | Effect |
 | --- | --- |

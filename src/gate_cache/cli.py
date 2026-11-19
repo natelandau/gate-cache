@@ -577,7 +577,7 @@ def _stats_report_command(tokens: list[str]) -> int:
     """Parse `stats report`, check its flag combinations, and print the report."""
     import time
 
-    from gate_cache.snapshot import git_common_dir
+    from gate_cache.git import git_common_dir
     from gate_cache.stats.archive import gate_of
     from gate_cache.stats.report import Window
     from gate_cache.stats.report_text import KEYED_NAME_ERROR
@@ -712,11 +712,16 @@ def _stats(action: str | None, *, as_json: bool = False) -> int:
             say(f"could not write {core_config.config_path()}: {reason or error}")
             return 1
     setting = stats_config.stats_setting()
+    if action is not None and setting.project is not None and setting.enabled != (action == "on"):
+        say(
+            f"{core_config.table_location(setting.project)} overrides this for the current repository"
+        )
     if as_json:
         data = {
             "schema": _STATS_SCHEMA,
             "enabled": setting.enabled,
             "decided_by": setting.source,
+            "project": setting.project,
             "config_file": str(core_config.config_path()),
             "data_dir": str(stats_config.state_dir()),
         }
@@ -726,6 +731,7 @@ def _stats(action: str | None, *, as_json: bool = False) -> int:
         {
             "recording": "on" if setting.enabled else "off",
             "decided by": setting.source,
+            **({"project": setting.project} if setting.project is not None else {}),
             "config": str(core_config.config_path()),
             "data": str(stats_config.state_dir()),
         }

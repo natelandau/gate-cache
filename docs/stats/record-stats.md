@@ -16,7 +16,7 @@ gate-cache can record each run of a gate. A local dashboard then shows which gat
 gate-cache stats on
 ```
 
-The setting is for your user account on this computer, not for one repository. Every repository where you run gate-cache then records its runs.
+The setting is for your user account on this computer, not for one repository. Every repository where you run gate-cache then records its runs. To turn recording off for some repositories, set `stats_enabled = false` in a [`[projects]` table](../reference/configuration.md#settings-for-one-project).
 
 To see whether recording is on and where the data is, run `gate-cache stats`:
 
@@ -27,6 +27,8 @@ $ gate-cache stats
   config:     /home/dev/.config/gate-cache/config.toml
   data:       /home/dev/.local/state/gate-cache
 ```
+
+When a `[projects]` table decides, the output also shows a `project` line with the pattern of that table.
 
 To turn recording off, run `gate-cache stats off`. The data that you already recorded stays in place.
 
@@ -58,8 +60,9 @@ The first of these that applies decides:
 
 1. The `GATE_CACHE_STATS` environment variable, when it has a value. `0` or `false` turns recording off, and any other value turns it on.
 2. The `CI` environment variable. When `CI` is on, recording is off.
-3. The setting that `gate-cache stats on` and `gate-cache stats off` write.
-4. Off.
+3. `stats_enabled` in a `[projects]` table that matches the repository.
+4. The setting that `gate-cache stats on` and `gate-cache stats off` write. If a `[projects]` table overrides that setting in the current repository, these commands say so.
+5. Off.
 
 Recording never changes whether a command skips, its exit code, or its output.
 

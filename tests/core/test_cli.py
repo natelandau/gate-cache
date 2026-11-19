@@ -19,7 +19,7 @@ import pytest
 import gate_cache
 from gate_cache import cli
 from gate_cache import gate as gate_module
-from gate_cache.snapshot import git_common_dir
+from gate_cache.git import git_common_dir
 from gate_cache.stats import report as report_module
 from gate_cache.stats.archive import ARCHIVE_NAME, Archive, ArchiveVersionError
 from gate_cache.stats.report_text import (
@@ -929,6 +929,7 @@ def test_stats_json(
         "schema": 1,
         "enabled": False,
         "decided_by": "default",
+        "project": None,
         "config_file": str(stats_dirs[0]),
         "data_dir": str(stats_dirs[1]),
     }

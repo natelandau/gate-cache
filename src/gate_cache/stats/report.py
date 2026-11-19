@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gate_cache.git import git_common_dir
 from gate_cache.markers import utc_timestamp
-from gate_cache.snapshot import git_common_dir
 from gate_cache.stats import config, queries
 from gate_cache.stats.archive import Archive, archive_path, tests_since
 from gate_cache.stats.lock import InstanceLock

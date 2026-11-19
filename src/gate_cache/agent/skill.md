@@ -28,9 +28,11 @@ The saved time in parentheses is how long the command ran when it passed.
 
 When the command runs, gate-cache exits with the exit code of the command. It exits 127 when the command is not found, 126 when it cannot run, and 128 plus N when signal N stops it. A usage error exits 2 and runs nothing.
 
-A waiting run happens when two runs of the same gate and content overlap, for example two agents in two worktrees. The wait lasts at most 15 minutes by default. `--wait-timeout SECONDS` and `--on-wait-failure rerun|report` change the behavior, and the `wait_timeout` and `wait_on_failure` keys of the config file set them for every run. The flags win over the config file. Waiting works on macOS and Linux only.
+A waiting run happens when two runs of the same gate and content overlap, for example two agents in two worktrees. The wait lasts at most 15 minutes by default. `--wait-timeout SECONDS` and `--on-wait-failure rerun|report` change the behavior, and the `wait_timeout` and `wait_on_failure` keys of the config file set them for every repository. The flags win over the config file. Waiting works on macOS and Linux only.
 
-About one run in 50 of a gate that would skip runs the command anyway, as a spot check that the skip is still right. The `spot_check_one_run_in` key of the config file sets the rate for every run, and `GATE_CACHE_SPOT_CHECK_ONE_RUN_IN` sets it for one shell. `0` turns spot checks off.
+About one run in 50 of a gate that would skip runs the command anyway, as a spot check that the skip is still right. The `spot_check_one_run_in` key of the config file sets the rate for every repository, and `GATE_CACHE_SPOT_CHECK_ONE_RUN_IN` sets it for one shell. `0` turns spot checks off.
+
+The config file sets values for every repository. To give one repository, or every repository that matches a pattern, its own values, put the keys in a `[projects."PATTERN"]` table at the end of the same file. A pattern that starts with `/` or `~` matches the folder of the repository. Any other pattern matches its remote, such as `github.com/owner/repo`. Never add a config file to the repository itself, because gate-cache reads only the user config file.
 
 ## Run checks in a repository that uses gate-cache
 
@@ -52,7 +54,7 @@ gate-cache can record each run of a gate. The record shows which gates are flaky
 If the user asks which checks are flaky, slow, or cost the most time, do these steps:
 
 1. Run `gate-cache stats --json`. The `enabled` key shows whether recording is on.
-2. If recording is off, tell the user that gate-cache can record the runs, and ask whether to turn recording on. Recording is a setting for the computer, not for the repository. If the user agrees, run `gate-cache stats on`. The record starts with the next run of each gate.
+2. If recording is off, tell the user that gate-cache can record the runs, and ask whether to turn recording on. Recording is a setting for the computer, but a `[projects]` table in the config file can turn it off for one repository. If the user agrees, run `gate-cache stats on`. The record starts with the next run of each gate.
 3. If recording is on, run `gate-cache stats report --json`. The output has one row for each gate with its runs, skip rate, failures, run times, and the time it spent and saved.
 4. To look at one gate, run `gate-cache stats report --name NAME --json`. The report groups `test@v22` under `test`, so give `--name test`. For a gate that ran without `--name`, give the command after `--`.
 

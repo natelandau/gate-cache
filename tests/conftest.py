@@ -15,6 +15,7 @@ import pytest
 
 from gate_cache import cli, snapshot
 from gate_cache import config as core_config
+from gate_cache import git as git_module
 from gate_cache.gate_lock import HELD_ENV
 from gate_cache.git import GitResult
 from gate_cache.markers import MISS_SUFFIX, marker_dir
@@ -296,7 +297,7 @@ def intercept_run_git(
     monkeypatch: pytest.MonkeyPatch,
     handler: Callable[[tuple[str, ...], dict[str, Any]], GitResult | None],
 ) -> list[tuple[str, ...]]:
-    """Route snapshot's git calls through HANDLER; a None answer runs the real git.
+    """Route snapshot's git calls, git_common_dir's included, through HANDLER; a None answer runs the real git.
 
     Returns:
         The arguments of every git call, in order, filled in as they happen.
@@ -310,6 +311,7 @@ def intercept_run_git(
         return real_run_git(*args, **kwargs) if answer is None else answer
 
     monkeypatch.setattr(snapshot, "run_git", run_git)
+    monkeypatch.setattr(git_module, "run_git", run_git)
     return calls
 
 
@@ -340,6 +342,13 @@ def misses(repo: Path) -> list[Path]:
 def read_records(paths: list[Path]) -> list[dict[str, object]]:
     """Parse the JSON content of marker or miss record files."""
     return [json.loads(path.read_text()) for path in paths]
+
+
+def write_config(path: Path, text: str) -> Path:
+    """Write a config file at path, creating its directory, and return the path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 @pytest.fixture

@@ -96,3 +96,32 @@ def run_git(
         msg = f"git {' '.join(args)} failed with exit code {result.returncode}: {result.stderr}"
         raise GitFailedError(msg)
     return result
+
+
+def git_common_dir(cwd: Path | None = None) -> Path | None:
+    """Return the absolute git common directory shared by all linked worktrees.
+
+    Args:
+        cwd: Directory to run git in. Defaults to the process working directory.
+
+    Returns:
+        The absolute path, or None when git fails or its output is not a single path.
+    """
+    try:
+        result = run_git("rev-parse", "--git-common-dir", cwd=cwd)
+    except (GitError, UnicodeDecodeError):
+        return None
+    return absolute_common_dir(output=result.stdout, cwd=cwd)
+
+
+def absolute_common_dir(output: str, cwd: Path | None) -> Path | None:
+    """Turn `git rev-parse --git-common-dir` output into an absolute path, or None."""
+    output = output.strip()
+    if not output or "\n" in output:
+        return None
+    if Path(output).is_absolute():
+        return Path(output)
+    try:
+        return ((Path(cwd) if cwd is not None else Path.cwd()) / output).resolve()
+    except (OSError, RuntimeError):
+        return None
