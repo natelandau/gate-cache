@@ -21,21 +21,30 @@ A variable is on when its value is not empty, `0`, or `false`. Case and spaces a
 
 ## The configuration file
 
-`gate-cache stats` shows where the file is. By default, it is `~/.config/gate-cache/config.toml` on Linux and `~/Library/Application Support/gate-cache/config.toml` on macOS. gate-cache creates it when you run `gate-cache stats on` or `gate-cache stats off`. The new file lists every setting with a comment that says what it does. Only `stats_enabled` is active, and the other settings are commented out at their default values.
+`gate-cache stats` shows where the file is. By default, it is `~/.config/gate-cache/config.toml` on Linux and `~/Library/Application Support/gate-cache/config.toml` on macOS. gate-cache creates it when you run `gate-cache stats on` or `gate-cache stats off`. The new file lists every setting with a comment that says what it does. Only `stats_enabled` is active. The other settings are commented out at their default values:
 
 ```toml title="config.toml"
-stats_enabled = true # (1)!
-stats_data_dir = "~/gate-cache-stats" # (2)!
-wait_timeout = 300 # (3)!
-wait_on_failure = "report" # (4)!
-spot_check_one_run_in = 50 # (5)!
+# gate-cache settings. Environment variables override these values.
+# https://natelandau.github.io/gate-cache/reference/configuration/
+
+# Record run stats for the dashboard. `gate-cache stats on` and `stats off` set this.
+stats_enabled = true
+
+# The directory for recorded stats. A relative path starts from this file's directory.
+# stats_data_dir = "~/gate-cache-stats"
+
+# The longest wait, in whole seconds, for another run of the same gate. 0 never waits.
+# wait_timeout = 900
+
+# What to do when the run this run waited for failed: "rerun" runs the command,
+# "report" exits with that failure.
+# wait_on_failure = "rerun"
+
+# Run about 1 in N runs that would skip, to check that the skip is still right. 0 turns this off.
+# spot_check_one_run_in = 50
 ```
 
-1.  Whether to record stats. `gate-cache stats on` and `gate-cache stats off` write this value.
-2.  The directory for recorded stats. A relative path starts from the directory of the configuration file.
-3.  The longest wait for another run of the same gate, in whole seconds. `0` never waits. The default is 900.
-4.  What to do when the run that this run waited for failed. `rerun` runs the command. `report` exits with the failure. The default is `rerun`.
-5.  How often a gate that would skip runs anyway, as one run in this many. A whole number. `0` turns spot checks off, and `1` checks every run that would skip. The default is 50. Read [Spot checks](#spot-checks).
+To change a setting, remove the `#` at the start of its line and edit the value. Read [Spot checks](#spot-checks) for how spot checks work and how to change their rate.
 
 If a value is not valid, gate-cache prints a warning and uses the default.
 

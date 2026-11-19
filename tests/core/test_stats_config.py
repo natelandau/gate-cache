@@ -1,6 +1,7 @@
 """Tests for the stats setting."""
 
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -19,6 +20,7 @@ from gate_cache.stats.config import (
     stats_setting,
     write_enabled,
 )
+from tests.conftest import ROOT
 
 Dirs = tuple[Path, Path]
 
@@ -81,6 +83,14 @@ def test_created_file_lists_every_setting(stats_dirs: Dirs) -> None:
     text = stats_dirs[0].read_text()
     keys = ["stats_enabled", "stats_data_dir", "wait_timeout", "wait_on_failure", CONFIG_KEY]
     assert [key for key in keys if key not in text] == []
+
+
+def test_documented_file_matches_the_created_file(stats_dirs: Dirs) -> None:
+    """The configuration page shows exactly the file that `stats on` creates."""
+    write_enabled(enabled=True)
+    doc = (ROOT / "docs" / "reference" / "configuration.md").read_text(encoding="utf-8")
+    (block,) = re.findall(r'```toml title="config.toml"\n(.*?)```', doc, flags=re.DOTALL)
+    assert block == stats_dirs[0].read_text(encoding="utf-8")
 
 
 def test_write_enabled_keeps_comments_and_tables(stats_dirs: Dirs) -> None:
