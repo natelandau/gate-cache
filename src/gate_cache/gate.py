@@ -65,8 +65,8 @@ REPORTED_FAILURE_REASON = "failed in another run, not rerun"
 SPOT_CHECK_NOTICE = "{name} passed on {label}, spot-checking ({rate})"
 SPOT_CHECK_FAILED_NOTICE = (
     "{name} failed a spot check on {label}, where it passed before. If the gate is not "
-    "flaky, its cache key is missing an input; see "
-    "https://natelandau.github.io/gate-cache/reference/configuration/#spot-checks"
+    "flaky, its name or paths miss an input; see "
+    "https://natelandau.github.io/gate-cache/guides/spot-checks/"
 )
 USUAL_DURATION_NOTICE = "running {name} (usually {duration})"
 # A fast gate's usual time tells no one anything, so its runs stay quiet.

@@ -44,7 +44,7 @@ stats_enabled = true
 # spot_check_one_run_in = 50
 ```
 
-To change a setting, remove the `#` at the start of its line and edit the value. Read [Spot checks](#spot-checks) for how spot checks work and how to change their rate.
+To change a setting, remove the `#` at the start of its line and edit the value. Read [Spot checks](../guides/spot-checks.md) for how spot checks work and how to change their rate.
 
 If a value is not valid, gate-cache prints a warning and uses the default.
 
@@ -67,18 +67,6 @@ The `wait_timeout` and `wait_on_failure` keys set the wait for every run. The `-
 - Set `wait_on_failure = "report"` if your slow gates seldom fail by chance. A waiting run then reports a failure at once, instead of running the gate again.
 
 Read [Coding agents](../guides/coding-agents.md#several-agents-at-the-same-time).
-
-## Spot checks
-
-About one run in 50 of a gate that would skip runs its command instead, and gate-cache prints `NAME passed on tree HASH, spot-checking (1 in 50)` first. This run is a spot check. It confirms that a recorded pass still holds. A skip of a command that would fail hides a real failure, and a spot check finds that kind of skip.
-
-A spot check is an ordinary run. gate-cache exits with the exit code of the command and records a new pass when the command passes.
-
-If the command fails, or exits 0 but changes files, gate-cache deletes the record of the earlier pass, so the next run executes the command. A failure is real. Fix the cause. Do not run the gate again to get a skip.
-
-A failure on a gate that is not flaky means that the gate reads something that its name and paths do not cover. Examples are an ignored file, an environment variable, or the version of a tool. Put that input in the name after an `@`, or add its path with `--path`. Read [Cover inputs that git does not see](../guides/write-a-gate.md#cover-inputs-that-git-does-not-see) and [Scope a gate to paths](../guides/scope-to-paths.md).
-
-To change the rate, set `spot_check_one_run_in` in the configuration file, or set `GATE_CACHE_SPOT_CHECK_ONE_RUN_IN` for one shell. The variable wins over the file. Set the value to `0` to turn spot checks off. To check one run, add `--spot-check` to the command line. The line then ends with `(requested)`.
 
 ## Where gate-cache writes files
 

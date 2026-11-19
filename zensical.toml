@@ -23,6 +23,7 @@
             { "Git hooks" = "guides/git-hooks.md" },
             { "CI" = "guides/ci.md" },
             { "Coding agents" = "guides/coding-agents.md" },
+            { "Spot checks" = "guides/spot-checks.md" },
             { "Recipes" = "guides/recipes.md" },
         ] },
         { "Stats" = [
