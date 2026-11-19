@@ -30,7 +30,7 @@ An event holds no command output and no file content.
 
     gate-cache stores the gate name and the command line as plain text, in the records of passes and in the stats. The paths and the host name can also hold your user name.
 
-`gate-cache stats clear` deletes all recorded stats. The dashboard keeps runs for 365 days, and the results of each test for 90 days.
+`gate-cache stats clear` deletes the recorded stats of a repository, and `gate-cache stats clear --all-repos` deletes all recorded stats. The dashboard keeps runs for 365 days, and the results of each test for 90 days.
 
 ## The dashboard
 

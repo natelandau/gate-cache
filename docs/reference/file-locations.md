@@ -42,7 +42,7 @@ gate-cache writes to the stats directory when [stats recording](../stats/record-
 | `events.*.processing` | Runs that the dashboard is reading. |
 | `tests/` | One file for each run of a gate with `--junit` that ran the command and found a report from that run. The file holds the results of the tests until the dashboard reads them. |
 
-`gate-cache stats clear` deletes the recorded runs: `events.jsonl`, `stats.sqlite3` with its `-wal` and `-shm` files, the `.processing` files, and the `tests` folder. It keeps `machine-id` and the dashboard files.
+`gate-cache stats clear --all-repos` deletes the recorded runs: `events.jsonl`, `stats.sqlite3` with its `-wal` and `-shm` files, the `.processing` files, and the `tests` folder. It keeps `machine-id` and the dashboard files. Without `--all-repos`, the command deletes the runs of one repository from `stats.sqlite3` and keeps the files.
 
 ## Temporary files
 
@@ -59,5 +59,5 @@ If a run is killed, the next run deletes the leftover directory after one hour.
 To remove all the files of gate-cache:
 
 1. In each repository, run `gate-cache clear` and delete `.git/gate-cache-locks/`.
-2. Run `gate-cache stats clear`.
+2. Run `gate-cache stats clear --all-repos`.
 3. Delete the configuration file and the stats directory.

@@ -19,11 +19,23 @@ import pytest
 from gate_cache import gate as gate_module
 from gate_cache.cli import NO_COMMAND
 from gate_cache.commands import status as status_module
-from gate_cache.commands.app import _report_first
-from gate_cache.commands.clear import NOT_A_REPO
+from gate_cache.commands.app import _subcommand_first
+from gate_cache.commands.clear import NO_RECORDS_OF_GATE, NOT_A_REPO
 from gate_cache.commands.dashboard import RECORDING_OFF
-from gate_cache.commands.output import UsageError, require_yes_for_json
-from gate_cache.commands.stats import ALL_REPOS_CONFLICT, NAME_NEEDS_REPO
+from gate_cache.commands.output import (
+    NOTHING_TO_DELETE,
+    WOULD_DELETE,
+    UsageError,
+    require_yes_for_json,
+)
+from gate_cache.commands.prompt import PERSON_MUST_CONFIRM
+from gate_cache.commands.stats import (
+    ALL_REPOS_CONFLICT,
+    ALL_REPOS_NEEDS_PERSON,
+    CLEAR_NEEDS_REPO,
+    NAME_NEEDS_REPO,
+    REPO_CONFLICT,
+)
 from gate_cache.commands.status import (
     NAME_OR_COMMAND,
     NEEDS_SEPARATOR,
@@ -32,6 +44,7 @@ from gate_cache.commands.status import (
     PATH_NEEDS_VALUE,
     StatusOutcome,
 )
+from gate_cache.durations import durations_dir
 from gate_cache.git import git_common_dir
 from gate_cache.markers import marker_dir
 from gate_cache.stats import report as report_module
@@ -46,7 +59,16 @@ from gate_cache.stats.report_text import (
     UNKNOWN_REPO,
 )
 from gate_cache.stats.window import DURATION_ERROR, UNTIL_ERROR
-from tests.conftest import REPO_A, REPO_B, Counter, insert, invoke, markers, rendered_text
+from tests.conftest import (
+    REPO_A,
+    REPO_B,
+    Counter,
+    archived_repos,
+    insert,
+    invoke,
+    markers,
+    rendered_text,
+)
 
 DISABLED_REASON = "caching disabled by GATE_CACHE_DISABLE"
 
@@ -347,7 +369,7 @@ def test_clear_json_without_yes_is_refused(
     assert invoke(monkeypatch, "clear", "--json") == 2
     error = json.loads(capfd.readouterr().out)["error"]
     with pytest.raises(UsageError) as expected:
-        require_yes_for_json("clear", yes=False, as_json=True)
+        require_yes_for_json("clear", asks=True, as_json=True)
     assert error["message"] == expected.value.message
     assert error["hint"] == expected.value.hint
     assert len(markers(git_repo)) == 1
@@ -392,7 +414,7 @@ def test_clear_asks_before_deleting(
     assert invoke(monkeypatch, "clear") == (0 if deleted else 1)
     assert (markers(git_repo) == []) is deleted
     captured = capfd.readouterr()
-    assert "permanently deletes every recorded pass" in captured.err
+    assert "permanently deletes the recorded passes of this repository" in captured.err
     # A long path folds onto several lines at the test terminal width.
     assert "".join(str(marker_dir(git_repo / ".git")).split()) in "".join(captured.err.split())
 
@@ -425,12 +447,17 @@ def test_clear_ctrl_c_at_prompt_keeps_markers(
 
 
 def test_clear_reports_os_error(
-    git_repo: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
     """Verify a filesystem error while clearing exits 1 and names the error."""
 
-    def fail(_common_dir: Path) -> int:
+    def fail(*_args: object) -> int:
         raise OSError(16, "Resource busy")
+
+    assert invoke(monkeypatch, "--", *counter.argv()) == 0
 
     monkeypatch.setattr("gate_cache.commands.clear.clear_cache", fail)
     assert invoke(monkeypatch, "clear", "--yes") == 1
@@ -449,6 +476,85 @@ def test_clear_bad_arguments_are_usage_errors(
     assert invoke(monkeypatch, "--", *counter.argv()) == 0
     assert invoke(monkeypatch, "clear", *args) == 2
     assert len(markers(git_repo)) == 1
+
+
+def test_clear_name_deletes_only_that_gate(
+    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify clear --name deletes the gate and its keyed names, and keeps every other gate."""
+    for name in ("unit", "unit@py312", "unitx", "lint"):
+        assert invoke(monkeypatch, "--name", name, "--", *counter.argv()) == 0
+    assert invoke(monkeypatch, "clear", "--name", "unit", "--yes") == 0
+    assert sorted(json.loads(m.read_text())["name"] for m in markers(git_repo)) == [
+        "lint",
+        "unitx",
+    ]
+
+
+def test_clear_dry_run_deletes_nothing(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify clear --dry-run reports what would go, needs no --yes, and keeps every marker."""
+    for name in ("unit", "lint"):
+        assert invoke(monkeypatch, "--name", name, "--", *counter.argv()) == 0
+    capfd.readouterr()
+    assert invoke(monkeypatch, "clear", "--dry-run", "--json") == 0
+    data = json.loads(capfd.readouterr().out)
+    assert (data["dry_run"], data["deleted"], data["gates"]) == (True, 2, ["lint", "unit"])
+    assert invoke(monkeypatch, "clear", "--dry-run") == 0
+    assert WOULD_DELETE.format(what="2 markers") in capfd.readouterr().out
+    assert len(markers(git_repo)) == 2
+
+
+def test_clear_name_of_an_unknown_gate_exits_1(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify clear --name with a name that has no records fails, so a typo never looks done."""
+    assert invoke(monkeypatch, "--name", "pytest", "--", *counter.argv()) == 0
+    capfd.readouterr()
+    assert invoke(monkeypatch, "clear", "--name", "pytset", "--yes") == 1
+    assert NO_RECORDS_OF_GATE.format(name="pytset") in capfd.readouterr().err
+    assert len(markers(git_repo)) == 1
+
+
+def test_clear_with_nothing_to_delete_asks_nothing(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify clear with no records exits 0 without a question, and drops the usual run times."""
+    assert invoke(monkeypatch, "--", *counter.argv()) == 0
+    for marker in markers(git_repo):
+        marker.unlink()
+    capfd.readouterr()
+    monkeypatch.setattr("gate_cache.console.stdin_isatty", lambda: False)
+    assert invoke(monkeypatch, "clear") == 0
+    assert NOTHING_TO_DELETE in capfd.readouterr().out
+    assert not durations_dir(git_repo / ".git").exists()
+
+
+@pytest.mark.parametrize("args", [["--dry-run"], ["--yes"]])
+def test_clear_counts_failed_runs_with_no_passes(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+) -> None:
+    """Verify records of failed runs alone are reported as something to delete."""
+    assert invoke(monkeypatch, "--", *counter.argv(exit_code=1)) == 1
+    capfd.readouterr()
+    assert invoke(monkeypatch, "clear", *args) == 0
+    out = capfd.readouterr().out
+    assert NOTHING_TO_DELETE not in out
+    assert re.search(r"\b1 record of failed runs\b", out)
 
 
 def test_stats_reports_the_setting(
@@ -585,34 +691,33 @@ def test_stats_json(
 
 
 @pytest.fixture
-def seeded_stats(stats_dirs: tuple[Path, Path]) -> Path:
-    """Create an archive so a test can see whether clearing deleted it."""
+def seeded_stats(git_repo: Path, stats_dirs: tuple[Path, Path]) -> str:
+    """Archive one run of this repository and one of another; return this one's git folder."""
+    here = str(git_common_dir())
     stats_dirs[1].mkdir(parents=True)
-    Archive.open(archive_path()).close()
-    return archive_path()
+    _record(stats_dirs[1], (here, "lint"), (REPO_B, "lint"))
+    return here
 
 
 def test_stats_clear_json(
-    seeded_stats: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+    seeded_stats: str, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    """Stats clear --json needs --yes, and with it reports the number deleted."""
+    """Stats clear --json needs --yes, and with it deletes only this repository's runs."""
     assert invoke(monkeypatch, "stats", "clear", "--json") == 2
     error = json.loads(capfd.readouterr().out)["error"]
     with pytest.raises(UsageError) as expected:
-        require_yes_for_json("stats clear", yes=False, as_json=True)
+        require_yes_for_json("stats clear", asks=True, as_json=True)
     assert error["message"] == expected.value.message
-    assert seeded_stats.exists()
     assert invoke(monkeypatch, "stats", "clear", "--yes", "--json") == 0
     data = json.loads(capfd.readouterr().out)
-    assert data["schema"] == 1
-    assert data["deleted"] >= 1
-    assert data["data_dir"] == str(seeded_stats.parent)
-    assert not seeded_stats.exists()
+    assert (data["dry_run"], data["deleted"], data["scope"]) == (False, 1, "repo")
+    assert data["repo"] == seeded_stats
+    assert archived_repos() == [REPO_B]
 
 
 @pytest.mark.parametrize(("reply", "deleted"), [("yes", True), ("no", False), (None, False)])
 def test_stats_clear_asks_before_deleting(
-    seeded_stats: Path,
+    seeded_stats: str,
     answer: Callable[[str | None], None],
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -620,32 +725,116 @@ def test_stats_clear_asks_before_deleting(
     *,
     deleted: bool,
 ) -> None:
-    """Only a typed yes clears stats, and the warning names the data directory."""
+    """Only a typed yes clears this repository's stats, after a warning that counts them."""
     answer(reply)
     assert invoke(monkeypatch, "stats", "clear") == (0 if deleted else 1)
-    assert seeded_stats.exists() is not deleted
-    err = capfd.readouterr().err
-    assert "".join(str(seeded_stats.parent).split()) in "".join(err.split())
+    assert archived_repos() == ([REPO_B] if deleted else sorted([seeded_stats, REPO_B]))
+    assert "1 run of 1 gate" in capfd.readouterr().err
 
 
 def test_stats_clear_ctrl_c_keeps_stats(
-    seeded_stats: Path, answer: Callable[[str | None], None], monkeypatch: pytest.MonkeyPatch
+    seeded_stats: str, answer: Callable[[str | None], None], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Ctrl-C at the prompt exits 130 and deletes nothing."""
     answer("^C")
     assert invoke(monkeypatch, "stats", "clear") == 130
-    assert seeded_stats.exists()
+    assert len(archived_repos()) == 2
+
+
+def test_stats_clear_repo_flag_clears_another_repository(
+    seeded_stats: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--repo clears a recorded repository by name, even one that is not on disk."""
+    assert invoke(monkeypatch, "stats", "clear", "--repo", "other", "--yes") == 0
+    assert archived_repos() == [seeded_stats]
+
+
+def test_stats_clear_outside_a_repo_needs_a_scope(
+    stats_dirs: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Outside a repository, stats clear exits 2 and names the flags that pick a scope."""
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert invoke(monkeypatch, "stats", "clear", "--yes") == 2
+    err = capfd.readouterr().err
+    assert CLEAR_NEEDS_REPO in err
+    assert "--all-repos" in err
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--all-repos", "--yes"], ALL_REPOS_NEEDS_PERSON),
+        (["--all-repos", "--json"], ALL_REPOS_NEEDS_PERSON),
+        (["--all-repos", "--repo", "other"], REPO_CONFLICT),
+    ],
+)
+def test_stats_clear_all_repos_refuses_flags_that_skip_a_person(
+    seeded_stats: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+    message: str,
+) -> None:
+    """--all-repos never takes --yes or --json, so only a person can delete every repository."""
+    assert invoke(monkeypatch, "stats", "clear", *args) == 2
+    captured = capfd.readouterr()
+    assert message in captured.out + captured.err
+    assert len(archived_repos()) == 2
+
+
+def test_stats_clear_all_repos_without_a_terminal_refuses(
+    seeded_stats: str, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """With no terminal, --all-repos refuses and does not suggest --yes."""
+    monkeypatch.setattr("gate_cache.console.stdin_isatty", lambda: False)
+    assert invoke(monkeypatch, "stats", "clear", "--all-repos") == 1
+    err = capfd.readouterr().err
+    assert PERSON_MUST_CONFIRM in err
+    assert "--yes" not in err
+    assert len(archived_repos()) == 2
+
+
+def test_stats_clear_all_repos_deletes_every_repository(
+    seeded_stats: str,
+    answer: Callable[[str | None], None],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """A person who types yes to --all-repos deletes the stats of every repository."""
+    answer("yes")
+    assert invoke(monkeypatch, "stats", "clear", "--all-repos") == 0
+    assert "repositories: 2" in capfd.readouterr().err
+    assert not archive_path().exists()
+
+
+@pytest.mark.parametrize("scope", [[], ["--all-repos"]])
+def test_stats_clear_dry_run_deletes_nothing(
+    seeded_stats: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    scope: list[str],
+) -> None:
+    """--dry-run counts what would go, needs no --yes, and deletes nothing."""
+    assert invoke(monkeypatch, "stats", "clear", "--dry-run", "--json", *scope) == 0
+    data = json.loads(capfd.readouterr().out)
+    assert (data["dry_run"], data["deleted"]) == (True, 2 if scope else 1)
+    assert len(archived_repos()) == 2
 
 
 @pytest.mark.parametrize("json_flag", [[], ["--json"]])
 def test_stats_clear_refuses_while_the_dashboard_runs(
-    seeded_stats: Path,
+    seeded_stats: str,
+    stats_dirs: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
     json_flag: list[str],
 ) -> None:
     """A held lock exits 1 with a hint, and nothing is deleted."""
-    held = InstanceLock.acquire(seeded_stats.parent)
+    held = InstanceLock.acquire(stats_dirs[1])
     assert held is not None
     try:
         assert invoke(monkeypatch, "stats", "clear", "--yes", *json_flag) == 1
@@ -656,11 +845,11 @@ def test_stats_clear_refuses_while_the_dashboard_runs(
         assert json.loads(captured.out)["error"]["hint"]
     else:
         assert "hint:" in captured.err
-    assert seeded_stats.exists()
+    assert len(archived_repos()) == 2
 
 
 def test_stats_clear_reports_os_error(
-    seeded_stats: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+    seeded_stats: str, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
     """A filesystem error while clearing exits 1 and names the error."""
 
@@ -1003,12 +1192,13 @@ def test_stats_report_unreadable_record(
         (["stats", "--json", "--", "report"], ["stats", "--json", "--", "report"]),
         (["stats", "--name", "report"], ["stats", "--name", "report"]),
         (["stats", "on"], ["stats", "on"]),
+        (["stats", "-y", "--dry-run", "clear"], ["stats", "clear", "-y", "--dry-run"]),
         (["status", "--json", "report"], ["status", "--json", "report"]),
     ],
 )
-def test_report_moves_ahead_of_stats_flags_only(tokens: list[str], expected: list[str]) -> None:
-    """Only value-less stats flags before `report` move behind it; anything else stays as typed."""
-    assert _report_first(tokens) == expected
+def test_subcommand_moves_ahead_of_stats_flags_only(tokens: list[str], expected: list[str]) -> None:
+    """Only value-less stats flags before a subcommand move behind it; the rest stays as typed."""
+    assert _subcommand_first(tokens) == expected
 
 
 class _FakeDashboardError(Exception):

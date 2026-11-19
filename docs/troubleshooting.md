@@ -46,7 +46,7 @@ To run every command in full while you find the cause, set `GATE_CACHE_DISABLE=1
     gate-cache sees only the content of the files that git does not ignore. After a change outside those files, such as a tool upgrade, a changed environment variable, a change to an ignored file, or a change to a service, a gate can skip with an old result.
 
     - For one run, set `GATE_CACHE_DISABLE=1`.
-    - To delete every record of a pass for the repository, run `gate-cache clear`.
+    - To delete the records of one gate, run `gate-cache clear --name NAME`. To delete every record of a pass for the repository, run `gate-cache clear`.
     - To make the gate run again whenever the input changes, put the input in the name. Read [Write a gate](guides/write-a-gate.md#cover-inputs-that-git-does-not-see).
 
 ??? question "A scoped gate misses a change"

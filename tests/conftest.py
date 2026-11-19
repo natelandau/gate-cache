@@ -24,7 +24,7 @@ from gate_cache.git import GitResult
 from gate_cache.markers import MISS_SUFFIX, marker_dir
 from gate_cache.spot_check import SPOT_CHECK_ENV
 from gate_cache.stats import config as stats_config
-from gate_cache.stats.archive import Archive
+from gate_cache.stats.archive import Archive, archive_path
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -411,3 +411,10 @@ def answer(monkeypatch: pytest.MonkeyPatch) -> Callable[[str | None], None]:
         monkeypatch.setattr("builtins.input", read)
 
     return set_answer
+
+
+def archived_repos() -> list[str | None]:
+    """Return the repository of each run in the stats archive, sorted."""
+    with Archive.open(archive_path()) as archive:
+        rows = archive.connection.execute("SELECT repo FROM events").fetchall()
+    return sorted((repo for (repo,) in rows), key=lambda repo: repo or "")

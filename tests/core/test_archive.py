@@ -23,6 +23,7 @@ from gate_cache.stats.archive import (
 )
 from gate_cache.stats.junit import TESTS_DIR_NAME
 from gate_cache.stats.recorder import Event
+from tests.conftest import REPO_A, REPO_B, insert, insert_results
 
 DAY = 86400.0
 
@@ -863,3 +864,34 @@ def test_migration_adds_spot_check(tmp_path: Path, stored: int) -> None:
         assert (totals["spot_checks"], totals["spot_check_failures"]) == (1, 1)
         expected = [(None, "x", "a::one", "fail", 0.5)] if stored == 5 else []
         assert results(arch) == expected
+
+
+def test_forget_repo_deletes_only_that_repo(arch: Archive, inbox: Path) -> None:
+    """Forgetting a repo deletes its runs and test results and leaves other repos whole."""
+    for repo in (REPO_A, REPO_B):
+        insert(arch.connection, time.time(), repo=repo, name="test")
+        insert_results(arch.connection, {"t1": ("passed", 0.1)}, repo=repo)
+    assert arch.forget_repo(REPO_A, inbox=inbox) == 1
+    for table in ("events", "tests"):
+        repos = [r for (r,) in arch.connection.execute(f"SELECT repo FROM {table}")]  # noqa: S608
+        assert repos == [REPO_B]
+    assert arch.connection.execute("SELECT COUNT(*) FROM test_results").fetchone() == (1,)
+
+
+def test_forgotten_runs_do_not_come_back(arch: Archive, inbox: Path) -> None:
+    """A line read before a repo was forgotten stays deleted when read again, and a later line lands."""
+    now = time.time()
+    old, new, other = (
+        replace(make_event(now - 10), repo=REPO_A),
+        replace(make_event(now - 5), repo=REPO_A),
+        replace(make_event(now - 10), repo=REPO_B),
+    )
+    inbox.write_bytes(old.to_line() + other.to_line())
+    arch.ingest(inbox, now=now, fresh=True)
+    arch.forget_repo(REPO_A, inbox=inbox)
+    (processing,) = processing_files(inbox)
+    with processing.open("ab") as handle:
+        handle.write(new.to_line())
+    arch.ingest(inbox, now=now + 3)
+    rows = sorted(arch.connection.execute("SELECT repo, ts FROM events"))
+    assert rows == sorted([(REPO_A, new.ts), (REPO_B, other.ts)])

@@ -10,8 +10,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from gate_cache.stats import queries
-from gate_cache.stats.archive import gate_of
 from gate_cache.stats.context import Trigger
+from gate_cache.stats.gates import gate_of
 from gate_cache.stats.queries import (
     REPORT_PROBLEM_RUNS,
     Filters,

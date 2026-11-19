@@ -14,9 +14,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 NOTHING_DELETED = "aborted; nothing was deleted"
+PERSON_MUST_CONFIRM = "a person must run it in a terminal and type yes"
 
 
-def confirm_deletion(action: str, warning: Sequence[str]) -> bool:
+def confirm_deletion(action: str, warning: Sequence[str], *, yes_allowed: bool = True) -> bool:
     """Warn that a deletion is permanent and return True only when the user types `yes`.
 
     Without a terminal on stdin nobody can answer, so refuse rather than block or guess; the
@@ -25,15 +26,17 @@ def confirm_deletion(action: str, warning: Sequence[str]) -> bool:
     Args:
         action: The command's verb phrase, such as `clear stats`, used in the prompt.
         warning: What is deleted and what is lost; the first line is the headline.
+        yes_allowed: Whether the command takes --yes, which the refusal then suggests. A
+            deletion only a person may confirm sets it to False.
 
     Returns:
         bool: True when the user typed `yes`, False when they refused or could not answer.
     """
     console_err = err()
     if not console.stdin_isatty():
+        way = f"pass --yes to {action} non-interactively" if yes_allowed else PERSON_MUST_CONFIRM
         console_err.print(
-            f"error: refusing to {action} without confirmation; pass --yes to {action} "
-            "non-interactively",
+            f"error: refusing to {action} without confirmation; {way}",
             style="error",
             markup=False,
         )

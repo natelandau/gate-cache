@@ -72,7 +72,9 @@ Recording never changes whether a command skips, its exit code, or its output.
 gate-cache stats clear
 ```
 
-This command permanently deletes all recorded stats. It asks you to type `yes` first. In a script, give `--yes`. Stop the dashboard first, because the command does not run while the dashboard runs. It does not delete the records of passes that make gates skip. Read [Privacy](../privacy.md) for what gate-cache records.
+This command permanently deletes the recorded stats of the current repository. It shows how many runs it deletes and asks you to type `yes` first. To see what it deletes without a deletion, add `--dry-run`. Stop the dashboard first, because the command does not run while the dashboard runs. It does not delete the records of passes that make gates skip.
+
+To delete the stats of every repository on the computer, run `gate-cache stats clear --all-repos` in a terminal. This form always asks you to type `yes`, and it does not accept `--yes`. Read [Privacy](../privacy.md) for what gate-cache records.
 
 ## Keep test data apart
 
