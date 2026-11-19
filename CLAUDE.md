@@ -81,3 +81,5 @@ Mark a commit as a breaking change (`!` in the subject and a `BREAKING CHANGE:` 
 ## Gates
 
 The duties run each gate through the gate-cache of this working copy. If a change breaks gate-cache, the duties fail too. A gate that already passed on the same content, committed or not, prints `already passed on tree` and skips. To force a full run, set `GATE_CACHE_DISABLE=1`.
+
+Before you add or change a gate, or change the paths in `SUITES` or `DOCS_PATHS`, run `uv run gate-cache --skill` and follow its rules for names, paths, and checks.

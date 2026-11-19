@@ -109,9 +109,9 @@ repos:
 
       - id: ty
         name: ty
-        entry: uv run ty check src/
-        exclude: "tests/|duties.py"
+        entry: uv run duty ty
         language: system
+        pass_filenames: false
         types: [python]
 
       - id: pytest

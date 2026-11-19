@@ -27,6 +27,8 @@ PY_SRC_LIST = tuple(str(_) for _ in PY_SRC_PATHS)
 FORMAT_LIST = (*PY_SRC_LIST, *(_ for _ in ("docs/", "README.md") if Path(_).exists()))
 CI = os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"}
 PROJECT_ROOT = Path(__file__).parent
+# Git ignores .cache/, so a report written there never changes the tree a gate records
+JUNIT_DIR = PROJECT_ROOT / ".cache" / "junit"
 # A change to any of these can break every suite, since every CI job runs through them
 SHARED = ("duties.py", ".github/actions/", "pyproject.toml", "uv.lock", ".python-version")
 PY_SHARED = ("tests/conftest.py", "tests/__init__.py")
@@ -38,6 +40,9 @@ SUITES: dict[str, tuple[str, ...]] = {
         ":(exclude)src/gate_cache/dashboard/",
         ".pre-commit-hooks.yaml",
         "docs/reference/marker-format.md",
+        "docs/reference/configuration.md",
+        "README.md",
+        "LICENSE",
         "tests/core/",
         ".github/workflows/tests-core.yml",
         *PY_SHARED,
@@ -90,19 +95,23 @@ def strip_ansi(text: str) -> str:
     return ansi_chars.sub("", text).replace("[", r"\[")
 
 
-def gated(name: str, cmd: list[str], paths: tuple[str, ...] = ()) -> list[str]:
+def gated(
+    name: str, cmd: list[str], paths: tuple[str, ...] = (), junit: Path | None = None
+) -> list[str]:
     """Wrap a gate command in gate-cache so it skips on a tree where it already passed.
 
     Args:
         name (str): Marker name for the gate.
         cmd (list[str]): Command to run.
         paths (tuple[str, ...]): Pathspecs that scope the gate's tree; empty keys on the whole tree.
+        junit (Path | None): JUnit XML report the command writes, so the run stats name each test.
 
     Returns:
         list[str]: The command prefixed with the gate-cache invocation.
     """
     scope = [arg for path in paths for arg in ("--path", path)]
-    return ["gate-cache", "--name", name, *scope, "--", *cmd]
+    report = ["--junit", str(junit)] if junit is not None else []
+    return ["gate-cache", "--name", name, *scope, *report, "--", *cmd]
 
 
 def pyprefix(title: str) -> str:
@@ -182,6 +191,9 @@ DOCS_PATHS = (
     "src/gate_cache/agent/skill.md",
     "src/gate_cache/__init__.py",
     "duties.py",
+    # They pin the zensical version that builds the site
+    "pyproject.toml",
+    "uv.lock",
 )
 
 
@@ -243,8 +255,14 @@ def _pytest_cmd(target: str, cov_config: str | None, *extra: str) -> list[str]:
 def _pytest_suite(ctx: Context, suite: str, *, coverage: bool) -> None:
     """Run one Python test suite, skipping it when nothing in its paths changed since it passed."""
     cov_config = f"tests/{suite}/coverage.toml" if coverage else None
+    junit = JUNIT_DIR / f"{suite}.xml"
     ctx.run(
-        gated(f"test-{suite}", _pytest_cmd(f"tests/{suite}", cov_config), paths=SUITES[suite]),
+        gated(
+            f"test-{suite}",
+            _pytest_cmd(f"tests/{suite}", cov_config, f"--junitxml={junit}"),
+            paths=SUITES[suite],
+            junit=junit,
+        ),
         title=pyprefix(f"{suite} tests"),
         capture=CI,
     )
@@ -287,11 +305,14 @@ def _frontend_deps(ctx: Context) -> None:
 def frontend_test(ctx: Context) -> None:
     """Run the dashboard frontend unit tests."""
     _frontend_deps(ctx)
+    junit = JUNIT_DIR / "frontend.xml"
+    reporters = ["--reporter=default", "--reporter=junit", f"--outputFile.junit={junit}"]
     ctx.run(
         gated(
             "frontend-test",
-            ["npm", "--prefix", "frontend", "run", "test"],
+            ["npm", "--prefix", "frontend", "run", "test", "--", *reporters],
             paths=SUITES["frontend"],
+            junit=junit,
         ),
         title="frontend tests",
     )
