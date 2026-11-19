@@ -13,6 +13,7 @@ from gate_cache.stats import queries
 from gate_cache.stats.archive import Archive
 from gate_cache.stats.context import Trigger
 from gate_cache.stats.queries import (
+    REPORT_PROBLEM_RUNS,
     Filters,
     activity,
     coalescing,
@@ -147,7 +148,7 @@ def test_empty_archive(empty_conn: sqlite3.Connection) -> None:
     assert s["skip_rate"] is None
     assert s["daily"] == []
     assert gates(empty_conn, Filters()) == {"gates": []}
-    assert flaky(empty_conn, Filters()) == {"gates": []}
+    assert flaky(empty_conn, Filters())["gates"] == []
     assert repos(empty_conn, Filters()) == {"repos": []}
     assert activity(empty_conn, Filters()) == {"events": [], "next_before": None}
 
@@ -565,10 +566,10 @@ def test_unknown_outcomes_are_not_counted(conn: sqlite3.Connection) -> None:
             summary(conn, filters),
             gates(conn, filters),
             repos(conn, filters),
-            flaky(conn, filters),
+            flaky(conn, filters, now=BASE),
             activity(conn, filters),
-            gate_detail(conn, filters, repo=REPO_A, name="lint"),
-            gate_detail(conn, filters, repo=REPO_A, name="test"),
+            gate_detail(conn, filters, repo=REPO_A, name="lint", now=BASE),
+            gate_detail(conn, filters, repo=REPO_A, name="test", now=BASE),
         ]
 
     before = snapshot()
@@ -1251,3 +1252,165 @@ def test_gate_detail_by_source_drops_sources_without_time(empty_conn: sqlite3.Co
     insert(empty_conn, BASE + 1, "skip", saved=3.0, raw={"trigger": "ci"})
     rows = gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["by_source"]
     assert [r["label"] for r in rows] == ["Git hook"]
+
+
+def insert_results(
+    conn: sqlite3.Connection,
+    results: dict[str, tuple[str, float | None]],
+    *,
+    repo: str | None = REPO_A,
+    gate: str = "test",
+) -> None:
+    """Attach per-test results to the newest event, as name -> (outcome, duration)."""
+    (event_id,) = conn.execute("SELECT MAX(id) FROM events").fetchone()
+    for name, (outcome, duration) in results.items():
+        conn.execute(
+            "INSERT INTO tests (repo, gate, name) SELECT ?, ?, ? WHERE NOT EXISTS"
+            " (SELECT 1 FROM tests WHERE repo IS ? AND gate = ? AND name = ?)",
+            (repo, gate, name, repo, gate, name),
+        )
+        (test_id,) = conn.execute(
+            "SELECT id FROM tests WHERE repo IS ? AND gate = ? AND name = ?", (repo, gate, name)
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO test_results (event_id, test_id, outcome, duration) VALUES (?, ?, ?, ?)",
+            (event_id, test_id, outcome, duration),
+        )
+    conn.commit()
+
+
+def test_slowest_tests(empty_conn: sqlite3.Connection) -> None:
+    """Slowest tests take the median of passed and retried results inside the window."""
+    insert(empty_conn, BASE - DAY, "pass", name="test", duration=10.0)
+    insert_results(empty_conn, {"old": ("pass", 99.0)})
+    for i, (slow, fast) in enumerate([(4.0, 1.0), (6.0, 1.0), (50.0, 3.0)]):
+        insert(empty_conn, BASE + i, "pass", name="test", duration=10.0)
+        insert_results(
+            empty_conn,
+            {"slow": ("retried" if i == 1 else "pass", slow), "fast": ("pass", fast)},
+        )
+    insert(empty_conn, BASE + 9, "fail", name="test", duration=10.0)
+    insert_results(empty_conn, {"fast": ("fail", 500.0)})
+
+    detail = gate_detail(empty_conn, Filters(start=BASE), repo=REPO_A, name="test", now=BASE)
+
+    assert detail["slowest_tests"] == [
+        {"name": "slow", "median": 6.0, "runs": 3, "share": 0.6},
+        {"name": "fast", "median": 1.0, "runs": 3, "share": 0.1},
+    ]
+    assert detail["has_tests"] is True
+
+
+def test_slowest_tests_empty_without_reports(conn: sqlite3.Connection) -> None:
+    """A gate with no per-test results has no slowest tests."""
+    detail = gate_detail(conn, Filters(), repo=REPO_A, name="test")
+    assert detail["slowest_tests"] == []
+    assert detail["has_tests"] is False
+
+
+def test_report_problems(empty_conn: sqlite3.Connection) -> None:
+    """Report problems count the junit status of runs that ran, not skips."""
+    insert(empty_conn, BASE, "pass", duration=1.0, raw={"junit": "stale"})
+    insert(empty_conn, BASE + 1, "fail", duration=1.0, raw={"junit": "missing"})
+    insert(empty_conn, BASE + 2, "pass", duration=1.0, raw={"junit": 5})
+    insert(empty_conn, BASE + 3, "skip", saved=1.0, raw={"junit": "invalid"})
+    insert(empty_conn, BASE + 4, "pass", duration=1.0, raw={"junit": 3, "junit_problem": "invalid"})
+    detail = gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")
+    assert detail["report_problems"] == {"missing": 1, "stale": 1, "invalid": 1}
+
+
+def test_report_problems_skip_reported_runs(empty_conn: sqlite3.Connection) -> None:
+    """A run that reported a failure without running the command takes no recent-run slot."""
+    insert(empty_conn, BASE, "fail", duration=1.0, raw={"junit": "missing"})
+    for offset in range(1, REPORT_PROBLEM_RUNS + 1):
+        insert(empty_conn, BASE + offset, "fail", reported=True)
+    detail = gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")
+    assert detail["report_problems"] == {"missing": 1, "stale": 0, "invalid": 0}
+
+
+@pytest.mark.parametrize(
+    ("start", "expected"),
+    [
+        (None, 1_000 * DAY - 90 * DAY),
+        (1_000 * DAY - 100 * DAY, 1_000 * DAY - 90 * DAY),
+        (1_000 * DAY - 7 * DAY, None),
+        # A 90-day range whose start the browser computed a moment before the request.
+        (1_000 * DAY - 90 * DAY - 5, None),
+    ],
+)
+def test_tests_cutoff(
+    empty_conn: sqlite3.Connection, start: float | None, expected: float | None
+) -> None:
+    """The cutoff marks where per-test data ends when the window reaches past it."""
+    filters = Filters(start=start)
+    detail = gate_detail(empty_conn, filters, repo=REPO_A, name="lint", now=1_000 * DAY)
+    assert detail["tests_cutoff"] == expected
+    assert flaky(empty_conn, filters, now=1_000 * DAY)["tests_cutoff"] == expected
+
+
+def test_flaky_tests_on_flaky_tree(empty_conn: sqlite3.Connection) -> None:
+    """A test is flaky when it failed and passed on one tree, not across trees."""
+    insert(empty_conn, BASE, "fail", name="test", tree="t1", duration=1.0)
+    insert_results(empty_conn, {"same": ("fail", 1.0), "split": ("pass", 1.0)})
+    insert(empty_conn, BASE + 1, "pass", name="test", tree="t1", duration=1.0)
+    insert_results(empty_conn, {"same": ("retried", 1.0), "split": ("pass", 1.0)})
+    insert(empty_conn, BASE + 2, "fail", name="test", tree="t2", duration=1.0)
+    insert_results(empty_conn, {"split": ("fail", 1.0)})
+    insert(empty_conn, BASE + 3, "pass", name="test", tree="t2", duration=1.0)
+    insert_results(empty_conn, {"steady": ("pass", 1.0)})
+
+    (gate,) = flaky(empty_conn, Filters(), now=BASE)["gates"]
+
+    assert gate["tests"] == [{"name": "same", "fails": 1, "passes": 1, "last": BASE + 1}]
+
+
+def test_flaky_keys_split(empty_conn: sqlite3.Connection) -> None:
+    """Results under two keys of one gate on one tree do not make a test flaky."""
+    insert(empty_conn, BASE, "fail", name="test@v20", tree="t1", duration=1.0)
+    insert_results(empty_conn, {"keyed": ("fail", 1.0), "real": ("fail", 1.0)})
+    insert(empty_conn, BASE + 1, "pass", name="test@v20", tree="t1", duration=1.0)
+    insert_results(empty_conn, {"real": ("pass", 1.0)})
+    insert(empty_conn, BASE + 2, "fail", name="test@v22", tree="t1", duration=1.0)
+    insert_results(empty_conn, {"steady": ("pass", 1.0)})
+    insert(empty_conn, BASE + 3, "pass", name="test@v22", tree="t1", duration=1.0)
+    insert_results(empty_conn, {"keyed": ("pass", 1.0)})
+
+    (gate,) = flaky(empty_conn, Filters(), now=BASE)["gates"]
+
+    assert [t["name"] for t in gate["tests"]] == ["real"]
+
+
+def test_retried_tests_listed_for_passing_gate(empty_conn: sqlite3.Connection) -> None:
+    """A gate with retried tests and no flaky tree is listed for its retried tests."""
+    insert(empty_conn, BASE, "pass", name="test", duration=1.0)
+    insert_results(empty_conn, {"wobbly": ("retried", 1.0), "steady": ("pass", 1.0)})
+    insert(empty_conn, BASE + 5, "pass", name="test", duration=1.0)
+    insert_results(empty_conn, {"wobbly": ("retried", 1.0)})
+
+    (gate,) = flaky(empty_conn, Filters(), now=BASE)["gates"]
+
+    assert gate["trees"] == []
+    assert gate["tree_count"] == 0
+    assert gate["tests"] == []
+    assert gate["retried"] == [{"name": "wobbly", "runs": 2, "last": BASE + 5}]
+
+
+def test_per_test_queries_skip_results_past_retention(empty_conn: sqlite3.Connection) -> None:
+    """Per-test results on events older than the per-test retention are left out."""
+    insert(empty_conn, BASE, "pass", name="test", duration=1.0)
+    insert_results(empty_conn, {"old": ("retried", 1.0)})
+    insert(empty_conn, BASE + 1, "fail", name="lint", tree="t1", duration=1.0)
+    insert_results(empty_conn, {"wobbly": ("fail", 1.0)})
+    insert(empty_conn, BASE + 2, "pass", name="lint", tree="t1", duration=1.0)
+    insert_results(empty_conn, {"wobbly": ("pass", 1.0)})
+    later = BASE + 91 * DAY
+
+    (gate,) = flaky(empty_conn, Filters(), now=later)["gates"]
+
+    assert gate["name"] == "lint"
+    assert gate["tree_count"] == 1
+    assert gate["tests"] == []
+    assert (
+        gate_detail(empty_conn, Filters(), repo=REPO_A, name="test", now=later)["slowest_tests"]
+        == []
+    )

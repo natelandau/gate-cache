@@ -36,12 +36,13 @@ gate-cache writes to the stats directory when [stats recording](../stats/record-
 | File | Holds |
 | --- | --- |
 | `events.jsonl` | The runs that gate-cache recorded since the dashboard last read them. |
-| `stats.sqlite3`, and its `-wal` and `-shm` files | All the runs that the dashboard read, for up to 365 days. |
+| `stats.sqlite3`, and its `-wal` and `-shm` files | All the runs that the dashboard read, for up to 365 days, and the results of tests, for up to 90 days. |
 | `machine-id` | A random ID for your computer. |
 | `dashboard.lock`, `dashboard.url` | Files that make sure that only one dashboard runs at a time. |
 | `events.*.processing` | Runs that the dashboard is reading. |
+| `tests/` | One file for each run of a gate with `--junit` that ran the command and found a report from that run. The file holds the results of the tests until the dashboard reads them. |
 
-`gate-cache stats clear` deletes the recorded runs: `events.jsonl`, `stats.sqlite3` with its `-wal` and `-shm` files, and the `.processing` files. It keeps `machine-id` and the dashboard files.
+`gate-cache stats clear` deletes the recorded runs: `events.jsonl`, `stats.sqlite3` with its `-wal` and `-shm` files, the `.processing` files, and the `tests` folder. It keeps `machine-id` and the dashboard files.
 
 ## Temporary files
 

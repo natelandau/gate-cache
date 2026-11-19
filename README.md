@@ -14,6 +14,17 @@ gate-cache has three goals:
 
 ![The gate-cache dashboard overview, with run counts, time saved, failures, flaky gates, and a chart of time spent per gate](https://raw.githubusercontent.com/natelandau/gate-cache/main/docs/images/dashboard-overview.png)
 
+## Features
+
+- Spend no time on checks that cannot give a new result. If a lint or test command already passed on the same hashed content of your files, gate-cache skips it.
+- Run only the tests that your change can affect.
+- Never skip a test that a new tool version or setting can break.
+- Know how long a check takes before it runs.
+- Explore your runs in a dashboard in your browser: flaky gates, slow gates, and the time each gate costs and saves.
+- Integrate with JUnit reports to see which tests are slow or flaky and need a fix.
+- Let a coding agent set up gate-cache in a project of any language.
+- Keep your data private: stats stay on your computer and are off until you turn them on.
+
 ## Install
 
 gate-cache is a Python program, and it needs Python 3.11 or later on macOS or Linux. Your project can use any language. Install gate-cache with [pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/):

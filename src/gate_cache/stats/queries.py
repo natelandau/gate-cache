@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
 from zoneinfo import ZoneInfo
 
-from gate_cache.stats.archive import RETENTION_DAYS
+from gate_cache.stats.archive import RETENTION_DAYS, tests_since
 from gate_cache.stats.recorder import Outcome
 
 if TYPE_CHECKING:
@@ -43,6 +43,13 @@ _HISTOGRAM_BINS = 12
 # A failure faster than this share of the median pass stopped before the gate did its real work.
 _EARLY_FAIL_FRACTION = 0.5
 _INTEGER_RE = re.compile(r"-?[0-9]+")
+_TEST_PASSED = "('pass', 'retried')"
+SLOWEST_TESTS_LIMIT = 20
+# Bounds the per-test read: a busy gate can hold thousands of results per run.
+SLOWEST_TESTS_RUNS = 200
+REPORT_PROBLEM_RUNS = 20
+_REPORT_PROBLEMS = ("missing", "stale", "invalid")
+_TESTS_CUTOFF_SLACK = 3600
 
 # Plain decimal text, optionally in the exponent form repr gives very large or small floats.
 NUMBER_RE = re.compile(r"-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?")
@@ -824,22 +831,103 @@ def slowdowns(
     return {"gates": out[:limit], "comparable": True}
 
 
+def _slowest_tests(
+    conn: sqlite3.Connection,
+    where: str,
+    params: list[Any],
+    *,
+    gate_median: float | None,
+    since: float,
+) -> list[dict[str, Any]]:
+    """Return the tests with the longest median passing duration in the gate's recent runs."""
+    # The median averages the middle row, or the middle two, of each test's sorted durations.
+    rows = conn.execute(
+        "WITH runs AS (SELECT id FROM events"  # noqa: S608
+        + _and(
+            where,
+            "ts >= ? AND EXISTS (SELECT 1 FROM test_results WHERE event_id = events.id)",
+        )
+        + " ORDER BY ts DESC LIMIT ?),"
+        " ranked AS (SELECT tests.name AS name, test_results.duration AS duration,"
+        " ROW_NUMBER() OVER (PARTITION BY tests.name ORDER BY test_results.duration) AS rank,"
+        " COUNT(*) OVER (PARTITION BY tests.name) AS runs"
+        " FROM runs"
+        " JOIN test_results ON test_results.event_id = runs.id"
+        " JOIN tests ON tests.id = test_results.test_id"
+        " WHERE test_results.outcome IN " + _TEST_PASSED + " AND test_results.duration IS NOT NULL)"
+        " SELECT name, AVG(duration) AS median, MAX(runs) FROM ranked"
+        " WHERE rank IN ((runs + 1) / 2, (runs + 2) / 2)"
+        " GROUP BY name ORDER BY median DESC, name LIMIT ?",
+        [*params, since, SLOWEST_TESTS_RUNS, SLOWEST_TESTS_LIMIT],
+    ).fetchall()
+    return [
+        {
+            "name": test,
+            "median": median,
+            "runs": runs,
+            "share": median / gate_median if gate_median else None,
+        }
+        for test, median, runs in rows
+    ]
+
+
+def _report_problems(conn: sqlite3.Connection, where: str, params: list[Any]) -> dict[str, int]:
+    """Count the gate's recent runs whose test reports were missing, stale, or invalid.
+
+    A run counts once, under the status of its unread reports. That is `junit` when no report
+    was read, else `junit_problem`.
+    """
+    counts = dict.fromkeys(_REPORT_PROBLEMS, 0)
+    for (status,) in conn.execute(
+        "SELECT CASE WHEN json_valid(raw) THEN CASE json_type(raw, '$.junit')"  # noqa: S608
+        " WHEN 'text' THEN json_extract(raw, '$.junit')"
+        " ELSE json_extract(raw, '$.junit_problem') END END"
+        " FROM events"
+        + _and(where, "outcome != 'skip' AND NOT reported")
+        + " ORDER BY ts DESC, id DESC LIMIT ?",
+        [*params, REPORT_PROBLEM_RUNS],
+    ):
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _tests_cutoff(filters: Filters, since: float) -> float | None:
+    """Return where per-test retention starts when the window reaches further back."""
+    # A rolling range as long as the retention starts a little before `since`, because the
+    # browser computed its start before this request reached the server.
+    reaches = filters.start is None or filters.start < since - _TESTS_CUTOFF_SLACK
+    return since if reaches else None
+
+
 def gate_detail(
-    conn: sqlite3.Connection, filters: Filters, *, repo: str | None, name: str
+    conn: sqlite3.Connection,
+    filters: Filters,
+    *,
+    repo: str | None,
+    name: str,
+    now: float | None = None,
 ) -> dict[str, Any]:
-    """Return the pass trend, recent events, and flaky trees of one gate.
+    """Return the pass trend, recent events, flaky trees, and per-test detail of one gate.
 
     Args:
         conn: Archive connection.
         filters: Range filters; its repo is ignored.
         repo: The gate's repo; None selects events recorded without a repo.
         name: Gate, as stats group it: the name before any `@` key.
+        now: Current Unix time in seconds; defaults to the clock.
 
     Returns:
         The detail body.
     """
     where, params = _where(filters, gate=name, exact_repo=(repo,))
     names = _all_repo_names(conn)
+    since = tests_since(time.time() if now is None else now)
+    has_tests = bool(
+        conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM tests WHERE repo IS ? AND gate = ?)", (repo, name)
+        ).fetchone()[0]
+    )
     trend = conn.execute(
         "SELECT ts, duration FROM events"  # noqa: S608
         + _and(where, "outcome = 'pass' AND duration IS NOT NULL")
@@ -873,6 +961,14 @@ def gate_detail(
             {"tree": tree, "fails": fails, "passes": passes, "last": last}
             for _, _, tree, fails, passes, last in _flaky_trees(conn, where, params)
         ],
+        "slowest_tests": (
+            _slowest_tests(conn, where, params, gate_median=median, since=since)
+            if has_tests
+            else []
+        ),
+        "has_tests": has_tests,
+        "report_problems": _report_problems(conn, where, params),
+        "tests_cutoff": _tests_cutoff(filters, since),
     }
 
 
@@ -1277,8 +1373,66 @@ def reasons(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
     return {"reasons": [{"outcome": o, "reason": r, "count": n} for o, r, n in rows]}
 
 
-def flaky(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
-    """Return gates with trees that both failed and passed, newest first."""
+# CROSS JOIN keeps SQLite from scanning every test result: the window's events lead and
+# their results come through the event_id index.
+def _flaky_tests(
+    conn: sqlite3.Connection, where: str, params: list[Any], *, since: float
+) -> dict[tuple[str | None, str], list[dict[str, Any]]]:
+    """Return, per gate, the tests that both failed and passed on one of its flaky trees."""
+    out: dict[tuple[str | None, str], list[dict[str, Any]]] = defaultdict(list)
+    for repo, gate, test, fails, passes, last in conn.execute(
+        _flaky_trees_cte(where)  # noqa: S608
+        + "SELECT f.repo, f.gate, tests.name, SUM(f.fails), SUM(f.passes), MAX(f.last) FROM ("
+        " SELECT e.repo, e.gate, test_results.test_id,"
+        " SUM(test_results.outcome = 'fail') AS fails,"
+        " SUM(test_results.outcome IN " + _TEST_PASSED + ") AS passes, MAX(e.ts) AS last"
+        " FROM (SELECT id, repo, gate, name, tree, ts FROM events"
+        + _and(where, "tree IS NOT NULL AND ts >= ? AND " + _ON_FLAKY_TREE)
+        + ") AS e CROSS JOIN test_results ON test_results.event_id = e.id"
+        " GROUP BY e.repo, e.name, e.tree, test_results.test_id"
+        " HAVING fails > 0 AND passes > 0"
+        ") AS f JOIN tests ON tests.id = f.test_id"
+        " GROUP BY f.test_id ORDER BY MAX(f.last) DESC, tests.name",
+        [*params, *params, since],
+    ):
+        out[repo, gate].append({"name": test, "fails": fails, "passes": passes, "last": last})
+    return out
+
+
+def _retried_tests(
+    conn: sqlite3.Connection, where: str, params: list[Any], *, since: float
+) -> dict[tuple[str | None, str], list[dict[str, Any]]]:
+    """Return, per gate, the tests that passed on a retry."""
+    out: dict[tuple[str | None, str], list[dict[str, Any]]] = defaultdict(list)
+    for repo, gate, test, runs, last in conn.execute(
+        "SELECT e.repo, e.gate, tests.name, COUNT(*), MAX(e.ts)"  # noqa: S608
+        " FROM (SELECT id, repo, gate, ts FROM events" + _and(where, "ts >= ?") + ") AS e"
+        " CROSS JOIN test_results ON test_results.event_id = e.id"
+        " JOIN tests ON tests.id = test_results.test_id"
+        " WHERE test_results.outcome = 'retried'"
+        " GROUP BY tests.id ORDER BY MAX(e.ts) DESC, tests.name",
+        [*params, since],
+    ):
+        out[repo, gate].append({"name": test, "runs": runs, "last": last})
+    return out
+
+
+def flaky(
+    conn: sqlite3.Connection, filters: Filters, *, now: float | None = None
+) -> dict[str, Any]:
+    """Return gates with flaky trees or retried tests, newest first.
+
+    Each gate lists its flaky trees with their runs, the tests that both failed and passed on
+    one of those trees, and the tests that passed on a retry.
+
+    Args:
+        conn: Archive connection.
+        filters: Repo and range filters.
+        now: Current Unix time in seconds; defaults to the clock.
+
+    Returns:
+        The gates, and where per-test retention starts when the window reaches further back.
+    """
     where, params = _where(filters)
     names = _all_repo_names(conn)
     runs: dict[tuple[str | None, str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -1291,19 +1445,31 @@ def flaky(conn: sqlite3.Connection, filters: Filters) -> dict[str, Any]:
         event = _event_row(row, names)
         runs[event["repo"], event["gate"], event["tree"]].append(event)
     last_seen = {key: max(run["ts"] for run in tree_runs) for key, tree_runs in runs.items()}
-    by_gate: dict[tuple[str | None, str], list[tuple[str, float]]] = {}
+    by_gate: dict[tuple[str | None, str], list[tuple[str, float]]] = defaultdict(list)
     for repo, gate, tree in sorted(last_seen, key=lambda k: (-last_seen[k], k[2])):
-        by_gate.setdefault((repo, gate), []).append((tree, last_seen[repo, gate, tree]))
-    out: list[dict[str, Any]] = [
-        {
-            "repo": repo,
-            "repo_name": names[repo],
-            "name": gate,
-            "tree_count": len(gate_trees),
-            "last_seen": max(last for _, last in gate_trees),
-            "trees": [{"tree": tree, "runs": runs[repo, gate, tree]} for tree, _ in gate_trees],
-        }
-        for (repo, gate), gate_trees in by_gate.items()
-    ]
+        by_gate[repo, gate].append((tree, last_seen[repo, gate, tree]))
+    since = tests_since(time.time() if now is None else now)
+    tests = _flaky_tests(conn, where, params, since=since)
+    retried = _retried_tests(conn, where, params, since=since)
+    out: list[dict[str, Any]] = []
+    # Not a set union, whose order varies between processes: gates that tie on last_seen
+    # keep a stable order through the sort below.
+    for repo, gate in dict.fromkeys([*by_gate, *retried]):
+        gate_trees = by_gate[repo, gate]
+        gate_retried = retried[repo, gate]
+        out.append(
+            {
+                "repo": repo,
+                "repo_name": names[repo],
+                "name": gate,
+                "tree_count": len(gate_trees),
+                "last_seen": max(
+                    [last for _, last in gate_trees] + [t["last"] for t in gate_retried]
+                ),
+                "trees": [{"tree": tree, "runs": runs[repo, gate, tree]} for tree, _ in gate_trees],
+                "tests": tests[repo, gate],
+                "retried": gate_retried,
+            }
+        )
     out.sort(key=lambda g: -g["last_seen"])
-    return {"gates": out}
+    return {"gates": out, "tests_cutoff": _tests_cutoff(filters, since)}

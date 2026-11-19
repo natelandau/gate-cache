@@ -35,7 +35,7 @@
     () => span,
   );
 
-  const rows = $derived(topFlaky(query.data ?? []));
+  const rows = $derived(topFlaky(query.data?.gates ?? []));
 
   function treeText(count: number): string {
     return `${formatCount(count)} flaky ${count === 1 ? "tree" : "trees"}`;
@@ -58,7 +58,7 @@
   titleId="flaky-gates-title"
   loading={query.loading && !query.data}
   error={query.error}
-  empty={!query.data || query.data.length === 0}
+  empty={rows.length === 0}
   emptyTitle={emptyTitle("flaky gates", { range: filters.range, span, repoLabel })}
   emptyDetail={emptyHint({ range: filters.range, span, repoLabel, recording: freshness.recording })}
 >

@@ -26,6 +26,8 @@ The Flaky page lists each flaky gate. Under each gate, it shows each hash with w
 
 The Breakdown panel on the overview and the gate details show which sources and computers ran a gate.
 
+To see which tests of a gate fail, record its test reports. Read [Find slow and flaky tests](test-detail.md).
+
 ## Make sure it is not gate-cache
 
 A gate also looks flaky when its result depends on an input that gate-cache does not see, such as an environment variable or the installed version of a tool. Put that input in the gate name. Read [Write a gate](../guides/write-a-gate.md#cover-inputs-that-git-does-not-see).

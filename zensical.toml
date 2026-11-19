@@ -29,6 +29,7 @@
             { "Record stats" = "stats/record-stats.md" },
             { "The dashboard" = "stats/dashboard.md" },
             { "Find flaky gates" = "stats/flaky-gates.md" },
+            { "Find slow and flaky tests" = "stats/test-detail.md" },
             { "Cut what your checks cost" = "stats/cost.md" },
             { "Metrics" = "stats/metrics.md" },
         ] },

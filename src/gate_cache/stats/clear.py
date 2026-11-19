@@ -6,6 +6,7 @@ from gate_cache.console import confirm_deletion, say
 from gate_cache.stats import config
 from gate_cache.stats.archive import ARCHIVE_NAME
 from gate_cache.stats.context import MACHINE_ID_TEMP_GLOB
+from gate_cache.stats.junit import TESTS_DIR_NAME
 from gate_cache.stats.lock import InstanceLock
 from gate_cache.stats.recorder import INBOX_NAME
 
@@ -46,6 +47,8 @@ def stats_clear(*, confirmed: bool = False) -> int:
             *state.glob("events.*.processing"),
             *state.glob(MACHINE_ID_TEMP_GLOB),
             *(state / f"{ARCHIVE_NAME}{suffix}" for suffix in ("", "-wal", "-shm")),
+            # The folder stays, since a gate run can write into it meanwhile.
+            *(state / TESTS_DIR_NAME).glob("*"),
         ]
         for target in targets:
             target.unlink(missing_ok=True)

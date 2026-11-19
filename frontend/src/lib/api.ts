@@ -237,6 +237,45 @@ export interface GateDetail {
   /** Newest events first, at most 50. */
   recent: EventRow[];
   flaky_trees: FlakyTree[];
+  /** At most 20 tests, slowest median passing duration first; empty without test reports. */
+  slowest_tests: SlowTest[];
+  /** True when any run of the gate recorded a test report. */
+  has_tests: boolean;
+  /** Recent runs whose test report had each problem. */
+  report_problems: ReportProblems;
+  /** Unix seconds where per-test data starts, when the range reaches further back; else null. */
+  tests_cutoff: number | null;
+}
+
+/** One test of a gate with its median passing duration. */
+export interface SlowTest {
+  name: string;
+  median: number;
+  runs: number;
+  /** The test's median over the gate's median passing run; null when the gate has none. */
+  share: number | null;
+}
+
+/** Counts of a gate's recent runs whose test report was missing, stale, or unreadable. */
+export interface ReportProblems {
+  missing: number;
+  stale: number;
+  invalid: number;
+}
+
+/** A test that both failed and passed on the same tree. */
+export interface FlakyTest {
+  name: string;
+  fails: number;
+  passes: number;
+  last: number;
+}
+
+/** A test that passed on a retry. */
+export interface RetriedTest {
+  name: string;
+  runs: number;
+  last: number;
 }
 
 export interface RepoRow {
@@ -340,8 +379,18 @@ export interface FlakyGate {
   name: string;
   tree_count: number;
   last_seen: number;
-  /** Each flaky tree with its runs, oldest first. */
+  /** Each flaky tree with its runs, oldest first; empty for a gate with only retried tests. */
   trees: { tree: string; runs: EventRow[] }[];
+  /** Tests that both failed and passed on one of the gate's flaky trees, newest first. */
+  tests: FlakyTest[];
+  /** Tests that passed on a retry, newest first. */
+  retried: RetriedTest[];
+}
+
+export interface FlakyPage {
+  gates: FlakyGate[];
+  /** Where per-test retention starts, when the range reaches further back; else null. */
+  tests_cutoff: number | null;
 }
 
 export type Freshness = FreshnessReading;
@@ -511,9 +560,8 @@ export function getActivity(
   return request("activity", params, options.signal);
 }
 
-export async function getFlaky(options: RequestOptions = {}): Promise<FlakyGate[]> {
-  const body = await request<{ gates: FlakyGate[] }>("flaky", scoped(options), options.signal);
-  return body.gates;
+export async function getFlaky(options: RequestOptions = {}): Promise<FlakyPage> {
+  return request<FlakyPage>("flaky", scoped(options), options.signal);
 }
 
 /** Fetch activity for each of the 168 hours of the week, Sunday first. */

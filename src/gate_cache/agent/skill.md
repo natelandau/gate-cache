@@ -56,11 +56,29 @@ If the user asks which checks are flaky, slow, or cost the most time, do these s
 
 The dashboard is a page in a browser, for people. gate-cache has no command that prints the record for an agent. Only a copy of gate-cache installed from PyPI has the dashboard. A copy that the prek or pre-commit hook installs, or a copy from a git URL or a local path, has none. In that case, tell the user to run the dashboard from a copy installed from PyPI, such as with `pipx run gate-cache dashboard` or `uvx gate-cache dashboard`.
 
+### Record the tests of a gate
+
+With recording on, `--junit PATH` makes gate-cache read the JUnit XML report that the command writes, and record the name, outcome, and duration of each test. The dashboard then shows the slowest tests and the flaky tests by name. `--junit` never changes whether a gate skips, its output, or its exit code. With recording off, gate-cache ignores it.
+
+gate-cache does not make the report. Tell the test tool to write it, to the same path:
+
+```sh
+gate-cache --name unit --junit reports/unit.xml -- pytest --junitxml=reports/unit.xml
+gate-cache --name web --junit reports/web.xml -- npx vitest run --reporter=junit --outputFile=reports/web.xml
+gate-cache --name go-test --junit reports/go.xml -- gotestsum --junitfile reports/go.xml
+```
+
+- Write the report to a path that git ignores, or outside the repository. A new file that git sees changes the content, and gate-cache then records no pass.
+- Give each gate its own report path. If the name has an `@` key, put the key in the path too, such as `reports/test-node20.xml` for `test@node20`.
+- A relative path is read from the directory where gate-cache starts.
+- For a tool that writes one file for each test class, such as Maven Surefire or Gradle, give the folder. gate-cache reads the `.xml` files in it that the run wrote.
+- Repeat `--junit` for each report file or folder.
+
 ## Write a gate
 
-The syntax is `gate-cache [--name NAME] [--path PATHSPEC]... -- COMMAND [ARGS...]`.
+The syntax is `gate-cache [--name NAME] [--path PATHSPEC]... [--junit PATH]... -- COMMAND [ARGS...]`.
 
-- `--` is required. Only `--name` and `--path` can come before it, each as `--name VALUE` or `--name=VALUE`.
+- `--` is required. Only `--name`, `--path`, `--junit`, `--wait-timeout`, and `--on-wait-failure` can come before it, each as `--name VALUE` or `--name=VALUE`.
 - Everything after `--` is the command, exactly as given. gate-cache does not use a shell. To use a pipe or `&&`, put the command in a script or use `sh -c '...'`.
 - If the repository already runs the command from a script, a package script, or a task-runner recipe, put gate-cache there. Then the terminal, the git hooks, and agents all run the same gate and share its markers. Do not wrap the same command in two places. Do not add a task runner that the repository does not use.
 
