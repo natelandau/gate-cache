@@ -38,7 +38,14 @@ from gate_cache.gate_lock import (
     lock_path,
     read_holder,
 )
-from gate_cache.markers import marker_dir, marker_path, miss_path, write_marker, write_miss
+from gate_cache.markers import (
+    marker_dir,
+    marker_key,
+    marker_path,
+    miss_path,
+    write_marker,
+    write_miss,
+)
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot, take_snapshot
 from gate_cache.spot_check import SPOT_CHECK_ENV, SpotCheck, decide
@@ -353,11 +360,11 @@ def test_prune_runs_after_write(git_repo: Path, counter: Counter) -> None:
     """Old markers are pruned after a successful write."""
     directory = marker_dir(git_repo / ".git")
     directory.mkdir()
-    old = directory / "old"
+    old = directory / marker_key("old", NAME)
     old.write_text("{}")
     stale = time.time() - 31 * 86400
     os.utime(old, (stale, stale))
-    old_durations = durations_dir(git_repo / ".git") / "old.json"
+    old_durations = durations_dir(git_repo / ".git") / f"{'0' * 64}.json"
     old_durations.parent.mkdir()
     old_durations.write_text("[1]")
     os.utime(old_durations, (stale, stale))
@@ -371,7 +378,7 @@ def _plant_marker(repo: Path, name: str, age_days: float) -> Path:
     """Create a marker file whose mtime is age_days in the past."""
     directory = marker_dir(repo / ".git")
     directory.mkdir(exist_ok=True)
-    path = directory / name
+    path = directory / marker_key(name, NAME)
     path.write_text("{}")
     stamp = time.time() - age_days * 86400
     os.utime(path, (stamp, stamp))

@@ -3,13 +3,16 @@
 import json
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+from gate_cache.durations import DURATIONS_DIRNAME, DURATIONS_NAME, durations_dir, durations_path
+from gate_cache.gate import clear_cache
 from gate_cache.markers import (
+    MARKER_DIRNAME,
     MAX_RECORD_BYTES,
     clear_markers,
     marker_dir,
@@ -21,6 +24,7 @@ from gate_cache.markers import (
     missed_records,
     passed_names,
     prune_markers,
+    select_markers,
     write_marker,
     write_miss,
 )
@@ -156,19 +160,26 @@ def test_write_marker_raises_on_unwritable_dir(tmp_path):
         parent.chmod(0o700)
 
 
-def test_prune_removes_only_old_files(tmp_path):
-    """Verify pruning deletes markers older than the cutoff and keeps fresh ones."""
-    old = tmp_path / "old"
-    fresh = tmp_path / "fresh"
-    old.write_text("{}", encoding="utf-8")
-    fresh.write_text("{}", encoding="utf-8")
+def test_prune_removes_only_old_records(tmp_path):
+    """Verify pruning deletes old records and temp files, and keeps fresh and foreign files."""
+    old = tmp_path / marker_key(TREE, "old")
+    old_miss = tmp_path / f"{marker_key(TREE, 'old')}.miss"
+    old_temp = tmp_path / ".tmp-abc"
+    fresh = tmp_path / marker_key(TREE, "fresh")
+    foreign = tmp_path / "notes.txt"
     stale = time.time() - 31 * 86400
-    os.utime(old, (stale, stale))
+    for path in (old, old_miss, old_temp, fresh, foreign):
+        path.write_text("{}", encoding="utf-8")
+    for path in (old, old_miss, old_temp, foreign):
+        os.utime(path, (stale, stale))
 
     prune_markers(tmp_path)
 
     assert not old.exists()
+    assert not old_miss.exists()
+    assert not old_temp.exists()
     assert fresh.exists()
+    assert foreign.exists()
 
 
 def test_prune_ignores_missing_dir(tmp_path):
@@ -208,20 +219,93 @@ def test_clear_markers_raises_when_directory_remains(tmp_path, monkeypatch):
 
 
 def test_clear_markers_does_not_count_vanished_files(tmp_path, monkeypatch):
-    """Verify a marker that disappears before it is deleted is not counted."""
+    """Verify a marker that disappears after the listing but before its delete is not counted."""
     for name in ("a", "b"):
         write_marker(marker_path(tmp_path, TREE, name), tree=TREE, name=name, command=[name])
-    directory = marker_dir(tmp_path)
-    real_iterdir = Path.iterdir
+    vanishing = marker_key(TREE, "b")
+    real_unlink = os.unlink
 
-    def with_ghost(self: Path) -> Iterator[Path]:
-        entries = list(real_iterdir(self))
-        return iter([*entries, directory / "ghost"]) if self == directory else iter(entries)
+    def removed_first_by_another_run(path, *args, **kwargs):  # noqa: ANN202
+        if Path(path).name == vanishing:
+            real_unlink(path, *args, **kwargs)
+        real_unlink(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "iterdir", with_ghost)
+    monkeypatch.setattr(os, "unlink", removed_first_by_another_run)
 
-    assert clear_markers(tmp_path) == 2
-    assert not directory.exists()
+    assert clear_markers(tmp_path) == 1
+    assert not marker_dir(tmp_path).exists()
+
+
+_VICTIM_NAMES = ("notes.txt", marker_key(TREE, "a"), durations_path(Path(), "a").name)
+
+
+def _plant_victim(tmp_path: Path) -> Path:
+    """Return a folder outside the repository holding old files, one with a marker's name."""
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    stale = time.time() - 40 * 86400
+    for name in _VICTIM_NAMES:
+        (victim / name).write_text("{}", encoding="utf-8")
+        os.utime(victim / name, (stale, stale))
+    return victim
+
+
+@pytest.mark.parametrize(
+    ("dirname", "operation"),
+    [
+        pytest.param(MARKER_DIRNAME, lambda common: clear_cache(common), id="clear-markers"),
+        pytest.param(DURATIONS_DIRNAME, lambda common: clear_cache(common), id="clear-durations"),
+        pytest.param(
+            MARKER_DIRNAME,
+            lambda common: clear_cache(common, select_markers(common, gate="a")),
+            id="clear-one-gate",
+        ),
+        pytest.param(
+            DURATIONS_DIRNAME,
+            lambda common: clear_cache(common, select_markers(common, gate="a")),
+            id="clear-one-gate-durations",
+        ),
+        pytest.param(
+            MARKER_DIRNAME, lambda common: prune_markers(marker_dir(common)), id="prune-markers"
+        ),
+        pytest.param(
+            DURATIONS_DIRNAME,
+            lambda common: prune_markers(durations_dir(common), names=DURATIONS_NAME),
+            id="prune-durations",
+        ),
+    ],
+)
+def test_symlinked_cache_dir_never_deletes_its_target(
+    tmp_path: Path, dirname: str, operation: Callable[[Path], object]
+) -> None:
+    """Verify a planted symlink in the git dir cannot point a clear or prune at other files."""
+    victim = _plant_victim(tmp_path)
+    common = tmp_path / "common"
+    common.mkdir()
+    (common / dirname).symlink_to(victim)
+
+    operation(common)
+
+    assert sorted(p.name for p in victim.iterdir()) == sorted(_VICTIM_NAMES)
+
+
+def test_select_markers_ignores_symlinked_marker_dir(tmp_path: Path) -> None:
+    """Verify a dry run lists nothing in a symlinked marker folder, so it never counts its target."""
+    victim = _plant_victim(tmp_path)
+    marker_dir(tmp_path).symlink_to(victim)
+
+    selection = select_markers(tmp_path)
+
+    assert selection.passes == ()
+    assert selection.misses == ()
+
+
+def test_clear_removes_symlinked_marker_dir(tmp_path: Path) -> None:
+    """Verify clearing removes the planted link itself, so the next run starts clean."""
+    marker_dir(tmp_path).symlink_to(_plant_victim(tmp_path))
+
+    assert clear_markers(tmp_path) == 0
+    assert not marker_dir(tmp_path).is_symlink()
 
 
 def test_write_marker_cleans_up_when_replace_fails(tmp_path, monkeypatch):

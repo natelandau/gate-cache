@@ -197,6 +197,23 @@ def test_prune_keeps_free_file_newer_than_cutoff(tmp_path: Path) -> None:
     assert recent.exists()
 
 
+def test_prune_leaves_symlinked_lock_dir_alone(tmp_path: Path) -> None:
+    """A planted symlink in the git dir cannot point pruning at files outside it."""
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    planted = victim / f"{'0' * 64}.lock"
+    planted.write_text("", encoding="utf-8")
+    old = time.time() - 40 * _DAY
+    os.utime(planted, (old, old))
+    common = tmp_path / "common"
+    common.mkdir()
+    (common / "gate-cache-locks").symlink_to(victim)
+
+    prune_locks(common, max_age_days=30)
+
+    assert planted.exists()
+
+
 def test_prune_without_lock_dir_is_noop(tmp_path: Path) -> None:
     """Pruning a common dir with no lock directory does nothing."""
     prune_locks(tmp_path, max_age_days=30)

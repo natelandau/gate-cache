@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 MARKER_DIRNAME = "gate-cache"
 TEMP_PREFIX = ".tmp-"
 MISS_SUFFIX = ".miss"
+RECORD_NAME = re.compile(r"[0-9a-f]{64}(?:\.miss)?")
 # Records hold a command line, which the OS caps at a few MiB. The cap keeps a stray large
 # file from being read in full.
 MAX_RECORD_BYTES = 16 * 1024 * 1024
@@ -470,25 +472,67 @@ def missed_records(common_dir: Path, *trees: str, max_age_days: int) -> list[dic
     return RecordIndex.load(common_dir, max_age_days=max_age_days).missed_records(*trees)
 
 
-def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None = None) -> None:
-    """Delete markers older than the cutoff, ignoring every filesystem error.
+def _open_own_dir(directory: Path) -> int:
+    """Open a directory gate-cache owns, refusing a symlink so a planted link cannot redirect deletes.
 
     Args:
-        directory: Marker directory to prune.
+        directory: The directory to open.
+
+    Returns:
+        A file descriptor for the directory, for use as `dir_fd`.
+    """
+    return os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+
+def _owned_files(fd: int, names: re.Pattern[str]) -> list[os.DirEntry[str]]:
+    """List the regular files in an open directory whose name gate-cache writes.
+
+    Args:
+        fd: The open directory, from `_open_own_dir`.
+        names: The pattern a record name matches in full. Temp files always match.
+
+    Returns:
+        The matching entries, sorted by name.
+    """
+    with os.scandir(fd) as entries:
+        owned = [
+            entry
+            for entry in entries
+            if (entry.name.startswith(TEMP_PREFIX) or names.fullmatch(entry.name))
+            and entry.is_file(follow_symlinks=False)
+        ]
+    return sorted(owned, key=lambda entry: entry.name)
+
+
+def prune_markers(
+    directory: Path,
+    *,
+    names: re.Pattern[str] = RECORD_NAME,
+    max_age_days: int = 30,
+    now: float | None = None,
+) -> None:
+    """Delete records older than the cutoff, ignoring every filesystem error.
+
+    Args:
+        directory: Marker or durations directory to prune. A symlink is left alone.
+        names: The pattern a record name in the directory matches.
         max_age_days: Age in days beyond which a file is deleted.
         now: Current epoch time; defaults to the system clock.
     """
     try:
-        for entry in directory.iterdir():
-            with contextlib.suppress(OSError):
-                if (
-                    entry.is_file()
-                    and not entry.is_symlink()
-                    and _expired(entry.stat().st_mtime, max_age_days=max_age_days, now=now)
-                ):
-                    entry.unlink()
+        fd = _open_own_dir(directory)
     except OSError:
         return
+    try:
+        for entry in _owned_files(fd, names):
+            with contextlib.suppress(OSError):
+                mtime = entry.stat(follow_symlinks=False).st_mtime
+                if _expired(mtime, max_age_days=max_age_days, now=now):
+                    os.unlink(entry.name, dir_fd=fd)
+    except OSError:
+        return
+    finally:
+        os.close(fd)
 
 
 @dataclass(frozen=True)
@@ -522,15 +566,23 @@ def select_markers(common_dir: Path, *, gate: str | None = None) -> MarkerSelect
     Returns:
         The selected files and the gate names they hold.
     """
+    directory = marker_dir(common_dir)
     try:
-        entries = sorted(marker_dir(common_dir).iterdir())
+        fd = _open_own_dir(directory)
     except OSError:
         entries = []
+    else:
+        try:
+            entries = [directory / e.name for e in _owned_files(fd, RECORD_NAME)]
+        except OSError:
+            entries = []
+        finally:
+            os.close(fd)
     passes: list[Path] = []
     misses: list[Path] = []
     names: set[str] = set()
     for path in entries:
-        if path.name.startswith(TEMP_PREFIX) or not path.is_file() or path.is_symlink():
+        if path.name.startswith(TEMP_PREFIX):
             continue
         is_miss = path.name.endswith(MISS_SUFFIX)
         name = _own_name(path, read_record(path), suffix=MISS_SUFFIX if is_miss else "")
@@ -595,25 +647,31 @@ def clear_markers(common_dir: Path) -> int:
 
     Returns:
         The number of markers deleted, not counting in-flight temp files; 0 when the
-        directory is missing.
+        directory is missing or is a symlink, which is removed without touching its target.
 
     Raises:
         OSError: If the marker directory cannot be listed, a file cannot be deleted, or the
             directory remains afterward.
     """
     directory = marker_dir(common_dir)
-    if not directory.is_dir():
+    if directory.is_symlink():
+        directory.unlink()
+        return 0
+    try:
+        fd = _open_own_dir(directory)
+    except (FileNotFoundError, NotADirectoryError):
         return 0
     count = 0
-    for entry in directory.iterdir():
-        if entry.is_dir() and not entry.is_symlink():
-            continue
-        try:
-            entry.unlink()
-        except FileNotFoundError:
-            continue
-        if not entry.name.startswith(TEMP_PREFIX) and not entry.name.endswith(MISS_SUFFIX):
-            count += 1
+    try:
+        for entry in _owned_files(fd, RECORD_NAME):
+            try:
+                os.unlink(entry.name, dir_fd=fd)
+            except FileNotFoundError:
+                continue
+            if not entry.name.startswith(TEMP_PREFIX) and not entry.name.endswith(MISS_SUFFIX):
+                count += 1
+    finally:
+        os.close(fd)
     try:
         directory.rmdir()
     except OSError:

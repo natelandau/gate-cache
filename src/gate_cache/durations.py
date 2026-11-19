@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
 from typing import TYPE_CHECKING
 
 from gate_cache.markers import read_json, valid_duration, write_json_atomic
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 
 # Outside the marker directory, whose contents are a public contract.
 DURATIONS_DIRNAME = "gate-cache-durations"
+DURATIONS_NAME = re.compile(r"[0-9a-f]{64}\.json")
 KEPT_DURATIONS = 5
 
 
