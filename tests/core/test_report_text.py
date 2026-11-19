@@ -23,9 +23,10 @@ from gate_cache.stats.report_text import (
     SPAN_TO_NOW,
     SPOT_CHECK_RUN,
     TESTS_SINCE,
-    render_gate,
-    render_suite,
 )
+from gate_cache.stats.report_text import render_gate as _render_gate
+from gate_cache.stats.report_text import render_suite as _render_suite
+from tests.conftest import rendered_text
 
 UTC = ZoneInfo("UTC")
 WINDOW = {"since": "2026-10-19T12:00:00Z", "until": "2026-11-18T12:00:00Z", "days": 30.0}
@@ -47,6 +48,16 @@ RUN = {
     "failed_tests": {"total": 3, "shown": 2, "items": ["test_alpha", "test_beta"]},
 }
 SPOT_CHECK = RUN | {"spot_check": True, "branch": "spot/branch", "failed_tests": None}
+
+
+def render_suite(report: dict[str, Any], **kwargs: Any) -> str:
+    """Render the suite view and return the text a person sees."""
+    return rendered_text(_render_suite(report, **kwargs))
+
+
+def render_gate(report: dict[str, Any], **kwargs: Any) -> str:
+    """Render the one-gate view and return the text a person sees."""
+    return rendered_text(_render_gate(report, **kwargs))
 
 
 def _capped(items: list[dict[str, Any]], total: int | None = None) -> dict[str, Any]:
@@ -228,7 +239,7 @@ def test_render_recording_off_leads(
     render: Callable[..., str], build: Callable[[], dict[str, Any]]
 ) -> None:
     """With recording off, the first line says so and how to turn it on."""
-    assert render(build(), window=SPAN_WINDOW).splitlines()[0] == RECORDING_OFF_HINT
+    assert render(build(), window=SPAN_WINDOW).splitlines()[0].strip() == RECORDING_OFF_HINT
 
 
 def test_render_gate() -> None:

@@ -28,13 +28,13 @@ No goal justifies a wrong skip. A skip of a command that would fail is the worst
 `gate-cache --skill` prints `src/gate_cache/agent/skill.md`. `gate-cache --prompt` prints `prompt.md`.
 
 - The skill is for an agent that sets up, configures, or troubleshoots gate-cache in a project, or that must learn the CLI. It holds the rules, pitfalls, and workflows for that work. An agent in a normal development session does not read it.
-- An agent in a normal session sees only the `gate-cache:` stderr lines and the exit codes. Each line must make sense with no guide.
+- An agent in a normal session sees only the `gate-cache:` stderr lines of the gate run, the `error:` and `hint:` lines of the other commands, and the exit codes. Each line must make sense with no guide.
 - Change the skill only when a change alters what an agent does to set up, configure, or troubleshoot gate-cache, or how it uses the CLI. The skill is not a list of every message, option, or behavior. A new message or behavior does not go in the skill only because the skill omits it.
 - `prompt.md` holds only a few steps and the questions for the user. The agent learns the rest from the skill.
 
 ## Conventions
 
-- A command that deletes data on request, such as `clear` and `stats clear`, calls `console.confirm_deletion` and offers `-y`/`--yes`. Automatic cleanup, such as marker pruning, archive retention, and temp files, deletes with no prompt.
+- A command that deletes data on request, such as `clear` and `stats clear`, calls `commands.prompt.confirm_deletion` and offers `-y`/`--yes`. Automatic cleanup, such as marker pruning, archive retention, and temp files, deletes with no prompt.
 - `gate-cache --help` stays short and written for people. One line tells agents to run `--skill`.
 
 ## Worktrees

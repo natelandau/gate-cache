@@ -1,6 +1,7 @@
 """Shared fixtures that isolate git from the developer's configuration."""
 
 import dataclasses
+import io
 import json
 import os
 import shutil
@@ -12,10 +13,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rich.console import Console, RenderableType
 
 from gate_cache import cli, snapshot
 from gate_cache import config as core_config
 from gate_cache import git as git_module
+from gate_cache.commands.theme import THEME
 from gate_cache.gate_lock import HELD_ENV
 from gate_cache.git import GitResult
 from gate_cache.markers import MISS_SUFFIX, marker_dir
@@ -29,6 +32,13 @@ BASE = 1_699_920_000.0  # midnight UTC
 DAY = 86400.0
 REPO_A = "/x/proj/.git"
 REPO_B = "/x/other/.git"
+
+
+def rendered_text(renderable: RenderableType, *, width: int = 120) -> str:
+    """Return the plain text a person sees for a rich renderable on a terminal `width` wide."""
+    console = Console(file=io.StringIO(), record=True, width=width, theme=THEME)
+    console.print(renderable)
+    return console.export_text()
 
 
 def insert(
@@ -147,6 +157,16 @@ def invoke(monkeypatch: pytest.MonkeyPatch, *args: str) -> int:
     return code
 
 
+_GIT_REPO_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+)
+
+
 @pytest.fixture(autouse=True)
 def isolate_user_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the stats data and the XDG config and state homes under tmp_path.
@@ -157,6 +177,10 @@ def isolate_user_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     Returns:
         The stats data directory.
     """
+    # A git hook exports these for the repository being committed. Left in place, a test's
+    # `git init` in a temporary directory reinitializes that repository instead.
+    for var in _GIT_REPO_ENV:
+        monkeypatch.delenv(var, raising=False)
     data = tmp_path / "gate-cache-data"
     monkeypatch.setenv(stats_config.DATA_DIR_ENV, str(data))
     for var in ("XDG_CONFIG_HOME", "XDG_STATE_HOME"):
@@ -192,7 +216,7 @@ def git_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     runtime.mkdir(mode=0o700)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
     # CI and GATE_CACHE_DISABLE turn caching off, which would hide every cache hit.
-    for var in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "CI", "GATE_CACHE_DISABLE"):
+    for var in ("CI", "GATE_CACHE_DISABLE"):
         monkeypatch.delenv(var, raising=False)
     return home
 

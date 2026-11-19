@@ -224,6 +224,8 @@ def test_stats_on_reports_table_override(
     assert invoke(monkeypatch, "stats", "--json") == 0
     data = json.loads(capfd.readouterr().out)
     assert (data["enabled"], data["decided_by"], data["project"]) == (False, "config", REMOTE)
+    assert invoke(monkeypatch, "stats") == 0
+    assert REMOTE in capfd.readouterr().out
 
 
 def test_nul_in_pattern_warns_without_crashing(

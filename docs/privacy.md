@@ -14,10 +14,10 @@ To skip a gate, gate-cache stores a small file for each pass in the `.git` direc
 
 When you [turn recording on](stats/record-stats.md), each run of a gate adds one event to a file in your data directory. An event holds:
 
-- The gate name, its `--path` values, and the command line.
+- The gate name, its `--path` values, the command line, and the hash of the files.
 - The outcome, the exit code, the run time, the CPU time, and the peak memory of the command.
 - The time saved by a skip, and the time that the run waited for another run.
-- The path of the repository and the worktree, the branch, the commit, and the URL of the remote, without user names or passwords.
+- The path of the repository and the worktree, the folder where the gate ran, the branch, the commit, and the URL of the remote, without user names or passwords.
 - What started the run: CI, a git hook, a terminal, or a coding agent, with the name of the agent.
 - The host name of the computer, its platform, and a random ID for the computer.
 - The version of gate-cache.

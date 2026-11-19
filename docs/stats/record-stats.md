@@ -22,10 +22,10 @@ To see whether recording is on and where the data is, run `gate-cache stats`:
 
 ```console
 $ gate-cache stats
-  recording:  on
-  decided by: config
-  config:     /home/dev/.config/gate-cache/config.toml
-  data:       /home/dev/.local/state/gate-cache
+recording   on
+decided by  config
+config      /home/dev/.config/gate-cache/config.toml
+data        /home/dev/.local/state/gate-cache
 ```
 
 When a `[projects]` table decides, the output also shows a `project` line with the pattern of that table.
@@ -72,7 +72,7 @@ Recording never changes whether a command skips, its exit code, or its output.
 gate-cache stats clear
 ```
 
-This command permanently deletes all recorded stats. It asks you to type `yes` first. In a script, give `--yes`. It does not delete the records of passes that make gates skip. Read [Privacy](../privacy.md) for what gate-cache records.
+This command permanently deletes all recorded stats. It asks you to type `yes` first. In a script, give `--yes`. Stop the dashboard first, because the command does not run while the dashboard runs. It does not delete the records of passes that make gates skip. Read [Privacy](../privacy.md) for what gate-cache records.
 
 ## Keep test data apart
 

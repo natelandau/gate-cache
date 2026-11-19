@@ -15,11 +15,11 @@ gate-cache [OPTIONS] -- COMMAND [ARGS...]
 | Option | Effect |
 | --- | --- |
 | `--name NAME` | The name of the gate. Without it, the command line is the name. |
-| `--path PATH` | Match only the files under this git pathspec. Give it once for each path. Read [Scope a gate to paths](../guides/scope-to-paths.md). |
-| `--junit PATH` | With stats recording on, record the tests in this JUnit XML report, or in the `.xml` files directly in this folder, that the command writes. Give it once for each path. Read [Find slow and flaky tests](../stats/test-detail.md). |
+| `--path PATH` | Matches only the files under this git pathspec. Give it once for each path. Read [Scope a gate to paths](../guides/scope-to-paths.md). |
+| `--junit PATH` | With stats recording on, records the tests in this JUnit XML report, or in the `.xml` files directly in this folder, that the command writes. Give it once for each path. Read [Find slow and flaky tests](../stats/test-detail.md). |
 | `--wait-timeout SECONDS` | The longest time to wait for another run of the same gate. `0` never waits. The default is 900. |
 | `--on-wait-failure rerun\|report` | What to do when the run that this run waited for failed. `rerun` runs the command. `report` exits with the failure. The default is `rerun`. |
-| `--spot-check` | Run the command even when it already passed with the current hash, as a spot check. Read [Spot checks](../guides/spot-checks.md). |
+| `--spot-check` | Runs the command even when it already passed with the current hash, as a spot check. Read [Spot checks](../guides/spot-checks.md). |
 
 `--` is required. Only these options can come before it. gate-cache runs everything after `--` exactly as given, without a shell.
 
@@ -37,7 +37,12 @@ Add the same `--path` options to look up a scoped gate. Add `--json` to print on
 
 ## `gate-cache clear`
 
-Permanently deletes every record of a pass for the repository, and the run times that the `usually` estimate uses, so every gate runs again in full. Use it after a change that gate-cache does not see, such as a tool upgrade. It asks you to type `yes` first. In a script, give `--yes`. It does not delete stats.
+Permanently deletes every record of a pass or a failed run for the repository, and the run times that the `usually` estimate uses, so every gate runs again in full. Use it after a change that gate-cache does not see, such as a tool upgrade. It asks you to type `yes` first. In a script, give `--yes`. It does not delete stats.
+
+| Option | Effect |
+| --- | --- |
+| `--yes`, `-y` | Deletes without the question. |
+| `--json` | Prints the result as one JSON object. Needs `--yes`. |
 
 ## `gate-cache stats`
 
@@ -47,9 +52,9 @@ Permanently deletes every record of a pass for the repository, and the run times
 | `gate-cache stats on` | Turns recording on. |
 | `gate-cache stats off` | Turns recording off and keeps the data. |
 | `gate-cache stats report` | Prints a report of the recorded runs. |
-| `gate-cache stats clear` | Permanently deletes all recorded stats. It asks you to type `yes` first. In a script, give `--yes`. |
+| `gate-cache stats clear` | Permanently deletes all recorded stats. It asks you to type `yes` first. In a script, give `--yes`. It does not run while the dashboard runs. |
 
-`gate-cache stats --json` prints the recording setting as a JSON object. Read the [report format](report-format.md).
+Add `--json` to `gate-cache stats`, `stats on`, or `stats off` to print the recording setting as a JSON object. Add `--json` to `stats clear` to print what it deleted. `stats clear --json` needs `--yes`.
 
 ### `gate-cache stats report`
 
@@ -75,10 +80,17 @@ Opens the stats dashboard in your browser. Read [The dashboard](../stats/dashboa
 
 | Option | Effect |
 | --- | --- |
-| `--port N` | Listen on this port only. Without it, the dashboard uses port 7878, or a free port when 7878 is in use. |
-| `--no-browser` | Do not open a browser. |
+| `--port N` | Listens on this port only. Without it, the dashboard uses port 7878, or a free port when 7878 is in use. |
+| `--no-browser` | Does not open a browser. |
+| `--json` | Prints the address as one line of JSON, then keeps the dashboard open. |
 
 Only one dashboard runs at a time. A second `gate-cache dashboard` opens the one that runs.
+
+## JSON output
+
+Every command except the gate run takes `--json`. With `--json`, the command prints one JSON object to stdout in place of text, and an error also prints as a JSON object. The command never asks a question, so `clear` and `stats clear` need `--yes`. Read the [report format](report-format.md) for the keys.
+
+`--json` after `--` belongs to the command that you give, not to gate-cache.
 
 ## Other options
 
@@ -100,15 +112,18 @@ Only one dashboard runs at a time. A second `gate-cache dashboard` opens the one
 | An error in the gate-cache options | 2, and nothing runs |
 | `status` found a pass | 0, else 1 |
 | `clear` or `stats clear` was not confirmed, or failed | 1 |
+| `stats on` or `stats off` could not write the setting | 1 |
 | `stats report` ran, also when nothing was recorded | 0 |
 | `stats report` found no such gate or repository, or could not read the record | 1 |
 | `stats report` got a bad option, or a `--repo` name that matches more than one repository | 2 |
+| `dashboard` stopped, or another dashboard already runs | 0 |
+| `dashboard` could not start | 1 |
 
 An error in the cache never changes the exit code of the command.
 
 ## Messages
 
-gate-cache writes its own lines to stderr, with the prefix `gate-cache:`. All other output comes from the command.
+When gate-cache runs a gate, it writes its own lines to stderr, with the prefix `gate-cache:`. All other output comes from the command.
 
 | Message | Meaning |
 | --- | --- |
@@ -123,3 +138,10 @@ gate-cache writes its own lines to stderr, with the prefix `gate-cache:`. All ot
 | `warning: could not record pass: ...` | The command passed, but gate-cache could not record the pass. The exit code does not change. |
 
 [Troubleshooting](../troubleshooting.md) tells you what to do about each message.
+
+The other commands write their results to stdout. They write an error to stderr as a line that starts with `error:`. A line that starts with `hint:` can follow, with the fix:
+
+```text
+error: --json needs --yes, because clear cannot ask for confirmation
+  hint: gate-cache clear --yes --json
+```

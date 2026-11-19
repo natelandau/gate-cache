@@ -1,4 +1,4 @@
-"""Render the `stats report` JSON contract as text for people.
+"""Render the `stats report` JSON contract as rich renderables for people.
 
 Apart from the window, the renderers read only the contract's keys, so the text and the
 JSON never disagree.
@@ -9,9 +9,16 @@ from __future__ import annotations
 from datetime import datetime, tzinfo
 from typing import TYPE_CHECKING, Any
 
-from gate_cache.console import format_duration, kv_text
+from rich.console import Group
+from rich.padding import Padding
+from rich.text import Text
+
+from gate_cache.commands.theme import kv, table
+from gate_cache.console import format_duration, plural
 
 if TYPE_CHECKING:
+    from rich.console import RenderableType
+
     from gate_cache.stats.report import Window
 
 REPORT_HINT = "Run `gate-cache stats report --name GATE` for one gate."
@@ -39,7 +46,8 @@ SPAN = "{length} ({since} to {until})"
 
 _NO_RUNS = "No gate ran in this window."
 _HEADINGS = ("GATE", "RUNS", "SKIP", "FAIL", "MEDIAN", "P90", "SPENT", "NOTES")
-_LEFT_COLUMNS = {"REPO", "GATE", "NOTES"}
+_RIGHT_COLUMNS = {"RUNS", "SKIP", "FAIL", "MEDIAN", "P90", "SPENT"}
+_INDENT = 2
 _GAP = "  "
 _KB = 1024
 _TREE_LENGTH = 12
@@ -55,12 +63,8 @@ def _day(moment: datetime) -> str:
     return f"{moment:%b} {moment.day}"
 
 
-def _plural(count: float, noun: str) -> str:
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
-
-
 def _runs(count: int) -> str:
-    return _plural(count, "run")
+    return plural(count, "run")
 
 
 def _duration(seconds: float | None) -> str:
@@ -93,7 +97,7 @@ def _length(seconds: float) -> str:
     else:
         unit, noun = _YEAR_DAYS * _DAY_SECONDS, "year"
     value = round(seconds / unit, 1)
-    return _plural(int(value) if value == int(value) else value, noun)
+    return plural(int(value) if value == int(value) else value, noun)
 
 
 def _span(window: Window) -> str:
@@ -102,44 +106,37 @@ def _span(window: Window) -> str:
     until = datetime.fromtimestamp(window.end, window.tz)
     length = _length(window.end - window.start)
     if window.ends_now and since.year == until.year:
-        return SPAN_TO_NOW.format(length=length, since=_day(since), until=_day(until))
-    dates = {"since": f"{_day(since)}, {since:%Y}", "until": f"{_day(until)}, {until:%Y}"}
+        dates = {"since": _day(since), "until": _day(until)}
+    else:
+        dates = {"since": f"{_day(since)}, {since:%Y}", "until": f"{_day(until)}, {until:%Y}"}
     return (SPAN_TO_NOW if window.ends_now else SPAN).format(length=length, **dates)
 
 
-def _lead(report: dict[str, Any]) -> list[str]:
-    return [RECORDING_OFF_HINT] if report.get("recording") is False else []
+def _lead(report: dict[str, Any]) -> list[RenderableType]:
+    return [Text(RECORDING_OFF_HINT, style="warning")] if report.get("recording") is False else []
 
 
-def _table(rows: list[list[str]], headings: list[str]) -> list[str]:
-    widths = [max(len(row[i]) for row in [headings, *rows]) for i in range(len(headings))]
-    lines = []
-    for row in [headings, *rows]:
-        cells = [
-            cell.ljust(width) if heading in _LEFT_COLUMNS else cell.rjust(width)
-            for cell, width, heading in zip(row, widths, headings, strict=True)
-        ]
-        lines.append(_GAP.join(cells).rstrip())
-    return lines
+def _indented(renderable: RenderableType) -> Padding:
+    return Padding(renderable, (0, 0, 0, _INDENT), expand=False)
 
 
 def _notes(gate: dict[str, Any]) -> str:
     notes = []
     if (spot := gate["spot_checks"]) and spot["failed"]:
-        notes.append(FAILED_SPOT_CHECK_NOTE.format(count=_plural(spot["failed"], "spot check")))
+        notes.append(FAILED_SPOT_CHECK_NOTE.format(count=plural(spot["failed"], "spot check")))
     if gate["flaky"] is not None:
-        notes.append(FLAKY_NOTE.format(trees=_plural(gate["flaky"]["trees"], "tree")))
+        notes.append(FLAKY_NOTE.format(trees=plural(gate["flaky"]["trees"], "tree")))
     if gate["slowdown"] is not None:
         notes.append(SLOWDOWN_NOTE.format(percent=round(gate["slowdown"]["change"] * 100)))
     if tests := gate["tests"]:
         if tests["flaky"]:
-            notes.append(FLAKY_TESTS_NOTE.format(tests=_plural(tests["flaky"], "test")))
+            notes.append(FLAKY_TESTS_NOTE.format(tests=plural(tests["flaky"], "test")))
         if tests["report_problems"]:
             notes.append(REPORT_PROBLEMS_NOTE)
-    return ", ".join(notes)
+    return "\n".join(notes)
 
 
-def render_suite(report: dict[str, Any], *, window: Window) -> str:
+def render_suite(report: dict[str, Any], *, window: Window) -> RenderableType:
     """Render the suite view as a header line, one table row per gate, and a hint.
 
     Args:
@@ -147,7 +144,7 @@ def render_suite(report: dict[str, Any], *, window: Window) -> str:
         window: Time range of the report; its zone dates the text, as it buckets the trend.
 
     Returns:
-        str: The text, ending in a newline.
+        RenderableType: The view, ready to print.
     """
     totals = report["totals"]
     scope = f"{report['repo_name'] or ALL_REPOS}: {_span(window)}"
@@ -155,11 +152,10 @@ def render_suite(report: dict[str, Any], *, window: Window) -> str:
         f"{_runs(totals['runs'])}, {_duration(totals['time_saved'])} saved, "
         f"{_duration(totals['time_spent'])} spent"
     )
-    lines = [*_lead(report), f"{scope}{_GAP * 2}{cost}", ""]
+    parts = [*_lead(report), Text.assemble((scope, "bold"), _GAP * 2, (cost, "muted"))]
     gates = report["gates"]
     if not gates:
-        lines.append(_NO_RUNS)
-        return "\n".join(lines) + "\n"
+        return Group(*parts, Text(_NO_RUNS))
     with_repo = report["repo"] is None
     headings = ["REPO", *_HEADINGS] if with_repo else list(_HEADINGS)
     rows = [
@@ -176,22 +172,31 @@ def render_suite(report: dict[str, Any], *, window: Window) -> str:
         ]
         for gate in gates
     ]
-    lines.extend([*_table(rows, headings), "", REPORT_HINT])
-    return "\n".join(lines) + "\n"
+    return Group(
+        *parts, table(headings, rows, right=_RIGHT_COLUMNS), Text(REPORT_HINT, style="hint")
+    )
 
 
-def _block(title: str, rows: dict[str, str]) -> list[str]:
-    return ["", title, kv_text(rows).rstrip("\n")] if rows else []
+def _title(title: str) -> list[RenderableType]:
+    return [Text(""), Text(title, style="accent")]
 
 
-def _list(title: str, items: list[str], *, total: int | None = None, limit: int) -> list[str]:
+def _block(title: str, rows: dict[str, str]) -> list[RenderableType]:
+    return [*_title(title), _indented(kv(rows))] if rows else []
+
+
+def _list(
+    title: str, items: list[str], *, total: int | None = None, limit: int
+) -> list[RenderableType]:
     """Return a titled list of at most `limit` items, counting the rest on a last line."""
     if not items:
         return []
     shown = items[:limit]
     left = (len(items) if total is None else total) - len(shown)
-    more = [MORE_ITEMS.format(count=left)] if left > 0 else []
-    return ["", title, *(f"  {item}" for item in [*shown, *more])]
+    lines = [Text(item) for item in shown]
+    if left > 0:
+        lines.append(Text(MORE_ITEMS.format(count=left), style="muted"))
+    return [*_title(title), _indented(Group(*lines))]
 
 
 def _current(status: dict[str, Any] | None) -> str:
@@ -276,7 +281,7 @@ def _waits(waits: dict[str, Any] | None) -> dict[str, str]:
     }
 
 
-def _test_lines(tests: dict[str, Any] | None, tz: tzinfo, limit: int) -> list[str]:
+def _test_lines(tests: dict[str, Any] | None, tz: tzinfo, limit: int) -> list[RenderableType]:
     if tests is None:
         return []
     slowest = [
@@ -300,11 +305,11 @@ def _test_lines(tests: dict[str, Any] | None, tz: tzinfo, limit: int) -> list[st
         {kind: _runs(count) for kind, count in tests["report_problems"].items() if count},
     )
     if lines and tests["since"] is not None:
-        lines += ["", TESTS_SINCE.format(day=_day(_local(tests["since"], tz)))]
+        lines += [Text(""), Text(TESTS_SINCE.format(day=_day(_local(tests["since"], tz))), "muted")]
     return lines
 
 
-def render_gate(report: dict[str, Any], *, window: Window, limit: int = 20) -> str:
+def render_gate(report: dict[str, Any], *, window: Window, limit: int = 20) -> RenderableType:
     """Render the one-gate view as a header and a short labeled block per section.
 
     Args:
@@ -313,27 +318,31 @@ def render_gate(report: dict[str, Any], *, window: Window, limit: int = 20) -> s
         limit: Most rows any list shows; the JSON caps its own lists the same way.
 
     Returns:
-        str: The text, ending in a newline.
+        RenderableType: The view, ready to print.
     """
     variants = report["variants"]
     tz = window.tz
     span = _span(window)
-    lines = [
+    lines: list[RenderableType] = [
         *_lead(report),
-        f"{report['name']} in {report['repo_name']}: {span}",
-        kv_text(
-            {
-                "command": report["command"] or "-",
-                "paths": ", ".join(report["paths"]) or "whole tree",
-                **(
-                    {}
-                    if variants["total"]
-                    else {
-                        "status": KEYED_STATUS if report["keyed"] else _current(report["current"])
-                    }
-                ),
-            }
-        ).rstrip("\n"),
+        Text(f"{report['name']} in {report['repo_name']}: {span}", style="bold"),
+        _indented(
+            kv(
+                {
+                    "command": report["command"] or "-",
+                    "paths": ", ".join(report["paths"]) or "whole tree",
+                    **(
+                        {}
+                        if variants["total"]
+                        else {
+                            "status": KEYED_STATUS
+                            if report["keyed"]
+                            else _current(report["current"])
+                        }
+                    ),
+                }
+            )
+        ),
     ]
     variant_lines = [
         f"{v['name']}: {_runs(v['runs'])}, last {_day(_local(v['last_run'], tz))}, {_current(v['current'])}"
@@ -393,4 +402,4 @@ def render_gate(report: dict[str, Any], *, window: Window, limit: int = 20) -> s
     recent = report["recent"]
     runs = [_run_line(r, tz) for r in recent["items"]]
     lines += _list("recent runs", runs, total=recent["total"], limit=limit)
-    return "\n".join(lines) + "\n"
+    return Group(*lines)

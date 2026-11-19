@@ -1,7 +1,6 @@
 """Tests for path-scoped snapshots."""
 
 import hashlib
-import json
 import re
 import subprocess
 from collections.abc import Callable
@@ -231,77 +230,63 @@ def test_unscoped_marker_is_unchanged(scoped_repo: Path, counter: Counter) -> No
     assert set(record) == {"tree", "name", "command", "timestamp", "duration"}
 
 
-def test_status_finds_scoped_pass_after_outside_change(
-    scoped_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
-) -> None:
+def test_status_finds_scoped_pass_after_outside_change(scoped_repo: Path, counter: Counter) -> None:
     """Verify status --path reports a scoped hit after a change outside the paths."""
     run_gate("t", counter.argv(), paths=["src"])
     (scoped_repo / "a.txt").write_text("docs\n")
-    capfd.readouterr()
-    assert gate_status("t", as_json=True, paths=["src"]) == 0
-    report = json.loads(capfd.readouterr().out)
+    report, code = gate_status("t", paths=["src"])
+    assert code == 0
     assert report["result"] == "hit"
     assert report["tree"].startswith("paths:")
     assert report["paths"] == ["src"]
     assert report["full_tree"] == expected_tree(scoped_repo)
 
 
-def test_status_text_shows_paths_and_scope(
-    scoped_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
-) -> None:
-    """Verify the text report names the paths and the scope it looked up."""
+def test_status_reports_paths_and_scope(scoped_repo: Path, counter: Counter) -> None:
+    """Verify the report names the paths and the scope it looked up."""
     run_gate("t", counter.argv(), paths=["src", "a.txt"])
-    capfd.readouterr()
-    assert gate_status("t", paths=["src", "a.txt"]) == 0
-    out = capfd.readouterr().out
-    assert re.search(r"paths:\s+a\.txt src", out)
-    assert re.search(r"scope:\s+paths:[0-9a-f]{64}", out)
+    report, code = gate_status("t", paths=["src", "a.txt"])
+    assert code == 0
+    assert report["paths"] == ["a.txt", "src"]
+    assert re.fullmatch(r"paths:[0-9a-f]{64}", report["tree"])
 
 
 def test_status_without_paths_ignores_scoped_pass(scoped_repo: Path, counter: Counter) -> None:
     """Verify status --name alone looks up only the unscoped gate."""
     run_gate("t", counter.argv(), paths=["src"])
-    assert gate_status("t") == 1
+    assert gate_status("t")[1] == 1
 
 
-def test_status_unmatched_path_is_a_miss(
-    scoped_repo: Path, capfd: pytest.CaptureFixture[str]
-) -> None:
+def test_status_unmatched_path_is_a_miss(scoped_repo: Path) -> None:
     """Verify status explains a path that matches nothing."""
-    assert gate_status("t", as_json=True, paths=["nope/"]) == 1
-    report = json.loads(capfd.readouterr().out)
+    report, code = gate_status("t", paths=["nope/"])
+    assert code == 1
     assert report["result"] == "miss"
     assert report["reason"] == "--path nope/ matches no files"
 
 
-def test_status_listing_includes_scoped_gates(
-    scoped_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
-) -> None:
+def test_status_listing_includes_scoped_gates(scoped_repo: Path, counter: Counter) -> None:
     """Verify the plain listing reports scoped passes and misses on the current content."""
     run_gate("scoped-pass", counter.argv(), paths=["src"])
     run_gate("scoped-fail", counter.argv(exit_code=1), paths=["a.txt"])
     run_gate("plain", counter.argv())
     (scoped_repo / "a.txt").write_text("docs\n")
-    capfd.readouterr()
 
-    assert gate_status(as_json=True) == 0
+    report, code = gate_status()
 
-    report = json.loads(capfd.readouterr().out)
+    assert code == 0
     assert report["passed"] == ["scoped-pass"]
     assert report["missed"] == []
 
 
-def test_status_listing_includes_scoped_misses(
-    scoped_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
-) -> None:
+def test_status_listing_includes_scoped_misses(scoped_repo: Path, counter: Counter) -> None:
     """Verify the plain listing reports a scoped miss whose paths did not change."""
     run_gate("scoped-fail", counter.argv(exit_code=1), paths=["src"])
     (scoped_repo / "a.txt").write_text("docs\n")
-    capfd.readouterr()
 
-    assert gate_status(as_json=True) == 1
+    report, code = gate_status()
 
-    report = json.loads(capfd.readouterr().out)
+    assert code == 1
     assert [m["name"] for m in report["missed"]] == ["scoped-fail"]
 
 
@@ -334,29 +319,28 @@ def test_documented_shell_snippet_finds_the_scoped_marker(
     assert [Path(marker).resolve()] == [path.resolve() for path in markers(scoped_repo)]
 
 
-def test_status_text_names_paths_when_they_match_nothing(
-    scoped_repo: Path, capfd: pytest.CaptureFixture[str]
-) -> None:
-    """Verify the text report shows the paths and why the lookup failed."""
-    assert gate_status("t", paths=["nope/"]) == 1
-    out = capfd.readouterr().out
-    assert re.search(r"paths:\s+nope/", out)
-    assert re.search(r"scope:\s+unknown: --path nope/ matches no files", out)
-    assert re.search(r"tree:\s+[0-9a-f]{40}", out)
+def test_status_names_paths_when_they_match_nothing(scoped_repo: Path) -> None:
+    """Verify the report shows the paths and why the lookup failed."""
+    report, code = gate_status("t", paths=["nope/"])
+    assert code == 1
+    assert report["paths"] == ["nope/"]
+    assert report["tree"] is None
+    assert report["reason"] == "--path nope/ matches no files"
+    assert report["full_tree"] == expected_tree(scoped_repo)
 
 
 def test_status_listing_skips_paths_that_no_longer_match(
-    scoped_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+    scoped_repo: Path, counter: Counter
 ) -> None:
     """Verify a recorded path list that matches nothing now drops out of the listing."""
     run_gate("gone", counter.argv(), paths=["src/app.just"])
     run_gate("kept", counter.argv(), paths=["src/app.py"])
     (scoped_repo / "src" / "app.just").unlink()
-    capfd.readouterr()
 
-    assert gate_status(as_json=True) == 0
+    report, code = gate_status()
 
-    assert json.loads(capfd.readouterr().out)["passed"] == ["kept"]
+    assert code == 0
+    assert report["passed"] == ["kept"]
 
 
 def test_undecodable_listing_leaves_other_path_sets_known(
@@ -394,5 +378,5 @@ def test_status_listing_reads_each_record_once(
         return real(path)
 
     monkeypatch.setattr(markers_module, "read_record", counting)
-    gate_status(as_json=True)
+    gate_status()
     assert len(reads) == files

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import shlex
 import shutil
@@ -15,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from gate_cache import __version__
 from gate_cache.config import current_dir
-from gate_cache.console import confirm_deletion, format_duration, kv, say, stdin_isatty
+from gate_cache.console import format_duration, say, stdin_isatty
 from gate_cache.durations import durations_dir, durations_path, record_duration, usual_duration
 from gate_cache.env import CI_ENV, flag_on
 from gate_cache.gate_lock import (
@@ -61,9 +60,6 @@ MAX_AGE_ENV = "GATE_CACHE_MAX_AGE_DAYS"
 DEFAULT_MAX_AGE_DAYS = 30
 _DISABLED_REASON = f"caching disabled by {DISABLE_ENV}"
 _CI_REASON = f"caching disabled in CI ({DISABLE_ENV}=0 keeps it on)"
-# Version of the `status --json` shape; consumers check it before reading other keys.
-STATUS_SCHEMA = 1
-
 _NO_COMMON_DIR_REASON = "could not locate git directory"
 _FILES_CHANGED = "files changed during the run"
 FILES_CHANGED_NOTICE = f"{_FILES_CHANGED}, not recording pass"
@@ -943,40 +939,32 @@ def run_gate(
 
 
 def gate_status(
-    name: str | None = None, *, as_json: bool = False, paths: Sequence[str] = ()
-) -> int:
-    """Print whether a gate would skip, or list the gates that ran, without running anything.
+    name: str | None = None, *, paths: Sequence[str] = ()
+) -> tuple[dict[str, Any], int]:
+    """Report whether a gate would skip, or list the gates that ran, without running anything.
 
     Args:
         name: Gate name to look up. When None, list every gate that passed or missed on
             the current tree.
-        as_json: Print one JSON object to stdout instead of text.
         paths: Pathspecs of a scoped gate to look up with name. Ignored without name.
 
     Returns:
-        0 when a recorded pass exists for the gate, or for at least one gate when
-        listing, and 1 otherwise.
+        The report as the `status --json` object without its schema key, and the exit
+        code: 0 when a recorded pass exists for the gate, or for at least one gate when
+        listing, and 1 otherwise. Nothing is printed.
     """
     reason = disabled_reason()
     if reason is not None:
-        if as_json:
-            empty = (
-                _named_report(name, paths=paths)
-                if name is not None
-                else {"passed": [], "missed": []}
-            )
-            _print_json(
-                {"schema": STATUS_SCHEMA, "enabled": False, "tree": None, "reason": reason, **empty}
-            )
-        else:
-            say(reason)
-        return 1
+        empty = (
+            _named_report(name, paths=paths) if name is not None else {"passed": [], "missed": []}
+        )
+        return {"enabled": False, "tree": None, "reason": reason, **empty}, 1
 
     if name is None:
-        return _list_gates(as_json=as_json)
+        return _list_gates()
     snapshot = take_snapshot(paths=paths)
     common_dir = snapshot.common_dir if snapshot.known else None
-    return _named_status(name, snapshot, common_dir, as_json=as_json)
+    return _named_status(name, snapshot, common_dir)
 
 
 def current_status(
@@ -1013,11 +1001,6 @@ def current_status(
         "result": "hit" if lookup.hit else "miss",
         "last_run": lookup.last_run,
     }
-
-
-def _print_json(data: Mapping[str, Any]) -> None:
-    """Print a status report as JSON on stdout, unwrapped so it parses as is."""
-    print(json.dumps(data, indent=2))  # noqa: T201
 
 
 def _unknown_reason(snapshot: Snapshot, common_dir: Path | None) -> str | None:
@@ -1085,8 +1068,10 @@ def _lookup_gate(name: str, key: str, common_dir: Path) -> _Lookup:
     )
 
 
-def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_json: bool) -> int:
-    """Print whether one gate would skip on the snapshot's key."""
+def _named_status(
+    name: str, snapshot: Snapshot, common_dir: Path | None
+) -> tuple[dict[str, Any], int]:
+    """Report whether one gate would skip on the snapshot's key."""
     key = snapshot.key
     path: Path | None = None
     hit = False
@@ -1095,52 +1080,26 @@ def _named_status(name: str, snapshot: Snapshot, common_dir: Path | None, *, as_
     if key is not None and common_dir is not None:
         lookup = _lookup_gate(name, key, common_dir)
         path, hit, last_run, duration = lookup.path, lookup.hit, lookup.last_run, lookup.duration
-    reason = _unknown_reason(snapshot, common_dir)
-
-    if as_json:
-        _print_json(
-            {
-                "schema": STATUS_SCHEMA,
-                "enabled": True,
-                "name": name,
-                "tree": key,
-                "reason": reason,
-                **_named_report(
-                    name,
-                    marker=str(path) if path is not None else None,
-                    hit=hit,
-                    last_run=last_run,
-                    duration=duration,
-                    paths=snapshot.paths,
-                    full_tree=snapshot.tree,
-                ),
-            }
-        )
-        return 0 if hit else 1
-
-    if path is not None:
-        marker = str(path)
-    elif key is not None:
-        marker = f"none: {reason}"
-    else:
-        marker = "none"
-    rows = {"name": name}
-    if snapshot.paths:
-        rows["paths"] = " ".join(snapshot.paths)
-    if snapshot.paths:
-        rows["scope"] = snapshot.scope if snapshot.scope is not None else f"unknown: {reason}"
-    rows["tree"] = snapshot.tree if snapshot.tree is not None else f"unknown: {reason}"
-    rows |= {"marker": marker, "result": "hit" if hit else "miss"}
-    if duration is not None:
-        rows["duration"] = format_duration(duration)
-    if last_run is not None:
-        rows["last run"] = str(last_run["reason"])
-    kv(rows)
-    return 0 if hit else 1
+    report = {
+        "enabled": True,
+        "name": name,
+        "tree": key,
+        "reason": _unknown_reason(snapshot, common_dir),
+        **_named_report(
+            name,
+            marker=str(path) if path is not None else None,
+            hit=hit,
+            last_run=last_run,
+            duration=duration,
+            paths=snapshot.paths,
+            full_tree=snapshot.tree,
+        ),
+    }
+    return report, 0 if hit else 1
 
 
-def _list_gates(*, as_json: bool) -> int:
-    """Print the gates that passed or missed on the current tree, or on their paths' content."""
+def _list_gates() -> tuple[dict[str, Any], int]:
+    """List the gates that passed or missed on the current tree, or on their paths' content."""
     # Scoped gates are found by recomputing each recorded path set's scope, all from one staging.
     common_dir = git_common_dir()
     index = RecordIndex.load(common_dir) if common_dir is not None else None
@@ -1155,70 +1114,28 @@ def _list_gates(*, as_json: bool) -> int:
         keys = [tree, *(s.scope for s in scoped if s.scope is not None)]
         passed = index.passed_names(*keys)
         missed = [{"name": r["name"], **_miss_summary(r)} for r in index.missed_records(*keys)]
-    code = 0 if passed else 1
-
-    if as_json:
-        _print_json(
-            {
-                "schema": STATUS_SCHEMA,
-                "enabled": True,
-                "tree": tree,
-                "reason": _unknown_reason(snapshot, common_dir),
-                "passed": passed,
-                "missed": missed,
-            }
-        )
-        return code
-
-    if tree is None:
-        kv({"tree": f"unknown: {snapshot.reason}"})
-        return 1
-    if common_dir is None:
-        kv({"tree": tree, "passed": f"unknown: {_NO_COMMON_DIR_REASON}"})
-        return 1
-    if not passed and not missed:
-        kv({"tree": tree})
-        print("No gates match the current tree")  # noqa: T201
-        return 1
-    rows = {"tree": tree}
-    if passed:
-        rows["passed"] = ", ".join(passed)
-    if missed:
-        rows["missed"] = ", ".join(
-            f"{m['name']} ({m['reason']})" if m["reason"] else m["name"] for m in missed
-        )
-    kv(rows)
-    return code
+    report = {
+        "enabled": True,
+        "tree": tree,
+        "reason": _unknown_reason(snapshot, common_dir),
+        "passed": passed,
+        "missed": missed,
+    }
+    return report, 0 if passed else 1
 
 
-def clear_cache(*, confirmed: bool = False) -> int:
-    """Delete every marker for the current repository, after the user confirms.
+def clear_cache(common_dir: Path) -> int:
+    """Delete every marker and usual-run-time record of a repository.
 
     Args:
-        confirmed: Skip the confirmation prompt, as `--yes` does for scripts.
+        common_dir: The repository's git common directory.
 
     Returns:
-        0 on success, 1 outside a git repository, when the user does not confirm, or when
-        markers cannot be removed.
+        The number of markers removed.
+
+    Raises:
+        OSError: When the markers cannot be removed.
     """
-    common_dir = git_common_dir()
-    if common_dir is None:
-        say("not a git repository")
-        return 1
-    warning = [
-        "this permanently deletes every recorded pass for this repository.",
-        f"markers: {marker_dir(common_dir)}",
-        f"usual run times: {durations_dir(common_dir)}",
-        "Every gate runs again in full, even on code that already passed.",
-        "Recorded run stats are not affected.",
-    ]
-    if not confirmed and not confirm_deletion("clear markers", warning):
-        return 1
-    try:
-        count = clear_markers(common_dir)
-    except OSError as error:
-        say(f"could not clear markers: {error}")
-        return 1
+    count = clear_markers(common_dir)
     shutil.rmtree(durations_dir(common_dir), ignore_errors=True)
-    say(f"removed {count} marker{'' if count == 1 else 's'}")
-    return 0
+    return count

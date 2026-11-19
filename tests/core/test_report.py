@@ -27,7 +27,7 @@ from gate_cache.stats.report import (
     suite_report,
 )
 from gate_cache.stats.report_text import KEYED_STATUS, UNKNOWN_STATUS, render_gate
-from tests.conftest import BASE, DAY, REPO_A, REPO_B, insert, insert_results
+from tests.conftest import BASE, DAY, REPO_A, REPO_B, insert, insert_results, rendered_text
 
 WINDOW = Window(start=BASE, end=BASE + 2 * DAY, tz=ZoneInfo("UTC"))
 GATE_KEYS = {
@@ -286,7 +286,7 @@ def test_gate_report_current(empty_conn: sqlite3.Connection) -> None:
     assert plain["keyed"] is False
     assert calls == []
 
-    text = render_gate(keyed_before_window, window=WINDOW)
+    text = rendered_text(render_gate(keyed_before_window, window=WINDOW))
     assert KEYED_STATUS in text
     assert UNKNOWN_STATUS not in text
 

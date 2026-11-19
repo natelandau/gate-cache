@@ -236,7 +236,7 @@ def test_git_common_dir_rejects_unexpected_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: str
 ) -> None:
     """Empty or multi-line rev-parse output resolves to no common dir."""
-    monkeypatch.setattr("gate_cache.snapshot.run_git", lambda *_a, **_k: _FakeResult(stdout))
+    monkeypatch.setattr("gate_cache.git.run_git", lambda *_a, **_k: _FakeResult(stdout))
     assert git_common_dir(tmp_path) is None
 
 
