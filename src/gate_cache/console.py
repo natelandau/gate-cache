@@ -2,15 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import sys
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-_DIM = "\033[2m"
-_RESET = "\033[0m"
 _MINUTE = 60
 _HOUR = 3600
 
@@ -33,80 +26,14 @@ def stdin_isatty() -> bool:
         return False
 
 
-def confirm_deletion(action: str, warning: Sequence[str]) -> bool:
-    """Warn that a deletion is permanent and return True only when the user types `yes`.
-
-    Call before any command deletes data the user asked to delete. Without a terminal on
-    stdin nobody can answer, so refuse rather than block or guess; the caller's `--yes`
-    flag skips this call.
+def plural(count: float, noun: str) -> str:
+    """Return a count with its noun, adding an `s` unless the count is exactly one.
 
     Args:
-        action: The command's verb phrase, such as `clear stats`, used in the prompt.
-        warning: What is deleted and what is lost; the first line is the headline.
-
-    Returns:
-        True when the user typed `yes`, False when they refused or could not answer.
+        count: How many there are.
+        noun: The singular noun, such as `run`.
     """
-    if not stdin_isatty():
-        say(f"refusing to {action} without confirmation; pass --yes to {action} non-interactively")
-        return False
-    headline, *details = warning
-    say(f"WARNING: {headline}")
-    for line in [*details, "This cannot be undone."]:
-        say(f"  {line}")
-    say(f"type 'yes' to {action}: ", end="")
-    try:
-        answer = input()
-    except (EOFError, KeyboardInterrupt) as interrupt:
-        print(file=sys.stderr)  # noqa: T201
-        say("aborted; nothing was deleted")
-        if isinstance(interrupt, KeyboardInterrupt):
-            raise
-        return False
-    if answer.strip() != "yes":
-        say("aborted; nothing was deleted")
-        return False
-    return True
-
-
-def _use_color() -> bool:
-    """Return True when stdout is a terminal that accepts ANSI styling."""
-    if os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
-        return False
-    return sys.stdout.isatty()
-
-
-def kv_text(rows: dict[str, str]) -> str:
-    """Return key/value rows as text with the values aligned in one column.
-
-    Use it to build a larger block of text; `kv` prints the same rows directly.
-
-    Args:
-        rows: Labels mapped to their values, in display order.
-
-    Returns:
-        str: One line per row and per extra value line, each ending in a newline.
-    """
-    if not rows:
-        return ""
-    cell_width = max(len(key) for key in rows) + len(": ")
-    dim, reset = (_DIM, _RESET) if _use_color() else ("", "")
-    lines: list[str] = []
-    for key, value in rows.items():
-        pad = " " * (cell_width - len(key) - len(": "))
-        first, *rest = value.splitlines() or [""]
-        lines.append(f"  {dim}{key}{reset}: {pad}{first}")
-        lines.extend(f"{' ' * (2 + cell_width)}{line}" for line in rest)
-    return "".join(f"{line}\n" for line in lines)
-
-
-def kv(rows: dict[str, str]) -> None:
-    """Print key/value rows on stdout with the values aligned in one column.
-
-    Args:
-        rows: Labels mapped to their values, printed in insertion order.
-    """
-    sys.stdout.write(kv_text(rows))
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def format_duration(seconds: float) -> str:

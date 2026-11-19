@@ -4,7 +4,7 @@ icon: lucide/braces
 
 # Report format
 
-Three commands print JSON for scripts and coding agents: `gate-cache stats report --json`, `gate-cache stats --json`, and `gate-cache status --json`. This page lists the keys that each command prints. To read the report as text, use `gate-cache stats report` without `--json`.
+Every command except the gate run prints JSON for scripts and coding agents when you add `--json`. This page lists the keys that each command prints, and the keys of an error. To read the output as text, run the command without `--json`.
 
 The format is a public contract. Each command has a `schema` key, a whole number. A change that removes a key, renames a key, or changes the meaning of a value raises `schema`. A change that adds a key does not. Ignore keys that you do not know.
 
@@ -344,7 +344,7 @@ Keys of `tests`:
 
 ## Recording view
 
-`gate-cache stats --json` prints whether recording is on.
+`gate-cache stats --json` prints whether recording is on. `gate-cache stats on --json` and `gate-cache stats off --json` print the same object after the change.
 
 ```json
 {
@@ -379,6 +379,78 @@ Keys of `tests`:
 
 When `last_run` is not `null`, it is an object with `exit_code`, `reason`, and `timestamp`.
 
+## Clear views
+
+`gate-cache clear --yes --json` prints how many records it deleted, and the directory that held them.
+
+```json
+{
+  "schema": 1,
+  "deleted": 12,
+  "marker_dir": "/home/me/shop/.git/gate-cache"
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `deleted` | The number of records of passes that the command deleted. Records of failed runs are deleted too, but not counted. |
+| `marker_dir` | The directory that held the records. |
+
+`gate-cache stats clear --yes --json` prints how many stats files it deleted, and the data directory.
+
+```json
+{
+  "schema": 1,
+  "deleted": 3,
+  "data_dir": "/home/me/.local/share/gate-cache"
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `deleted` | The number of stats files that the command deleted. |
+| `data_dir` | The data directory that held the stats. |
+
+## Dashboard view
+
+`gate-cache dashboard --json` prints one line of JSON when the dashboard is ready, and then keeps the dashboard open.
+
+```json
+{"schema": 1, "url": "http://127.0.0.1:7878", "port": 7878, "already_running": false, "busy": false}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `url`, `port` | The address of the dashboard. |
+| `already_running` | `true` when another dashboard already runs at `url`. The command then exits. |
+| `busy` | `true` when another gate-cache process uses the stats and gives no address, such as a dashboard that is about to start. `url` and `port` are `null`, and the command exits 0. |
+
+## Errors
+
+With `--json`, an error also prints one JSON object to stdout, in place of the output of the command. The exit code is the same as without `--json`.
+
+```json
+{
+  "schema": 1,
+  "error": {
+    "message": "'shop' matches more than one repository; give --repo a path instead:",
+    "hint": null,
+    "details": {
+      "matches": [
+        { "label": "shop (me)", "folder": "/home/me/shop" },
+        { "label": "shop (work)", "folder": "/home/me/work/shop" }
+      ]
+    }
+  }
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `message` | What went wrong. |
+| `hint` | What to do about it, often a command to run. `null` when there is no hint. |
+| `details` | An object with data about the error, or `null`. For a `--repo` name that matches more than one repository, `matches` lists each repository with its `label` and `folder`. Give one `folder` to `--repo`. |
+
 ## Exit codes
 
-The exit codes of `gate-cache stats report` are in the [command reference](commands.md#exit-codes).
+The exit codes of each command are in the [command reference](commands.md#exit-codes).

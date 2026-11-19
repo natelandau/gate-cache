@@ -66,9 +66,12 @@ A short name is easier to read in `gate-cache status` and the dashboard. [Write 
 
 ```console
 $ gate-cache status
-  tree:   aaff74984cccd156a469afa7d9ab10e4777beb24
-  passed: test
-  missed: npm run lint (exit code 1)
+tree  aaff74984cccd156a469afa7d9ab10e4777beb24
+
+  gate           result   exit code   reason
+ ─────────────────────────────────────────────────
+  test           passed
+  npm run lint   missed           1   exit code 1
 ```
 
 ## Run the command in full

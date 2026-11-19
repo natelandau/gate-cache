@@ -11,7 +11,7 @@ The installed binary is the authority for syntax. Run `gate-cache --help` and `g
 
 ## Read the output
 
-gate-cache writes its own lines to stderr with the prefix `gate-cache:`. All other output comes from the wrapped command.
+When gate-cache runs a gate, it writes its own lines to stderr with the prefix `gate-cache:`. All other output comes from the wrapped command. The other commands print an error as a line that starts with `error:`, and a `hint:` line when there is a fix.
 
 | Line | Meaning | Action |
 | --- | --- | --- |

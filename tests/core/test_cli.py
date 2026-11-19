@@ -3,15 +3,9 @@
 import json
 import os
 import re
-import shlex
-import sqlite3
+import subprocess
 import sys
-import time
-from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,19 +13,9 @@ import pytest
 import gate_cache
 from gate_cache import cli
 from gate_cache import gate as gate_module
-from gate_cache.git import git_common_dir
-from gate_cache.stats import report as report_module
-from gate_cache.stats.archive import ARCHIVE_NAME, Archive, ArchiveVersionError
-from gate_cache.stats.report_text import (
-    KEYED_NAME_ERROR,
-    RECORDING_OFF_HINT,
-    REPORT_HINT,
-    UNKNOWN_GATE,
-    UNKNOWN_REPO,
-)
-from gate_cache.stats.window import DURATION_ERROR, UNTIL_ERROR
+from gate_cache.commands.app import DOCS_URL
 from gate_cache.wait_settings import WaitSettings
-from tests.conftest import REPO_A, REPO_B, Counter, insert, invoke
+from tests.conftest import Counter, invoke
 
 
 def test_run_requires_double_dash(
@@ -56,54 +40,6 @@ def test_run_without_name_keys_on_the_command(
 
     assert invoke(monkeypatch, "--", *counter.argv(touch=tmp_path / "elsewhere.txt")) == 0
     assert counter.count == 2
-
-
-def test_status_finds_a_pass_recorded_under_the_default_name(
-    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Verify status --name with the quoted command reports a pass recorded without --name."""
-    assert invoke(monkeypatch, "--", *counter.argv()) == 0
-    assert invoke(monkeypatch, "status", "--name", shlex.join(counter.argv())) == 0
-
-
-def test_status_command_finds_a_pass_recorded_under_the_default_name(
-    git_repo: Path, counter: Counter, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Verify status -- COMMAND looks up the gate that the same command ran without --name."""
-    assert invoke(monkeypatch, "status", "--", *counter.argv()) == 1
-    assert invoke(monkeypatch, "--", *counter.argv()) == 0
-    assert invoke(monkeypatch, "status", "--", *counter.argv()) == 0
-    assert counter.count == 1
-
-
-def test_status_command_passes_options(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify status -- COMMAND joins the command as the name and keeps --path and --json."""
-    status = MagicMock(return_value=0)
-    monkeypatch.setattr(cli, "gate_status", status)
-    args = ["status", "--json", "--path", "a", "--", "uv", "run", "ruff", "check", "."]
-    assert invoke(monkeypatch, *args) == 0
-    status.assert_called_once_with("uv run ruff check .", as_json=True, paths=["a"])
-
-
-@pytest.mark.parametrize(
-    ("args", "message"),
-    [
-        (["status", "--name", "x", "--", "pytest"], "not both"),
-        (["status", "--"], "no command given after --"),
-    ],
-)
-def test_status_command_usage_errors(
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    args: list[str],
-    message: str,
-) -> None:
-    """Verify status rejects --name with a command, and an empty command after --."""
-    status = MagicMock(return_value=0)
-    monkeypatch.setattr(cli, "gate_status", status)
-    assert invoke(monkeypatch, *args) == 2
-    status.assert_not_called()
-    assert message in capfd.readouterr().err
 
 
 def test_run_rejects_empty_name(
@@ -173,84 +109,52 @@ def test_run_passes_options_through_verbatim(monkeypatch: pytest.MonkeyPatch) ->
 def test_double_dash_protects_subcommand_names(monkeypatch: pytest.MonkeyPatch) -> None:
     """A wrapped program named like a subcommand is run, not dispatched."""
     run_gate = MagicMock(return_value=0)
-    status = MagicMock(return_value=1)
     monkeypatch.setattr(cli, "run_gate", run_gate)
-    monkeypatch.setattr(cli, "gate_status", status)
     assert invoke(monkeypatch, "--name", "s", "--", "status") == 0
     run_gate.assert_called_once_with(
         "s", ["status"], paths=[], wait=None, junit=[], spot_check=False
     )
-    status.assert_not_called()
 
 
-def test_status_and_clear_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Subcommands call their gate functions and propagate the codes."""
-    status = MagicMock(return_value=1)
-    clear = MagicMock(return_value=0)
-    monkeypatch.setattr(cli, "gate_status", status)
-    monkeypatch.setattr(cli, "clear_cache", clear)
-    assert invoke(monkeypatch, "status", "--name", "x") == 1
-    status.assert_called_once_with("x", as_json=False, paths=[])
-    assert invoke(monkeypatch, "clear") == 0
-    assert invoke(monkeypatch, "clear", "--yes") == 0
-    assert invoke(monkeypatch, "clear", "-y") == 0
-    assert clear.call_args_list == [
-        ((), {"confirmed": False}),
-        ((), {"confirmed": True}),
-        ((), {"confirmed": True}),
-    ]
-
-
-def test_status_without_name_lists_gates(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify status with no --name asks for the list of passed gates."""
-    status = MagicMock(return_value=0)
-    monkeypatch.setattr(cli, "gate_status", status)
-    assert invoke(monkeypatch, "status") == 0
-    status.assert_called_once_with(None, as_json=False, paths=[])
-
-
-def test_status_json_flag(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify --json is passed through to the status report."""
-    status = MagicMock(return_value=0)
-    monkeypatch.setattr(cli, "gate_status", status)
-    assert invoke(monkeypatch, "status", "--json") == 0
-    status.assert_called_once_with(None, as_json=True, paths=[])
-
-
-def test_help_is_self_describing(
-    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
-) -> None:
-    """Help explains the tool to a reader with no other context."""
-    assert invoke(monkeypatch, "--help") == 0
-    out = capfd.readouterr().out
-    for text in (
+@pytest.mark.parametrize(
+    "text",
+    [
         "--name",
-        "GATE_CACHE_DISABLE",
-        "GATE_CACHE_MAX_AGE_DAYS",
+        "--path",
+        "--junit",
+        "--wait-timeout",
+        "--on-wait-failure",
+        "--spot-check",
+        "--skill",
+        "--prompt",
         "status",
         "clear",
-        "gate-cache --name pytest -- ",
-        "gate-cache -- uv run pytest",
-        "--path",
-        "gate-cache --name api-test --path api/ --path uv.lock -- ",
-        "GATE_CACHE_STATS",
-        "GATE_CACHE_DATA_DIR",
-        "id gate-cache",
-        f"rev v{gate_cache.__version__}",
-        "already",
-        "run `gate-cache --skill`",
-    ):
-        assert text in out
-    flat = " ".join(out.split())
-    assert "records a pass keyed on the git tree of the working copy" in flat
-    assert "A pass on uncommitted work therefore skips when the same content is committed" in flat
-    assert "If it is empty or not set, CI decides the same way" in flat
-    assert "put its value in --name" in flat
-    assert "from the top of the work tree" in flat
-    assert "a path that is missing from the list hides a change that must run" in flat
-    assert cli.FILES_CHANGED_NOTICE in flat
-    assert 'gate-cache --name "test@$(git hash-object .env)" -- ' in out
-    assert "empty-command" not in out
+        "stats",
+        "dashboard",
+        DOCS_URL,
+    ],
+)
+def test_help_names_the_run_options_and_subcommands(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], text: str
+) -> None:
+    """Top-level help names every gate run option, the agent flags, and the docs link."""
+    monkeypatch.setenv("COLUMNS", "200")
+    assert invoke(monkeypatch, "--help") == 0
+    assert text in capfd.readouterr().out
+
+
+@pytest.mark.parametrize("args", [["--help"], ["-h"], ["--help", "--", "true"], ["-h", "--foo"]])
+def test_top_help_is_one_screen_and_lists_commands_from_the_app(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    """Any invocation that starts with a help flag prints the full top-level help."""
+    monkeypatch.setenv("COLUMNS", "200")
+    assert invoke(monkeypatch, *args) == 0
+    out = capfd.readouterr().out
+    assert DOCS_URL in out
+    # Only the Commands panel prints a command's own help text.
+    assert "Print the installed version" not in out
+    assert "Print the guide for coding agents that use gate-cache" in out
 
 
 def _frontmatter(text: str) -> dict[str, str]:
@@ -279,7 +183,7 @@ def test_skill_flag_prints_skill_file(
     [
         ("already passed on tree", ["already passed on {snapshot.label}", 'f"tree {']),
         ("already passed on paths", ["already passed on {snapshot.label}", 'f"paths {']),
-        (cli.FILES_CHANGED_NOTICE, []),
+        (gate_module.FILES_CHANGED_NOTICE, []),
         (", running without cache", [", running without cache"]),
         (", waiting", [', waiting"']),
         (
@@ -322,6 +226,37 @@ def test_skill_sections_named_in_prompt_exist() -> None:
     named = re.findall(r'the "([^"]+)" section of the guide', prompt)
     assert named
     assert set(named) <= headings
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        (["status", "--json"], True),
+        (["status", "--", "tool", "--json"], False),
+        (["stats", "report", "--json", "--", "x"], True),
+        ([], False),
+    ],
+)
+def test_json_requested(tokens: list[str], expected: bool) -> None:
+    """Only a --json before the first -- belongs to gate-cache."""
+    from gate_cache.commands.app import json_requested
+
+    assert json_requested(tokens) is expected
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["--", "CMD", "--help"], ["--name", "x", "--", "CMD", "--version"]],
+)
+def test_info_words_inside_the_run_reach_the_command(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    """--help and --version after -- belong to the wrapped command."""
+    run_gate = MagicMock(return_value=7)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, *args) == 7
+    assert run_gate.call_args.args[1] == ["CMD", args[-1]]
+    assert DOCS_URL not in capfd.readouterr().out
 
 
 def test_version_flag(monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
@@ -456,16 +391,6 @@ def test_wait_timeout_without_value_is_usage_error(
     assert "--wait-timeout needs a value" in capfd.readouterr().err
 
 
-def test_help_lists_wait_flags(
-    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
-) -> None:
-    """--help documents both wait flags."""
-    assert invoke(monkeypatch, "--help") == 0
-    out = capfd.readouterr().out
-    assert "--wait-timeout" in out
-    assert "--on-wait-failure" in out
-
-
 def test_ctrl_c_exits_130_quietly(
     monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
@@ -497,7 +422,6 @@ def test_ctrl_c_while_parsing_exits_130_quietly(
     [
         ["--name", "a", "--name", "b", "--", "true"],
         ["--name=a", "--name", "b", "--", "true"],
-        ["status", "--name", "a", "--name", "b"],
     ],
 )
 def test_repeated_name_is_usage_error(
@@ -505,52 +429,38 @@ def test_repeated_name_is_usage_error(
 ) -> None:
     """Verify a second --name is rejected instead of silently replacing the first."""
     run_gate = MagicMock(return_value=0)
-    status = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
-    monkeypatch.setattr(cli, "gate_status", status)
     assert invoke(monkeypatch, *args) == 2
     run_gate.assert_not_called()
-    status.assert_not_called()
     assert "--name given more than once" in capfd.readouterr().err
 
 
 @pytest.mark.parametrize(
-    ("args", "expected"),
+    ("args", "options"),
     [
-        (["status", "--help"], ["gate-cache status", "--name", "--json", "list the gates"]),
-        (["status", "-h"], ["gate-cache status", "--json"]),
-        (["clear", "--help"], ["gate-cache clear", "Permanently delete every recorded pass"]),
-        (["stats", "--help"], ["Recording never changes", "GATE_CACHE_STATS", "no file content"]),
-        (["dashboard", "--help"], ["prints the address of the running", "Ctrl-C"]),
-        (["-h"], ["status", "clear", "GATE_CACHE_DISABLE"]),
+        (["status", "--help"], ["--name", "--path", "--json"]),
+        (["clear", "-h"], ["--yes", "--json"]),
+        (["stats", "--help"], ["report", "--yes", "--json"]),
+        (
+            ["stats", "report", "-h"],
+            ["--name", "--repo", "--all-repos", "--since", "--until", "--limit", "--json"],
+        ),
+        (["dashboard", "--help"], ["--port", "--no-browser", "--json"]),
     ],
 )
-def test_help_flags(
+def test_subcommand_help_lists_its_options(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
     args: list[str],
-    expected: list[str],
+    options: list[str],
 ) -> None:
-    """Verify -h and --help describe the top level and each subcommand, then exit 0."""
+    """-h and --help on a subcommand print its usage and every option, then exit 0."""
+    monkeypatch.setenv("COLUMNS", "200")
     assert invoke(monkeypatch, *args) == 0
     out = capfd.readouterr().out
-    for text in expected:
-        assert text in out
-
-
-@pytest.mark.parametrize("args", [["status", "--bogus"], ["clear", "extra"], ["status", "--name"]])
-def test_subcommand_bad_arguments_are_usage_errors(
-    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], args: list[str]
-) -> None:
-    """Verify malformed subcommand arguments exit 2 with the subcommand's usage."""
-    status = MagicMock(return_value=0)
-    clear = MagicMock(return_value=0)
-    monkeypatch.setattr(cli, "gate_status", status)
-    monkeypatch.setattr(cli, "clear_cache", clear)
-    assert invoke(monkeypatch, *args) == 2
-    status.assert_not_called()
-    clear.assert_not_called()
-    assert f"gate-cache {args[0]}" in capfd.readouterr().err
+    assert f"gate-cache {' '.join(args[:-1])}" in out
+    for option in options:
+        assert option in out
 
 
 def test_no_arguments_is_usage_error(
@@ -681,146 +591,6 @@ def test_scoped_skip_names_the_paths(
     )
 
 
-def test_status_passes_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify status forwards repeated --path values with --name."""
-    status = MagicMock(return_value=0)
-    monkeypatch.setattr(cli, "gate_status", status)
-    assert invoke(monkeypatch, "status", "--name", "x", "--path", "a", "--path", "b") == 0
-    status.assert_called_once_with("x", as_json=False, paths=["a", "b"])
-
-
-def test_status_path_without_name_is_usage_error(
-    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
-) -> None:
-    """Verify status --path without --name exits 2, since only a named lookup uses paths."""
-    status = MagicMock(return_value=0)
-    monkeypatch.setattr(cli, "gate_status", status)
-    assert invoke(monkeypatch, "status", "--path", "a") == 2
-    status.assert_not_called()
-    assert "--path needs --name" in capfd.readouterr().err
-
-
-def test_status_empty_path_is_usage_error(
-    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
-) -> None:
-    """Verify status rejects an empty --path as run does, such as an unset shell variable."""
-    status = MagicMock(return_value=0)
-    monkeypatch.setattr(cli, "gate_status", status)
-    assert invoke(monkeypatch, "status", "--name", "x", "--path", "") == 2
-    status.assert_not_called()
-    assert "--path needs a value" in capfd.readouterr().err
-
-
-def test_stats_reports_the_setting(
-    stats_dirs: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    """Stats prints the setting rows and exits 0."""
-    assert invoke(monkeypatch, "stats") == 0
-    out = capfd.readouterr().out
-    for label in ("recording", "decided by", "config", "data"):
-        assert label in out
-    assert re.search(rf"config: +{re.escape(str(stats_dirs[0]))}", out)
-    assert re.search(rf"data: +{re.escape(str(stats_dirs[1]))}", out)
-
-
-def test_stats_on_then_off(
-    stats_dirs: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    """Stats on turns recording on and stats off turns it back off."""
-    assert invoke(monkeypatch, "stats", "on") == 0
-    capfd.readouterr()
-    assert invoke(monkeypatch, "stats") == 0
-    assert re.search(r"recording: +on", capfd.readouterr().out)
-    assert invoke(monkeypatch, "stats", "off") == 0
-    assert re.search(r"recording: +off", capfd.readouterr().out)
-
-
-def test_stats_on_reports_an_unwritable_config(
-    stats_dirs: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    """A config file that cannot be written exits 1 with a message."""
-
-    def refuse(*, enabled: bool) -> None:
-        raise PermissionError(13, "Permission denied")
-
-    monkeypatch.setattr(cli.stats_config, "write_enabled", refuse)
-    assert invoke(monkeypatch, "stats", "on") == 1
-    assert "could not write" in capfd.readouterr().err
-
-
-@pytest.mark.parametrize(
-    ("content", "reason"),
-    [
-        (b"[stats\n", "not valid TOML"),
-        (b"\xff\xfe\x00", "not valid UTF-8"),
-        (b"stats_enabled.x = 1\n", "safely"),
-    ],
-)
-def test_stats_on_leaves_an_uneditable_config_untouched(
-    stats_dirs: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    content: bytes,
-    reason: str,
-) -> None:
-    """A config that cannot be edited safely exits 1, says why, and stays as it was."""
-    config_file = stats_dirs[0]
-    config_file.parent.mkdir(parents=True)
-    config_file.write_bytes(content)
-    assert invoke(monkeypatch, "stats", "on") == 1
-    err = capfd.readouterr().err
-    assert "could not write" in err
-    assert reason in err
-    assert config_file.read_bytes() == content
-
-
-def test_stats_shows_the_decider_when_env_overrides_config(
-    stats_on: None,
-    stats_dirs: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    """The environment and CI beat the config file, and the output names the decider."""
-    monkeypatch.setenv("GATE_CACHE_STATS", "0")
-    assert invoke(monkeypatch, "stats") == 0
-    out = capfd.readouterr().out
-    assert re.search(r"recording: +off", out)
-    assert re.search(r"decided by: +env", out)
-
-    monkeypatch.delenv("GATE_CACHE_STATS")
-    monkeypatch.setenv("CI", "true")
-    assert invoke(monkeypatch, "stats") == 0
-    assert re.search(r"decided by: +ci", capfd.readouterr().out)
-
-
-def test_stats_rejects_an_unknown_action(
-    stats_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An unknown action is a usage error."""
-    assert invoke(monkeypatch, "stats", "bogus") == 2
-
-
-def test_cli_rejects_bad_port(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A non-numeric or out-of-range port is a usage error."""
-    for bad in ("0x", "0", "70000"):
-        assert invoke(monkeypatch, "dashboard", "--port", bad) == 2
-
-
-def test_cli_dashboard_routes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The dashboard command passes its options through."""
-    run = MagicMock(return_value=0)
-    # A stand-in module keeps this core test free of dashboard code, whose changes never run core
-    monkeypatch.setitem(sys.modules, "gate_cache.dashboard.app", SimpleNamespace(run_dashboard=run))
-    assert invoke(monkeypatch, "dashboard", "--port", "9000", "--no-browser") == 0
-    run.assert_called_once_with(port=9000, open_browser=False)
-
-
 def test_skill_timeout_line_matches_default_timeout_format() -> None:
     """Verify the timeout line in the skill shows the default limit as the code formats it."""
     from gate_cache.console import format_duration
@@ -901,288 +671,39 @@ def test_hook_flag_leaves_a_shared_python_alone(
     assert seen == {"PATH": path}
 
 
-def _record(state: Path, *events: tuple[str, str]) -> None:
-    """Archive one recent passing run for each (repo, gate name) pair."""
-    with Archive.open(state / ARCHIVE_NAME) as archive:
-        for offset, (repo, name) in enumerate(events):
-            insert(archive.connection, time.time() - 600 + offset, "pass", repo=repo, name=name)
+_IMPORT_GUARD_SCRIPT = """
+import json, sys
+sys.argv = ["gate-cache", "--name", "guard", "--", sys.executable, "-c", "pass"]
+import gate_cache.cli
+code = None
+try:
+    gate_cache.cli.main()
+except SystemExit as e:
+    code = e.code
+heavy = {"cyclopts", "rich"}
+loaded = sorted(
+    m for m in sys.modules if m.split(".")[0] in heavy or m.startswith("gate_cache.commands")
+)
+print(json.dumps({"code": code, "loaded": loaded}))
+"""
 
 
-def _report_json(
-    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str], *args: str
-) -> dict[str, Any]:
-    """Run `stats report --json` with args, require exit 0, and return the parsed report."""
-    capfd.readouterr()
-    assert invoke(monkeypatch, "stats", "report", "--json", *args) == 0
-    return json.loads(capfd.readouterr().out)
-
-
-def test_stats_json(
-    stats_dirs: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    """Stats --json prints the setting as one versioned object."""
-    assert invoke(monkeypatch, "stats", "--json") == 0
-    data = json.loads(capfd.readouterr().out)
-    assert data == {
-        "schema": 1,
-        "enabled": False,
-        "decided_by": "default",
-        "project": None,
-        "config_file": str(stats_dirs[0]),
-        "data_dir": str(stats_dirs[1]),
+def test_gate_run_never_imports_the_rich_cli(git_repo: Path) -> None:
+    """A gate run and a skip load neither cyclopts, rich, nor the command modules."""
+    # Subprocess: pytest plugins import rich into the test process.
+    env = {k: v for k, v in os.environ.items() if k not in {"GATE_CACHE_DISABLE", "CI"}} | {
+        "GATE_CACHE_STATS": "1"
     }
-
-
-@pytest.fixture
-def outside_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_env: Path) -> Path:
-    """Chdir into a directory outside any git repository and return it."""
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    monkeypatch.chdir(outside)
-    return outside
-
-
-COMMAND = ["npx", "eslint@9", "."]
-
-
-@pytest.fixture
-def recorded_here(
-    git_repo: Path,
-    stats_on: None,
-    stats_dirs: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> list[str]:
-    """Record `lint` and a gate named by COMMAND here and `other` elsewhere; fake the status.
-
-    Returns:
-        The gate names whose status on the current content was looked up.
-    """
-    common = str(git_common_dir(git_repo))
-    _record(stats_dirs[1], (common, "lint"), (common, shlex.join(COMMAND)), (REPO_B, "other"))
-    looked_up: list[str] = []
-
-    def current_status(name: str, paths: list[str], **_: object) -> dict[str, Any]:
-        looked_up.append(name)
-        return {"tree": "here", "result": "hit", "last_run": None}
-
-    monkeypatch.setattr(gate_module, "current_status", current_status)
-    return looked_up
-
-
-@pytest.mark.parametrize(
-    ("args", "message"),
-    [
-        (["on", "--json"], cli.STATS_JSON_ACTION),
-        (["report", "--all-repos", "--repo", "x"], cli.ALL_REPOS_CONFLICT),
-        (["report", "--all-repos", "--name", "x"], cli.ALL_REPOS_CONFLICT),
-        (["report", "--name", "test@v22"], KEYED_NAME_ERROR.format(gate="test")),
-        (["report", "--name", "x", "--", "pytest"], cli.NAME_OR_COMMAND),
-        (["report", "--name", "x"], cli.NAME_NEEDS_REPO),
-        (["report", "--", "echo", "hi"], cli.NAME_NEEDS_REPO),
-        (["report", "--since", "0d"], DURATION_ERROR),
-        (["report", "--since", "7"], DURATION_ERROR),
-        (["report", "--since", "9" * 400 + "d"], DURATION_ERROR),
-        (["report", "--until", "soon"], UNTIL_ERROR),
-        (["report", "--until", "0001-01-01"], UNTIL_ERROR),
-        (["report", "--until", "10000y"], UNTIL_ERROR),
-        (["report", "--limit", "many"], cli.LIMIT_ERROR),
-    ],
-)
-def test_stats_report_usage_errors(
-    stats_dirs: tuple[Path, Path],
-    outside_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    args: list[str],
-    message: str,
-) -> None:
-    """Each invalid flag combination or value exits 2 and says what is wrong."""
-    assert invoke(monkeypatch, "stats", *args) == 2
-    assert message in " ".join(capfd.readouterr().err.split())
-
-
-@pytest.mark.parametrize(
-    ("args", "repo", "gates"),
-    [
-        pytest.param([], "here", {"lint", shlex.join(COMMAND)}, id="current repo"),
-        pytest.param(["--all-repos"], None, {"lint", shlex.join(COMMAND), "other"}, id="all repos"),
-        pytest.param(["--repo", "other"], REPO_B, {"other"}, id="named repo"),
-    ],
-)
-def test_stats_report_scope(
-    recorded_here: list[str],
-    git_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    args: list[str],
-    repo: str | None,
-    gates: set[str],
-) -> None:
-    """--repo picks one repo, else --all-repos every repo, else the current repo."""
-    expected = str(git_common_dir(git_repo)) if repo == "here" else repo
-
-    report = _report_json(monkeypatch, capfd, *args)
-
-    assert report["repo"] == expected
-    assert "recording" not in report
-    assert {g["name"] for g in report["gates"]} == gates
-
-
-@pytest.mark.parametrize(
-    ("args", "name", "tree"),
-    [
-        pytest.param(["--name", "lint"], "lint", "here", id="name"),
-        pytest.param(["--", *COMMAND], shlex.join(COMMAND), "here", id="command"),
-        pytest.param(["--name", shlex.join(COMMAND)], shlex.join(COMMAND), "here", id="name @"),
-        pytest.param(["--repo", "other", "--name", "other"], "other", None, id="other repo"),
-    ],
-)
-def test_stats_report_one_gate(
-    recorded_here: list[str],
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    args: list[str],
-    name: str,
-    tree: str | None,
-) -> None:
-    """One gate is named by --name or its command, with a status only in the current repo."""
-    report = _report_json(monkeypatch, capfd, *args)
-
-    assert report["name"] == name
-    assert (report["current"] or {}).get("tree") == tree
-    assert recorded_here == ([name] if tree else [])
-
-
-@pytest.mark.parametrize(
-    ("args", "hint"),
-    [pytest.param([], True, id="suite"), pytest.param(["--name", "lint"], False, id="gate")],
-)
-def test_stats_report_text(
-    recorded_here: list[str],
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    args: list[str],
-    hint: bool,
-) -> None:
-    """Without --json, each view prints text that names the gate."""
-    assert invoke(monkeypatch, "stats", "report", *args) == 0
-    out = capfd.readouterr().out
-    assert "lint" in out
-    assert (REPORT_HINT in out) is hint
-
-
-@pytest.mark.parametrize(
-    "args", [["report", "--json"], ["--json", "report"], ["--json", "report", "--since", "7d"]]
-)
-def test_stats_report_json_outside_repo(
-    stats_dirs: tuple[Path, Path],
-    outside_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    args: list[str],
-) -> None:
-    """Outside a repo with nothing recorded, the machine-wide report is empty and creates nothing."""
-    assert invoke(monkeypatch, "stats", *args) == 0
-    report = json.loads(capfd.readouterr().out)
-    assert report["repo"] is None
-    assert report["recording"] is False
-    assert report["gates"] == []
-    state = stats_dirs[1]
-    assert not state.exists() or not any(state.iterdir())
-
-
-@pytest.mark.parametrize(("limit", "shown"), [("0", 1), ("2", 2), ("9999", 3)])
-def test_stats_report_limit_is_clamped(
-    stats_dirs: tuple[Path, Path],
-    outside_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    limit: str,
-    shown: int,
-) -> None:
-    """--limit caps each list, and a value out of range is pulled into 1 to 500."""
-    _record(stats_dirs[1], *[(REPO_A, "lint")] * 3)
-
-    report = _report_json(monkeypatch, capfd, "--repo", "proj", "--name", "lint", "--limit", limit)
-    assert report["recent"]["shown"] == shown
-
-
-@pytest.mark.parametrize("recording", [True, False])
-def test_stats_report_name_unknown(
-    git_repo: Path,
-    stats_dirs: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    recording: bool,
-) -> None:
-    """A gate the repo never recorded exits 1 and names it, with a hint when recording is off."""
-    monkeypatch.setenv("GATE_CACHE_STATS", "1" if recording else "0")
-    common = str(git_common_dir(git_repo))
-    _record(stats_dirs[1], (common, "lint"))
-
-    assert invoke(monkeypatch, "stats", "report", "--name", "nope") == 1
-    err = " ".join(capfd.readouterr().err.split())
-    assert UNKNOWN_GATE.format(name="nope", repo=common) in err
-    assert (RECORDING_OFF_HINT in err) is not recording
-
-
-@pytest.mark.parametrize("record", [True, False])
-def test_stats_report_repo_unknown(
-    stats_dirs: tuple[Path, Path],
-    outside_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    record: bool,
-) -> None:
-    """A --repo that matches no recorded repo exits 1, with or without a record."""
-    if record:
-        _record(stats_dirs[1], (REPO_A, "lint"))
-
-    assert invoke(monkeypatch, "stats", "report", "--repo", "nowhere") == 1
-    assert UNKNOWN_REPO.format(text="nowhere") in capfd.readouterr().err
-
-
-def test_stats_report_repo_ambiguous(
-    stats_dirs: tuple[Path, Path],
-    outside_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    """A --repo name shared by two repos exits 2 and lists both paths."""
-    _record(stats_dirs[1], ("/a/shop/.git", "lint"), ("/b/shop/.git", "lint"))
-
-    assert invoke(monkeypatch, "stats", "report", "--repo", "shop") == 2
-    err = capfd.readouterr().err
-    assert "/a/shop" in err
-    assert "/b/shop" in err
-
-
-@pytest.mark.parametrize(
-    "error",
-    [
-        ArchiveVersionError("archive schema 9 is newer than this gate-cache supports"),
-        sqlite3.DatabaseError("file is not a database"),
-        PermissionError(13, "Permission denied"),
-    ],
-)
-def test_stats_report_unreadable_record(
-    stats_dirs: tuple[Path, Path],
-    outside_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-    error: Exception,
-) -> None:
-    """A record that cannot be read exits 1 with one line that says why."""
-
-    @contextmanager
-    def broken() -> Generator[None]:
-        raise error
-        yield
-
-    monkeypatch.setattr(report_module, "open_record", broken)
-    assert invoke(monkeypatch, "stats", "report") == 1
-    err = capfd.readouterr().err
-    assert str(error) in err
-    assert "Traceback" not in err
+    for attempt in range(2):  # a run, then a skip
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", _IMPORT_GUARD_SCRIPT],
+            cwd=git_repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        report = json.loads(result.stdout.strip().splitlines()[-1])
+        assert report == {"code": 0, "loaded": []}
+        if attempt == 1:
+            assert "already passed on" in result.stderr

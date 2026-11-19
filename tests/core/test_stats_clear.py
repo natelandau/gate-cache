@@ -1,16 +1,19 @@
-"""Tests for the `stats clear` command."""
+"""Tests for deleting recorded stats."""
 
-from collections.abc import Callable
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from gate_cache.stats import clear
 from gate_cache.stats.archive import Archive, archive_path
+from gate_cache.stats.clear import StatsInUseError, clear_stats
 from gate_cache.stats.junit import TESTS_DIR_NAME
 from gate_cache.stats.lock import InstanceLock
-from tests.conftest import invoke
+
+
+def _yes(_warning: Sequence[str]) -> bool:
+    return True
 
 
 @pytest.fixture
@@ -22,22 +25,20 @@ def lock(stats_dirs: tuple[Path, Path]) -> InstanceLock:
     return held
 
 
-def test_stats_clear_refuses_while_running(
-    lock: InstanceLock, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Clearing is refused while the dashboard holds the lock."""
+def test_stats_clear_refuses_while_running(lock: InstanceLock) -> None:
+    """Clearing is refused, before any prompt, while the dashboard holds the lock."""
     Archive.open(archive_path()).close()
+    confirm = MagicMock(return_value=True)
     try:
-        assert clear.stats_clear() == 1
+        with pytest.raises(StatsInUseError):
+            clear_stats(confirm=confirm)
     finally:
         lock.release()
     assert archive_path().exists()
-    assert clear.CLEAR_BLOCKED in capsys.readouterr().err
+    confirm.assert_not_called()
 
 
-def test_stats_clear_deletes(
-    stats_dirs: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_stats_clear_deletes(stats_dirs: tuple[Path, Path]) -> None:
     """Clearing removes the inbox, processing files, per-run test files, and the archive."""
     state = stats_dirs[1]
     Archive.open(archive_path()).close()
@@ -53,8 +54,7 @@ def test_stats_clear_deletes(
     (state / TESTS_DIR_NAME).mkdir()
     (state / TESTS_DIR_NAME / "abc.json").write_text("[]")
     (state / TESTS_DIR_NAME / ".abc.x.tmp").write_text("[")
-    assert clear.stats_clear(confirmed=True) == 0
-    assert "cleared stats" in capsys.readouterr().err
+    assert clear_stats(confirm=_yes) == 8
     assert [
         p.name for p in state.iterdir() if p.name not in {"dashboard.lock", TESTS_DIR_NAME}
     ] == []
@@ -77,7 +77,7 @@ def test_stats_clear_ignores_test_file_written_meanwhile(
             (folder / "def.json").write_text("[]")
 
     monkeypatch.setattr(Path, "unlink", unlink_then_write)
-    assert clear.stats_clear(confirmed=True) == 0
+    assert clear_stats(confirm=_yes) is not None
     assert [p.name for p in folder.iterdir()] == ["def.json"]
 
 
@@ -88,7 +88,7 @@ def test_stats_clear_removes_machine_id_temp_files(stats_dirs: tuple[Path, Path]
     (state / "machine-id").write_text(f"{'a' * 32}\n")
     (state / f".machine-id.123.{'c' * 32}").write_text("x")
     (state / f".machine-id.456.{'d' * 32}").write_text("")
-    assert clear.stats_clear(confirmed=True) == 0
+    assert clear_stats(confirm=_yes) is not None
     assert sorted(p.name for p in state.iterdir() if p.name != "dashboard.lock") == ["machine-id"]
     assert (state / "machine-id").read_text() == f"{'a' * 32}\n"
 
@@ -102,58 +102,37 @@ def seeded(stats_dirs: tuple[Path, Path]) -> Path:
     return state
 
 
-def test_stats_clear_keeps_stats_unless_confirmed(
-    seeded: Path, answer: Callable[[str | None], None], capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Declining the prompt deletes nothing, and the warning names the data directory."""
-    answer("no")
-    assert clear.stats_clear() == 1
+def test_stats_clear_keeps_stats_unless_confirmed(seeded: Path) -> None:
+    """Declining deletes nothing, and the warning names the data directory."""
+    seen: list[Sequence[str]] = []
+
+    def decline(warning: Sequence[str]) -> bool:
+        seen.append(warning)
+        return False
+
+    assert clear_stats(confirm=decline) is None
     assert (seeded / "events.jsonl").exists()
-    assert f"data: {seeded}" in capsys.readouterr().err
+    assert f"data: {seeded}" in seen[0]
 
 
-def test_stats_clear_deletes_when_yes_typed(
-    seeded: Path, answer: Callable[[str | None], None], capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Typing yes at the prompt clears the stats."""
-    answer("yes")
-    assert clear.stats_clear() == 0
-    assert not (seeded / "events.jsonl").exists()
-    assert "cleared stats" in capsys.readouterr().err
-
-
-def test_stats_clear_ctrl_c_keeps_stats_and_releases_lock(
-    seeded: Path, answer: Callable[[str | None], None]
-) -> None:
+def test_stats_clear_ctrl_c_keeps_stats_and_releases_lock(seeded: Path) -> None:
     """Ctrl-C at the prompt keeps the stats and frees the dashboard lock."""
-    answer("^C")
+
+    def interrupt(_warning: Sequence[str]) -> bool:
+        raise KeyboardInterrupt
+
     with pytest.raises(KeyboardInterrupt):
-        clear.stats_clear()
+        clear_stats(confirm=interrupt)
     assert (seeded / "events.jsonl").exists()
     held = InstanceLock.acquire(seeded)
     assert held is not None
     held.release()
 
 
-def test_stats_clear_refuses_before_prompting_while_running(
-    lock: InstanceLock, monkeypatch: pytest.MonkeyPatch
+def test_stats_clear_raises_os_error_and_releases_lock(
+    stats_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A running dashboard is reported before the user is asked anything."""
-    asked = MagicMock(return_value=False)
-    monkeypatch.setattr(clear, "confirm_deletion", asked)
-    try:
-        assert clear.stats_clear() == 1
-    finally:
-        lock.release()
-    asked.assert_not_called()
-
-
-def test_stats_clear_reports_os_error(
-    stats_dirs: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A delete failure is reported with exit code 1."""
+    """A delete failure propagates and the lock is freed."""
     state = stats_dirs[1]
     state.mkdir(parents=True)
     (state / "events.jsonl").write_text("x")
@@ -165,32 +144,9 @@ def test_stats_clear_reports_os_error(
         real(self, missing_ok=missing_ok)
 
     monkeypatch.setattr(Path, "unlink", fail)
-    assert clear.stats_clear(confirmed=True) == 1
-    assert "could not clear stats: denied" in capsys.readouterr().err
+    with pytest.raises(OSError, match="denied"):
+        clear_stats(confirm=_yes)
     monkeypatch.setattr(Path, "unlink", real)
     held = InstanceLock.acquire(state)
     assert held is not None
     held.release()
-
-
-def test_cli_stats_clear_routes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`stats clear` dispatches to stats_clear."""
-    stub = MagicMock(return_value=0)
-    monkeypatch.setattr(clear, "stats_clear", stub)
-    assert invoke(monkeypatch, "stats", "clear") == 0
-    stub.assert_called_once_with(confirmed=False)
-
-
-def test_cli_stats_clear_yes_skips_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`stats clear --yes` and `-y` clear without asking."""
-    stub = MagicMock(return_value=0)
-    monkeypatch.setattr(clear, "stats_clear", stub)
-    assert invoke(monkeypatch, "stats", "clear", "--yes") == 0
-    assert invoke(monkeypatch, "stats", "clear", "-y") == 0
-    assert stub.call_args_list == [((), {"confirmed": True})] * 2
-
-
-def test_cli_stats_yes_needs_clear(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--yes with any action other than clear is a usage error."""
-    for args in (("--yes",), ("on", "--yes"), ("off", "-y")):
-        assert invoke(monkeypatch, "stats", *args) == 2

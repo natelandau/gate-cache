@@ -16,8 +16,9 @@ if TYPE_CHECKING:
 
 SRC = ROOT / "src"
 TEST_DIRS = ("tests/core/", "tests/server/", "tests/tooling/")
-# The `dashboard` command is the one way into the dashboard, and the server suite owns it.
-ALLOWED_CORE_IMPORTS = {("src/gate_cache/cli.py", "gate_cache.dashboard.app")}
+# The `dashboard` command is the one way into the dashboard, and it imports it only inside
+# its function, so core never loads the dashboard package; the server suite owns it.
+ALLOWED_CORE_IMPORTS = {("src/gate_cache/commands/dashboard.py", "gate_cache.dashboard.app")}
 
 
 @cache
