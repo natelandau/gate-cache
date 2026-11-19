@@ -92,17 +92,20 @@ def parse_report(path: Path) -> list[TestResult]:
             msg = f"report is larger than {MAX_REPORT_BYTES} bytes"
             raise ReportError(msg)
         open_elems: list[ET.Element] = []
-        for event, elem in ET.iterparse(path, events=("start", "end")):  # noqa: S314
-            if event == "start":
-                open_elems.append(elem)
-                continue
-            open_elems.pop()
-            if elem.tag == "testcase" and (result := _result(elem)) is not None:
-                results.append(result)
-            # Detach every finished element outside a test case, so memory stays flat however
-            # many cases and suite outputs the report has. A case keeps its children for _result.
-            if open_elems and open_elems[-1].tag != "testcase":
-                open_elems[-1].remove(elem)
+        # Close the file ourselves: an iterparse iterator left unexhausted on an error
+        # keeps its own file open.
+        with path.open("rb") as handle:
+            for event, elem in ET.iterparse(handle, events=("start", "end")):  # noqa: S314
+                if event == "start":
+                    open_elems.append(elem)
+                    continue
+                open_elems.pop()
+                if elem.tag == "testcase" and (result := _result(elem)) is not None:
+                    results.append(result)
+                # Detach every finished element outside a test case, so memory stays flat however
+                # many cases and suite outputs the report has. A case keeps its children for _result.
+                if open_elems and open_elems[-1].tag != "testcase":
+                    open_elems[-1].remove(elem)
     except (ET.ParseError, OSError, ValueError, RecursionError) as exc:
         raise ReportError(str(exc)) from exc
     return results
