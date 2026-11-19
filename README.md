@@ -160,7 +160,7 @@ The [documentation](https://natelandau.github.io/gate-cache/) covers hooks, CI, 
 - An event holds the gate name, the command line, timings, the outcome, the repository and branch, and the host name. The [privacy page](https://natelandau.github.io/gate-cache/privacy/) lists every field. An event holds no command output and no file content.
 - The gate name and the command line are stored as plain text. Never put a secret in a gate name or in a command line.
 - The dashboard listens only on `127.0.0.1`. Its one outside request loads a font from `cdn.jsdelivr.net`, and that request sends no stats.
-- `gate-cache stats clear` deletes all recorded stats.
+- `gate-cache stats clear` deletes the recorded stats of a repository, and `--all-repos` deletes all of them.
 
 ## More of the dashboard
 

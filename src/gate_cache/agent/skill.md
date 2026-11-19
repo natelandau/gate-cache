@@ -220,7 +220,8 @@ After you add or change a gate, do these steps to make sure that it works:
 
 ## Rules
 
-- Never run `gate-cache clear` or `gate-cache stats clear` unless the user asks. Both permanently delete data. Give `--yes` only when the user asked for the deletion.
+- Never run `gate-cache clear` or `gate-cache stats clear` unless the user asks. Both permanently delete data. Give `--yes` only when the user asked for the deletion. To show the user what a clear deletes, run it with `--dry-run` first. After a tool upgrade that affects one gate, clear only that gate with `gate-cache clear --name NAME`.
+- `gate-cache stats clear --all-repos` deletes the stats of every repository, and only a person at a terminal can confirm it. If the user wants it, ask them to run it themselves.
 - Never edit or delete files in `{{marker_dir}}`.
 - Never turn stats recording on or off unless the user asks.
 - To try stats or the dashboard on test data, set `GATE_CACHE_DATA_DIR` to a temporary directory and `GATE_CACHE_STATS=1` for that command, so it never writes to the user's real stats.

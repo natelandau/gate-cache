@@ -14,10 +14,12 @@ from gate_cache.commands.theme import err, kv, out
 from gate_cache.console import plural
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rich.console import RenderableType
 
 SCHEMA = 1
-JSON_NEEDS_YES = "--json needs --yes, because {command} cannot ask for confirmation"
+JSON_NEEDS_YES = "--json needs --yes or --dry-run, because {command} cannot ask for confirmation"
 _USAGE_CODE = 2
 
 
@@ -69,39 +71,83 @@ class Outcome(Protocol):
         ...
 
 
+NOTHING_TO_DELETE = "nothing to delete"
+WOULD_DELETE = "would delete {what}"
+_LISTED_GATES = 8
+
+
+def gate_list(names: Sequence[str]) -> str:
+    """Return gate names for one warning line, cut short so a large suite stays readable.
+
+    Args:
+        names: The gate names, in the order to show them.
+
+    Returns:
+        str: The names joined by commas, ending with how many more when some are left out.
+    """
+    shown = ", ".join(names[:_LISTED_GATES])
+    rest = len(names) - _LISTED_GATES
+    return f"{shown}, and {rest} more" if rest > 0 else shown
+
+
 @dataclass
 class DeletionOutcome:
-    """How many files a deletion removed and where they lived."""
+    """What a deletion removed, or in a dry run what it would remove.
 
-    deleted: int
+    Attributes:
+        deleted: How many items were deleted, or would be in a dry run. None when the
+            count is unknown, such as for stats this version cannot read.
+        noun: The singular name of one item, such as `recorded pass`.
+        details: Extra JSON keys, such as the gates and the folder.
+        summary: Lines that say what the items are, shown in a dry run.
+        dry_run: Whether nothing was deleted on purpose.
+        empty: Whether there was nothing to delete at all.
+        also: Other things deleted beside the counted items, such as `1 record of failed
+            runs`, named after the count.
+    """
+
+    deleted: int | None
     noun: str
-    location_key: str
-    location: str
+    details: dict[str, Any]
+    summary: tuple[str, ...] = ()
+    dry_run: bool = False
+    empty: bool = False
+    also: tuple[str, ...] = ()
     exit_code: int = 0
 
     def to_json(self) -> dict[str, Any]:
-        """Return the count and the folder under its JSON key."""
-        return {"deleted": self.deleted, self.location_key: self.location}
+        """Return the count, the dry-run flag, and the details."""
+        return {"dry_run": self.dry_run, "deleted": self.deleted, **self.details}
 
     def render(self) -> RenderableType:
-        """Return the human line."""
-        return Text(f"removed {plural(self.deleted, self.noun)}", style="success")
+        """Return the human lines."""
+        if self.empty:
+            return Text(NOTHING_TO_DELETE, style="muted")
+        what = f"every {self.noun}" if self.deleted is None else plural(self.deleted, self.noun)
+        if not self.dry_run:
+            parts = [what] if self.deleted != 0 else []
+            return Text("deleted " + " and ".join([*parts, *self.also]), style="success")
+        text = Text(WOULD_DELETE.format(what=what))
+        for line in self.summary:
+            text.append(f"\n  {line}")
+        text.append("\nNothing was deleted.", style="muted")
+        return text
 
 
-def require_yes_for_json(command: str, *, yes: bool, as_json: bool) -> None:
-    """Refuse --json without --yes for a command that would otherwise ask for confirmation.
+def require_yes_for_json(command: str, *, asks: bool, as_json: bool) -> None:
+    """Refuse --json for a run that would ask for confirmation, since JSON output cannot.
 
     Args:
         command: The command as typed after `gate-cache`, such as `stats clear`.
-        yes: Whether --yes was given.
+        asks: Whether the run would ask, that is, it has neither --yes nor --dry-run.
         as_json: Whether --json was given.
 
     Raises:
-        UsageError: When --json is given without --yes.
+        UsageError: When --json is given to a run that would ask.
     """
-    if as_json and not yes:
+    if as_json and asks:
         raise UsageError(
-            JSON_NEEDS_YES.format(command=command), hint=f"gate-cache {command} --yes --json"
+            JSON_NEEDS_YES.format(command=command), hint=f"gate-cache {command} --dry-run --json"
         )
 
 

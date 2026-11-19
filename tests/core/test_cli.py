@@ -439,8 +439,9 @@ def test_repeated_name_is_usage_error(
     ("args", "options"),
     [
         (["status", "--help"], ["--name", "--path", "--json"]),
-        (["clear", "-h"], ["--yes", "--json"]),
-        (["stats", "--help"], ["report", "--yes", "--json"]),
+        (["clear", "-h"], ["--name", "--dry-run", "--yes", "--json"]),
+        (["stats", "--help"], ["report", "clear", "--json"]),
+        (["stats", "clear", "-h"], ["--repo", "--all-repos", "--dry-run", "--yes", "--json"]),
         (
             ["stats", "report", "-h"],
             ["--name", "--repo", "--all-repos", "--since", "--until", "--limit", "--json"],

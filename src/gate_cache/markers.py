@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gate_cache.stats.gates import gate_of
+
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
@@ -410,10 +412,7 @@ class RecordIndex:
         return [
             data
             for path, data in self.entries
-            if isinstance(tree := data.get("tree"), str)
-            and tree in trees
-            and isinstance(name := data.get("name"), str)
-            and path.name == f"{marker_key(tree, name)}{suffix}"
+            if data.get("tree") in trees and _own_name(path, data, suffix=suffix) is not None
         ]
 
 
@@ -459,6 +458,99 @@ def prune_markers(directory: Path, *, max_age_days: int = 30, now: float | None 
                     entry.unlink()
     except OSError:
         return
+
+
+@dataclass(frozen=True)
+class MarkerSelection:
+    """The marker and miss record files that a clear deletes, found in one scan.
+
+    Attributes:
+        gate: The gate the selection is limited to, or None for every record.
+        passes: Marker files, each a recorded pass.
+        misses: Miss record files, each a failed run.
+        names: The gate names read from the selected files, sorted and unique.
+    """
+
+    gate: str | None
+    passes: tuple[Path, ...]
+    misses: tuple[Path, ...]
+    names: tuple[str, ...]
+
+
+def select_markers(common_dir: Path, *, gate: str | None = None) -> MarkerSelection:
+    """Find the records a clear deletes, so the warning and the delete agree on them.
+
+    Without `gate`, every record counts, including markers from other tools whose content
+    cannot be read. With `gate`, only records whose content names that gate, or one of its
+    keyed names such as `gate@key`, count, since an unreadable marker's gate is unknown.
+
+    Args:
+        common_dir: Absolute path to the git common directory.
+        gate: The gate whose records to select. None selects every record.
+
+    Returns:
+        The selected files and the gate names they hold.
+    """
+    try:
+        entries = sorted(marker_dir(common_dir).iterdir())
+    except OSError:
+        entries = []
+    passes: list[Path] = []
+    misses: list[Path] = []
+    names: set[str] = set()
+    for path in entries:
+        if path.name.startswith(TEMP_PREFIX) or not path.is_file() or path.is_symlink():
+            continue
+        is_miss = path.name.endswith(MISS_SUFFIX)
+        name = _own_name(path, read_record(path), suffix=MISS_SUFFIX if is_miss else "")
+        if gate is not None and (name is None or (name != gate and gate_of(name) != gate)):
+            continue
+        if name is not None:
+            names.add(name)
+        (misses if is_miss else passes).append(path)
+    return MarkerSelection(
+        gate=gate, passes=tuple(passes), misses=tuple(misses), names=tuple(sorted(names))
+    )
+
+
+def _own_name(path: Path, data: dict[str, Any] | None, *, suffix: str) -> str | None:
+    """Return the gate name a record holds, or None unless the record hashes to its filename.
+
+    A marker filename is a one-way hash, so only content that hashes back to it can say
+    which gate the file belongs to.
+    """
+    if data is None:
+        return None
+    name, tree = data.get("name"), data.get("tree")
+    if (
+        isinstance(name, str)
+        and isinstance(tree, str)
+        and path.name == f"{marker_key(tree, name)}{suffix}"
+    ):
+        return name
+    return None
+
+
+def delete_markers(selection: MarkerSelection) -> int:
+    """Delete the selected records, tolerating files that a concurrent run already removed.
+
+    Args:
+        selection: The records to delete, from `select_markers`.
+
+    Returns:
+        The number of markers deleted, not counting miss records.
+
+    Raises:
+        OSError: If a file exists but cannot be deleted.
+    """
+    count = 0
+    for path in selection.passes:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+            count += 1
+    for path in selection.misses:
+        path.unlink(missing_ok=True)
+    return count
 
 
 def clear_markers(common_dir: Path) -> int:

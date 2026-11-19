@@ -12,7 +12,9 @@ import time
 from typing import TYPE_CHECKING, Any, Self
 
 from gate_cache.stats import config
+from gate_cache.stats.gates import GATE_WHITESPACE as _GATE_WHITESPACE
 from gate_cache.stats.junit import TESTS_DIR_NAME
+from gate_cache.stats.recorder import INBOX_NAME
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -41,25 +43,13 @@ _INT64_MIN = -(2**63)
 # stats keep every key's runs under the part before the first `@`. A command line has
 # spaces, so an argument such as `npx eslint@9` never merges two commands into one gate.
 # The dashboard reads the result from each event's `gate` field rather than repeating the rule;
-# frontend/src/lib/gates.ts isCommandLine must match the whitespace set below.
-_GATE_WHITESPACE = " \t\n\v\f\r"
+# frontend/src/lib/gates.ts isCommandLine must match `GATE_WHITESPACE` in stats/gates.py.
 GATE_EXPRESSION = (
     "CASE WHEN instr(name, '@') > 1 AND instr(name, '@') < length(name)"
     f" AND name NOT GLOB '*[' || char({', '.join(str(ord(c)) for c in _GATE_WHITESPACE)}) || ']*'"
     " THEN substr(name, 1, instr(name, '@') - 1) ELSE name END"
 )
 _GATE_COLUMN = f"gate TEXT GENERATED ALWAYS AS ({GATE_EXPRESSION}) VIRTUAL"
-
-
-def gate_of(name: str) -> str:
-    """Return the gate a run name counts toward in stats, by the rule of `GATE_EXPRESSION`.
-
-    Use it to check a name in Python the same way the archive groups it.
-    """
-    at = name.find("@")
-    if 0 < at < len(name) - 1 and not any(c in _GATE_WHITESPACE for c in name):
-        return name[:at]
-    return name
 
 
 _SCHEMA = f"""
@@ -106,6 +96,7 @@ CREATE TABLE IF NOT EXISTS test_results (
 );
 CREATE INDEX IF NOT EXISTS test_results_test_id ON test_results (test_id);
 CREATE INDEX IF NOT EXISTS test_results_event_id ON test_results (event_id);
+CREATE TABLE IF NOT EXISTS forgotten_lines (line_hash TEXT PRIMARY KEY, ts REAL NOT NULL);
 """
 
 _INSERT = (
@@ -114,6 +105,10 @@ _INSERT = (
     " overhead, waited, wait_known, reported, wait_timed_out, event_uid, spot_check) "
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
+# Positions of the line hash, the event time, and the repo in an insert row.
+_ROW_HASH = 0
+_ROW_TS = 1
+_ROW_REPO = 2
 
 # Columns added after version 1, which an older archive fills from the raw line of each row.
 # Rows from before version 2 keep a NULL raw line.
@@ -157,6 +152,11 @@ def tests_since(now: float) -> float:
 def archive_path() -> Path:
     """Return the path of the SQLite archive."""
     return config.state_dir() / ARCHIVE_NAME
+
+
+def has_records() -> bool:
+    """Return whether any run was ever recorded, so a reader never creates an empty archive."""
+    return archive_path().exists() or (config.state_dir() / INBOX_NAME).exists()
 
 
 class ArchiveVersionError(RuntimeError):
@@ -469,11 +469,14 @@ class Archive:
         except FileNotFoundError:
             return 0
         added = 0
+        forgotten = {
+            h for (h,) in self._connection.execute("SELECT line_hash FROM forgotten_lines")
+        }
         with handle:
             for line in handle:
                 raw = line.removesuffix(b"\n")
                 row = _row(raw) if raw.strip() else None
-                if row is None:
+                if row is None or row[_ROW_HASH] in forgotten:
                     continue
                 try:
                     added += self._connection.execute(_INSERT, row).rowcount
@@ -705,6 +708,41 @@ class Archive:
             return []
         return [row for row in map(_test_row, data) if row is not None]
 
+    def forget_repo(self, repo: str, *, inbox: Path) -> int:
+        """Delete every run and test result of one repo, and keep them from coming back.
+
+        Call it after a fresh ingest, so the runs still in the inbox are deleted too. A fresh
+        ingest keeps the inbox files that have not settled, and a later ingest reads them
+        again, so their lines for the repo are recorded as forgotten.
+
+        Args:
+            repo: The repo's git common directory, as the events record it.
+            inbox: Path of the live `events.jsonl`, beside the files a later ingest reads.
+
+        Returns:
+            The number of runs deleted.
+        """
+        forgotten = []
+        for path in inbox.parent.glob("events.*.processing"):
+            with contextlib.suppress(OSError), path.open("rb") as handle:
+                rows = (_row(line.removesuffix(b"\n")) for line in handle)
+                forgotten += [
+                    (row[_ROW_HASH], row[_ROW_TS])
+                    for row in rows
+                    if row is not None and row[_ROW_REPO] == repo
+                ]
+        self._connection.executemany(
+            "INSERT OR IGNORE INTO forgotten_lines (line_hash, ts) VALUES (?, ?)", forgotten
+        )
+        self._connection.execute(
+            "DELETE FROM test_results WHERE event_id IN (SELECT id FROM events WHERE repo = ?)",
+            (repo,),
+        )
+        self._connection.execute("DELETE FROM tests WHERE repo = ?", (repo,))
+        cursor = self._connection.execute("DELETE FROM events WHERE repo = ?", (repo,))
+        self._connection.commit()
+        return cursor.rowcount
+
     def prune(self, *, now: float | None = None) -> int:
         """Delete events and per-test results older than their retention windows.
 
@@ -732,8 +770,9 @@ class Archive:
             self._connection.execute(
                 "DELETE FROM tests WHERE id NOT IN (SELECT test_id FROM test_results)"
             )
-        cursor = self._connection.execute(
-            "DELETE FROM events WHERE ts < ?", (now - RETENTION_DAYS * _SECONDS_PER_DAY,)
-        )
+        oldest = now - RETENTION_DAYS * _SECONDS_PER_DAY
+        cursor = self._connection.execute("DELETE FROM events WHERE ts < ?", (oldest,))
+        # A line older than the retention window is pruned on ingest anyway.
+        self._connection.execute("DELETE FROM forgotten_lines WHERE ts < ?", (oldest,))
         self._connection.commit()
         return cursor.rowcount

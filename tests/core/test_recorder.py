@@ -698,7 +698,7 @@ def test_clear_keeps_machine_id(
     run_gate("t", ["true"])
     machine = stats_dirs[1] / "machine-id"
     identity = machine.read_text()
-    assert clear_stats(confirm=lambda _: True) is not None
+    assert clear_stats(repo=None, decide=lambda _: True).deleted
     assert not (stats_dirs[1] / "events.jsonl").exists()
     assert machine.read_text() == identity
 

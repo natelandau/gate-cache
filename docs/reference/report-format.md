@@ -381,35 +381,54 @@ When `last_run` is not `null`, it is an object with `exit_code`, `reason`, and `
 
 ## Clear views
 
-`gate-cache clear --yes --json` prints how many records it deleted, and the directory that held them.
+`gate-cache clear --yes --json` prints what it deleted. With `--dry-run` in place of `--yes`, it prints what it deletes, and deletes nothing.
 
 ```json
 {
   "schema": 1,
+  "dry_run": false,
   "deleted": 12,
+  "failed_runs": 2,
+  "gates": ["lint", "test"],
   "marker_dir": "/home/me/shop/.git/gate-cache"
 }
 ```
 
 | Key | Meaning |
 | --- | --- |
-| `deleted` | The number of records of passes that the command deleted. Records of failed runs are deleted too, but not counted. |
-| `marker_dir` | The directory that held the records. |
+| `dry_run` | `true` when the command deleted nothing because of `--dry-run`. |
+| `deleted` | The number of records of passes that the command deleted, or deletes in a dry run. |
+| `failed_runs` | The number of records of failed runs that go with them. |
+| `gates` | The names of the gates whose records go. |
+| `marker_dir` | The directory that holds the records. |
 
-`gate-cache stats clear --yes --json` prints how many stats files it deleted, and the data directory.
+`gate-cache stats clear --yes --json` prints what it deleted. With `--dry-run` in place of `--yes`, it prints what it deletes, and deletes nothing.
 
 ```json
 {
   "schema": 1,
-  "deleted": 3,
+  "dry_run": false,
+  "deleted": 412,
+  "scope": "repo",
+  "repo": "/home/me/shop/.git",
+  "gate_count": 6,
+  "repo_count": 1,
+  "first": "2026-03-02T09:14:00Z",
+  "last": "2026-11-18T17:40:12Z",
   "data_dir": "/home/me/.local/share/gate-cache"
 }
 ```
 
 | Key | Meaning |
 | --- | --- |
-| `deleted` | The number of stats files that the command deleted. |
-| `data_dir` | The data directory that held the stats. |
+| `dry_run` | `true` when the command deleted nothing because of `--dry-run`. |
+| `deleted` | The number of runs that the command deleted, or deletes in a dry run. |
+| `scope` | `repo` for one repository, or `all` for every repository. |
+| `repo` | The `.git` directory of the repository, or `null` for every repository. |
+| `gate_count` | The number of gates with runs that go. |
+| `repo_count` | The number of repositories with runs that go. |
+| `first`, `last` | The times of the oldest and the newest run that go, or `null` when there are none. |
+| `data_dir` | The data directory that holds the stats. |
 
 ## Dashboard view
 

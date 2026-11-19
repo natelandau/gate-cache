@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 DOCS_URL = "https://natelandau.github.io/gate-cache/"
 _HELP_FLAGS = ("-h", "--help")
 _BUILTIN_FLAGS = {*_HELP_FLAGS, "--version"}
-_STATS_FLAGS = {"--json", "--yes", "-y"}
+_STATS_FLAGS = {"--json", "--yes", "-y", "--dry-run", "--all-repos"}
+_STATS_SUBCOMMANDS = {"report", "clear"}
 _PIPED_HELP_WIDTH = 80
 _ABOUT = (
     "Skip a lint or test command that already passed on the same git tree. "
@@ -48,6 +49,7 @@ _RUN_OPTIONS = (
 _NAME_WARNING = "Never put a secret in --name: markers and `status` store the name as plain text."
 
 JsonFlag = Annotated[bool, cyclopts.Parameter(name="--json", negative="", show_default=False)]
+DryRunFlag = Annotated[bool, cyclopts.Parameter(name="--dry-run", negative="", show_default=False)]
 YesFlag = Annotated[bool, cyclopts.Parameter(name=["--yes", "-y"], negative="", show_default=False)]
 
 
@@ -85,7 +87,12 @@ app.command(
 app.command(
     "gate_cache.commands.clear:clear",
     name="clear",
-    help_epilogue=examples("gate-cache clear", "gate-cache clear --yes --json"),
+    help_epilogue=examples(
+        "gate-cache clear",
+        "gate-cache clear --name pytest",
+        "gate-cache clear --dry-run",
+        "gate-cache clear --yes --json",
+    ),
 )
 app.command("gate_cache.commands.stats:stats", name="stats")
 app.command(
@@ -199,17 +206,17 @@ def prompt() -> int:
     return 0
 
 
-def _report_first(tokens: list[str]) -> list[str]:
-    """Move `report` straight after `stats`, so `stats --json report` reaches the report.
+def _subcommand_first(tokens: list[str]) -> list[str]:
+    """Move a `stats` subcommand straight after `stats`, so `stats --json report` reaches it.
 
     Cyclopts finds a subcommand only before the first option. Only the value-less flags of
-    `stats` may come before `report`; anything else stays as typed.
+    `stats` may come before the subcommand; anything else stays as typed.
     """
     if not tokens or tokens[0] != "stats":
         return tokens
     for index, word in enumerate(tokens[1:], start=1):
-        if word == "report":
-            return ["stats", "report", *tokens[1:index], *tokens[index + 1 :]]
+        if word in _STATS_SUBCOMMANDS:
+            return ["stats", word, *tokens[1:index], *tokens[index + 1 :]]
         if word not in _STATS_FLAGS:
             return tokens
     return tokens
@@ -227,7 +234,7 @@ def run(tokens: list[str]) -> int:
     if tokens and tokens[0] in _HELP_FLAGS:
         print_top_help()
         return 0
-    tokens = _report_first(tokens)
+    tokens = _subcommand_first(tokens)
     reset = _wrapped.set(split_separator(tokens)[1])
     try:
         result = app(tokens, exit_on_error=False, print_error=False)

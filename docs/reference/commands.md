@@ -37,12 +37,16 @@ Add the same `--path` options to look up a scoped gate. Add `--json` to print on
 
 ## `gate-cache clear`
 
-Permanently deletes every record of a pass or a failed run for the repository, and the run times that the `usually` estimate uses, so every gate runs again in full. Use it after a change that gate-cache does not see, such as a tool upgrade. It asks you to type `yes` first. In a script, give `--yes`. It does not delete stats.
+Permanently deletes every record of a pass or a failed run for the repository, and the run times that the `usually` estimate uses, so every gate runs again in full. Use it after a change that gate-cache does not see, such as a tool upgrade. It does not delete stats.
+
+Before it deletes, the command shows how many records it deletes and for which gates, and asks you to type `yes`. In a script, give `--yes`. If there is nothing to delete, it asks nothing and exits 0. If `--name` names a gate with no records, the command exits 1, so a typing error does not look like a success.
 
 | Option | Effect |
 | --- | --- |
+| `--name NAME` | Deletes the records of one gate only. A name with an `@` key, such as `test@v22`, counts as part of the gate `test`. |
+| `--dry-run` | Shows what the command deletes, and deletes nothing. |
 | `--yes`, `-y` | Deletes without the question. |
-| `--json` | Prints the result as one JSON object. Needs `--yes`. |
+| `--json` | Prints the result as one JSON object. Needs `--yes` or `--dry-run`. |
 
 ## `gate-cache stats`
 
@@ -52,9 +56,9 @@ Permanently deletes every record of a pass or a failed run for the repository, a
 | `gate-cache stats on` | Turns recording on. |
 | `gate-cache stats off` | Turns recording off and keeps the data. |
 | `gate-cache stats report` | Prints a report of the recorded runs. |
-| `gate-cache stats clear` | Permanently deletes all recorded stats. It asks you to type `yes` first. In a script, give `--yes`. It does not run while the dashboard runs. |
+| `gate-cache stats clear` | Permanently deletes the recorded stats of the repository. |
 
-Add `--json` to `gate-cache stats`, `stats on`, or `stats off` to print the recording setting as a JSON object. Add `--json` to `stats clear` to print what it deleted. `stats clear --json` needs `--yes`.
+Add `--json` to `gate-cache stats`, `stats on`, or `stats off` to print the recording setting as a JSON object.
 
 ### `gate-cache stats report`
 
@@ -74,6 +78,22 @@ With `--name`, or a command after `--`, the report shows one gate in detail: its
 
 Inside a repository, the report covers that repository. Outside a repository, it covers every repository on the computer. `--name` outside a repository needs `--repo`. If a `--repo` name matches more than one repository, use a path.
 
+### `gate-cache stats clear`
+
+Permanently deletes the recorded runs of the repository: their history, time saved, and skip rates. It does not delete the records of passes that make gates skip. It does not run while the dashboard runs.
+
+Before it deletes, the command shows how many runs it deletes, of how many gates, and from which dates, and asks you to type `yes`. In a script, give `--yes`. If there is nothing to delete, it asks nothing and exits 0.
+
+| Option | Effect |
+| --- | --- |
+| `--repo NAME\|PATH` | Deletes the stats of one repository, by the name that the report prints or a path inside it. The repository does not have to exist on the disk. |
+| `--all-repos` | Deletes the stats of every repository on the computer. Only a person at a terminal can confirm it, so it does not accept `--yes` or `--json`. |
+| `--dry-run` | Shows what the command deletes, and deletes nothing. |
+| `--yes`, `-y` | Deletes without the question. |
+| `--json` | Prints the result as one JSON object. Needs `--yes` or `--dry-run`. |
+
+Outside a repository, give `--repo` or `--all-repos`.
+
 ## `gate-cache dashboard`
 
 Opens the stats dashboard in your browser. Read [The dashboard](../stats/dashboard.md).
@@ -88,7 +108,7 @@ Only one dashboard runs at a time. A second `gate-cache dashboard` opens the one
 
 ## JSON output
 
-Every command except the gate run takes `--json`. With `--json`, the command prints one JSON object to stdout in place of text, and an error also prints as a JSON object. The command never asks a question, so `clear` and `stats clear` need `--yes`. Read the [report format](report-format.md) for the keys.
+Every command except the gate run takes `--json`. With `--json`, the command prints one JSON object to stdout in place of text, and an error also prints as a JSON object. The command never asks a question, so `clear` and `stats clear` need `--yes` or `--dry-run`. Read the [report format](report-format.md) for the keys.
 
 `--json` after `--` belongs to the command that you give, not to gate-cache.
 
@@ -111,7 +131,7 @@ Every command except the gate run takes `--json`. With `--json`, the command pri
 | A signal stopped the command | 128 plus the signal number |
 | An error in the gate-cache options | 2, and nothing runs |
 | `status` found a pass | 0, else 1 |
-| `clear` or `stats clear` was not confirmed, or failed | 1 |
+| `clear` or `stats clear` was not confirmed, or failed, or `clear --name` found no records of the gate | 1 |
 | `stats on` or `stats off` could not write the setting | 1 |
 | `stats report` ran, also when nothing was recorded | 0 |
 | `stats report` found no such gate or repository, or could not read the record | 1 |
@@ -142,6 +162,6 @@ When gate-cache runs a gate, it writes its own lines to stderr, with the prefix 
 The other commands write their results to stdout. They write an error to stderr as a line that starts with `error:`. A line that starts with `hint:` can follow, with the fix:
 
 ```text
-error: --json needs --yes, because clear cannot ask for confirmation
-  hint: gate-cache clear --yes --json
+error: --json needs --yes or --dry-run, because clear cannot ask for confirmation
+  hint: gate-cache clear --dry-run --json
 ```

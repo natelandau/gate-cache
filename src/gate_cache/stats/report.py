@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from gate_cache.git import git_common_dir
 from gate_cache.markers import utc_timestamp
 from gate_cache.stats import config, queries
-from gate_cache.stats.archive import Archive, archive_path, tests_since
+from gate_cache.stats.archive import Archive, archive_path, has_records, tests_since
 from gate_cache.stats.lock import InstanceLock
 from gate_cache.stats.queries import Filters
 from gate_cache.stats.recorder import INBOX_NAME
@@ -100,12 +100,12 @@ def open_record() -> Generator[sqlite3.Connection | None]:
     Yields:
         The archive connection, or None when nothing was ever recorded.
     """
+    if not has_records():
+        yield None
+        return
     state = config.state_dir()
     path = archive_path()
     inbox = state / INBOX_NAME
-    if not path.exists() and not inbox.exists():
-        yield None
-        return
     try:
         lock = InstanceLock.acquire(state)
     except OSError:

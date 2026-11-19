@@ -27,8 +27,10 @@ from gate_cache.gate_lock import (
 )
 from gate_cache.git import git_common_dir
 from gate_cache.markers import (
+    MarkerSelection,
     RecordIndex,
     clear_markers,
+    delete_markers,
     marker_dir,
     marker_duration,
     marker_exists,
@@ -1124,11 +1126,13 @@ def _list_gates() -> tuple[dict[str, Any], int]:
     return report, 0 if passed else 1
 
 
-def clear_cache(common_dir: Path) -> int:
-    """Delete every marker and usual-run-time record of a repository.
+def clear_cache(common_dir: Path, selection: MarkerSelection | None = None) -> int:
+    """Delete the markers and usual run times of a repository, or only the selected ones.
 
     Args:
         common_dir: The repository's git common directory.
+        selection: The records to delete, from `select_markers` with a gate, so the delete
+            matches what the user saw. None deletes every record.
 
     Returns:
         The number of markers removed.
@@ -1136,6 +1140,11 @@ def clear_cache(common_dir: Path) -> int:
     Raises:
         OSError: When the markers cannot be removed.
     """
-    count = clear_markers(common_dir)
-    shutil.rmtree(durations_dir(common_dir), ignore_errors=True)
+    if selection is None or selection.gate is None:
+        count = clear_markers(common_dir)
+        shutil.rmtree(durations_dir(common_dir), ignore_errors=True)
+        return count
+    count = delete_markers(selection)
+    for name in {selection.gate, *selection.names}:
+        durations_path(common_dir, name).unlink(missing_ok=True)
     return count
