@@ -8,6 +8,7 @@ import pytest
 
 from gate_cache.stats import clear
 from gate_cache.stats.archive import Archive, archive_path
+from gate_cache.stats.junit import TESTS_DIR_NAME
 from gate_cache.stats.lock import InstanceLock
 from tests.conftest import invoke
 
@@ -37,7 +38,7 @@ def test_stats_clear_refuses_while_running(
 def test_stats_clear_deletes(
     stats_dirs: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Clearing removes the inbox, processing files, and the archive with its WAL files."""
+    """Clearing removes the inbox, processing files, per-run test files, and the archive."""
     state = stats_dirs[1]
     Archive.open(archive_path()).close()
     names = [
@@ -49,9 +50,35 @@ def test_stats_clear_deletes(
     ]
     for name in names:
         (state / name).write_text("x")
+    (state / TESTS_DIR_NAME).mkdir()
+    (state / TESTS_DIR_NAME / "abc.json").write_text("[]")
+    (state / TESTS_DIR_NAME / ".abc.x.tmp").write_text("[")
     assert clear.stats_clear(confirmed=True) == 0
     assert "cleared stats" in capsys.readouterr().err
-    assert [p.name for p in state.iterdir() if p.name != "dashboard.lock"] == []
+    assert [
+        p.name for p in state.iterdir() if p.name not in {"dashboard.lock", TESTS_DIR_NAME}
+    ] == []
+    assert list((state / TESTS_DIR_NAME).iterdir()) == []
+
+
+def test_stats_clear_ignores_test_file_written_meanwhile(
+    stats_dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A per-run test file a gate run writes during clearing does not fail the clear."""
+    state = stats_dirs[1]
+    folder = state / TESTS_DIR_NAME
+    folder.mkdir(parents=True)
+    (folder / "abc.json").write_text("[]")
+    real = Path.unlink
+
+    def unlink_then_write(self: Path, *, missing_ok: bool = False) -> None:
+        real(self, missing_ok=missing_ok)
+        if self.name == "abc.json":
+            (folder / "def.json").write_text("[]")
+
+    monkeypatch.setattr(Path, "unlink", unlink_then_write)
+    assert clear.stats_clear(confirmed=True) == 0
+    assert [p.name for p in folder.iterdir()] == ["def.json"]
 
 
 def test_stats_clear_removes_machine_id_temp_files(stats_dirs: tuple[Path, Path]) -> None:

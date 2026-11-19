@@ -22,13 +22,15 @@ When you [turn recording on](stats/record-stats.md), each run of a gate adds one
 - The host name of the computer, its platform, and a random ID for the computer.
 - The version of gate-cache.
 
+If a gate has [`--junit`](stats/test-detail.md), each run that runs the command and finds a report from this run also stores the name, the result, and the run time of each test in the report. gate-cache stores no test output and no failure messages.
+
 An event holds no command output and no file content.
 
 !!! warning "Never put a secret in a gate name or a command line"
 
     gate-cache stores the gate name and the command line as plain text, in the records of passes and in the stats. The paths and the host name can also hold your user name.
 
-`gate-cache stats clear` deletes all recorded stats. The dashboard keeps runs for 365 days.
+`gate-cache stats clear` deletes all recorded stats. The dashboard keeps runs for 365 days, and the results of each test for 90 days.
 
 ## The dashboard
 

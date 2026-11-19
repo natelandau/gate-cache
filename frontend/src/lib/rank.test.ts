@@ -93,7 +93,7 @@ describe("rankGates", () => {
 });
 
 function flaky(name: string, tree_count: number): FlakyGate {
-  return { repo: null, repo_name: "-", name, tree_count, last_seen: 0, trees: [] };
+  return { repo: null, repo_name: "-", name, tree_count, last_seen: 0, trees: [], tests: [], retried: [] };
 }
 
 describe("topFlaky", () => {
@@ -107,6 +107,10 @@ describe("topFlaky", () => {
       flaky("d", 2),
     ];
     expect(topFlaky(gates).map((g) => g.name)).toEqual(["b", "c", "d", "e", "f"]);
+  });
+
+  it("leaves out gates with no flaky tree, such as gates with only retried tests", () => {
+    expect(topFlaky([flaky("a", 0), flaky("b", 1)]).map((g) => g.name)).toEqual(["b"]);
   });
 });
 

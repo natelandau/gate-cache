@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import shlex
 import sys
@@ -37,6 +38,9 @@ _NEEDS_SEPARATOR = "put -- before the command, e.g. gate-cache -- uv run pytest"
 _NEEDS_VALUE = {
     "--name": _NAME_NEEDS_VALUE,
     "--path": "--path needs a value, e.g. gate-cache --path src/ -- uv run pytest",
+    "--junit": (
+        "--junit needs a value, e.g. gate-cache --junit report.xml -- pytest --junitxml=report.xml"
+    ),
     "--wait-timeout": (
         "--wait-timeout needs a value, e.g. gate-cache --wait-timeout 300 -- uv run pytest"
     ),
@@ -67,8 +71,9 @@ _WAIT_FLAGS: dict[str, tuple[str, Callable[[str], object | None], str]] = {
 _NO_COMMAND = "no command given after --"
 
 _USAGE = """\
-gate-cache [--name NAME] [--path PATHSPEC]... [--wait-timeout SECONDS]
-                  [--on-wait-failure rerun|report] -- COMMAND [ARGS...]
+gate-cache [--name NAME] [--path PATHSPEC]... [--junit PATH]...
+                  [--wait-timeout SECONDS] [--on-wait-failure rerun|report]
+                  -- COMMAND [ARGS...]
        gate-cache status [--name NAME] [--path PATHSPEC]... [--json] [-- COMMAND...]
        gate-cache clear [--yes]
        gate-cache stats [on|off|clear [--yes]]
@@ -86,12 +91,12 @@ passed on tree aaff74984ccc, skipping", and exits 0.
 AI agents: run `gate-cache --skill` and read the guide before you run, add, or
 change a gate.
 
--- is required, and only --name, --path, --wait-timeout, and --on-wait-failure
-can come before it. Everything after -- is the command, verbatim. gate-cache
-does not use a shell. Without --name, the gate name is the command itself, so
-each set of arguments has its own records. Give --name to share records between
-commands that check the same thing, or to key on inputs that the tree does not
-cover.
+-- is required, and only --name, --path, --junit, --wait-timeout, and
+--on-wait-failure can come before it. Everything after -- is the command,
+verbatim. gate-cache does not use a shell. Without --name, the gate name is the
+command itself, so each set of arguments has its own records. Give --name to
+share records between commands that check the same thing, or to key on inputs
+that the tree does not cover.
 
 Only the name and the file content are keyed. The working directory is not, so
 a command whose meaning depends on it needs a distinct --name. To also key on an
@@ -221,6 +226,8 @@ started the run (CI, a git hook, a coding agent, or a terminal), the repository
 and working tree paths, the directory where the gate ran, the branch and
 commit, the URL of origin (or the first remote) without credentials, the host
 name, a random machine ID, and the command line when --name differs from it.
+A run that runs the command and finds a fresh --junit report also stores the
+test names, outcomes, and durations from it in a separate file.
 An event holds no command output and no file content. The data stays on this
 machine.
 
@@ -333,6 +340,12 @@ def _main_parser() -> argparse.ArgumentParser:
         metavar="PATHSPEC",
         help="Key on only the files under this git pathspec, read from the top of the work "
         "tree. Repeat for each path.",
+    )
+    parser.add_argument(
+        "--junit",
+        metavar="PATH",
+        help="With stats on, record the tests in this JUnit XML report, or folder of reports, "
+        "that the command writes. Repeat for each path.",
     )
     return parser
 
@@ -472,6 +485,7 @@ class _RunArgs:
     command: list[str]
     wait_timeout: int | None = None
     on_wait_failure: FailedBehavior | None = None
+    junit: list[str] = dataclasses.field(default_factory=list)
 
 
 def _option_value(tokens: list[str], index: int, option: str) -> tuple[str, int] | None:
@@ -526,9 +540,9 @@ def _wait_flag(tokens: list[str], index: int, wait: _WaitFlags) -> int | None:
 def _split_run(tokens: list[str]) -> _RunArgs:
     """Split a run invocation into its options and the command after the first --.
 
-    Only `--name`, `--path`, `--wait-timeout`, and `--on-wait-failure`, each as `--opt X`
-    or `--opt=X`, may precede `--`, so a stray option such as `--version` or the first word
-    of the command can never be mistaken for one of ours.
+    Only `--name`, `--path`, `--junit`, `--wait-timeout`, and `--on-wait-failure`, each as
+    `--opt X` or `--opt=X`, may precede `--`, so a stray option such as `--version` or the
+    first word of the command can never be mistaken for one of ours.
 
     Raises:
         _UsageError: When anything else precedes `--`, `--` is missing, an option is
@@ -537,6 +551,7 @@ def _split_run(tokens: list[str]) -> _RunArgs:
     """
     name: str | None = None
     paths: list[str] = []
+    junit: list[str] = []
     wait = _WaitFlags()
     index = 0
     while index < len(tokens):
@@ -547,6 +562,7 @@ def _split_run(tokens: list[str]) -> _RunArgs:
                 command=tokens[index + 1 :],
                 wait_timeout=wait.timeout,
                 on_wait_failure=wait.failed,
+                junit=junit,
             )
         if (found := _option_value(tokens=tokens, index=index, option="--name")) is not None:
             if name is not None:
@@ -555,6 +571,9 @@ def _split_run(tokens: list[str]) -> _RunArgs:
         elif (found := _option_value(tokens=tokens, index=index, option="--path")) is not None:
             value, index = found
             paths.append(value)
+        elif (found := _option_value(tokens=tokens, index=index, option="--junit")) is not None:
+            value, index = found
+            junit.append(value)
         elif (found := _wait_flag(tokens, index, wait)) is not None:
             index = found
         else:
@@ -597,10 +616,12 @@ def _run_command(tokens: list[str]) -> int:
     if not run.command:
         raise _UsageError(_NO_COMMAND)
     name = shlex.join(run.command) if run.name is None else run.name
-    if run.wait_timeout is None and run.on_wait_failure is None:
-        return run_gate(name, run.command, paths=run.paths)
-    wait = wait_settings(timeout=run.wait_timeout, failed=run.on_wait_failure)
-    return run_gate(name, run.command, paths=run.paths, wait=wait)
+    wait = (
+        wait_settings(timeout=run.wait_timeout, failed=run.on_wait_failure)
+        if run.wait_timeout is not None or run.on_wait_failure is not None
+        else None
+    )
+    return run_gate(name, run.command, paths=run.paths, wait=wait, junit=run.junit)
 
 
 def _enter_hook_environment() -> None:

@@ -42,9 +42,12 @@ export function rankGates(rows: GateRow[], by: GateRank, limit = 8): GateRow[] {
     .slice(0, limit);
 }
 
-/** Return the `limit` gates with the most flaky trees, ties by name. */
+/** Return the `limit` gates with the most flaky trees, ties by name; gates with none are left out. */
 export function topFlaky(gates: FlakyGate[], limit = 5): FlakyGate[] {
-  return [...gates].sort((a, b) => b.tree_count - a.tree_count || byName(a, b)).slice(0, limit);
+  return gates
+    .filter((g) => g.tree_count > 0)
+    .sort((a, b) => b.tree_count - a.tree_count || byName(a, b))
+    .slice(0, limit);
 }
 
 /** One part of a whole, for a stacked share bar. */

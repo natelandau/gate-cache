@@ -8,6 +8,12 @@
   - `repo`, `name`: the gate, with `repo` its own repo (null when recorded without one)
   - `onclose`: close the panel
 -->
+<script lang="ts" module>
+  /** The docs page that explains how to record test reports. */
+  export const TEST_DETAIL_DOCS_URL = "https://natelandau.github.io/gate-cache/stats/test-detail/";
+  export const TESTS_CUTOFF_NOTE = "Per-test figures cover only the last 90 days.";
+</script>
+
 <script lang="ts">
   import { TERMS } from "../lib/terms";
   import {
@@ -17,6 +23,7 @@
     type FlakyTree,
     type GateDetail,
     type GateRow,
+    type SlowTest,
   } from "../lib/api";
   import Badge from "../lib/components/Badge.svelte";
   import Button from "../lib/components/Button.svelte";
@@ -46,6 +53,7 @@
   import { createQuery } from "../lib/query.svelte";
   import { UNKNOWN_REPO } from "../lib/router.svelte";
   import { emptyTitle } from "../lib/scope";
+  import { reportProblemText } from "../lib/tests";
   import { clock, filters } from "../lib/state.svelte";
 
   interface Props {
@@ -219,7 +227,24 @@
       title: (t) => formatTimestamp(t.last),
     },
   ];
+
+  const testColumns: Column<SlowTest>[] = [
+    { key: "name", label: "Test", cell: testName, title: (t) => t.name },
+    { key: "median", label: "Median", align: "right", text: (t) => formatDuration(t.median) },
+    {
+      key: "share",
+      label: "Share of run",
+      align: "right",
+      text: (t) => formatPercent(t.share),
+      info: "The test's median time as a share of the gate's median passing run",
+    },
+    { key: "runs", label: "Runs", align: "right", text: (t) => formatCount(t.runs) },
+  ];
+
+  const reportProblem = $derived(detail ? reportProblemText(detail.report_problems) : null);
 </script>
+
+{#snippet testName(t: SlowTest)}<span class="test-name">{t.name}</span>{/snippet}
 
 {#snippet ranCell(e: EventRow)}<TimeValue value={ranText(e)} />{/snippet}
 {#snippet savedCell(e: EventRow)}<TimeValue value={savedText(e)} />{/snippet}
@@ -322,6 +347,34 @@
           </section>
         {/if}
 
+        <section class="tests">
+          <h3 class="section-title">Slowest tests</h3>
+          {#if reportProblem}
+            <Notice tone="warning">{reportProblem}</Notice>
+          {/if}
+          {#if !detail.has_tests}
+            {#if !reportProblem}
+              <p class="muted">
+                Record test reports with <code>--junit</code> to see the slowest tests.
+                <a href={TEST_DETAIL_DOCS_URL}>Learn how</a>
+              </p>
+            {/if}
+          {:else if detail.slowest_tests.length}
+            <DataTable
+              label="Slowest tests of {name}"
+              rows={detail.slowest_tests}
+              columns={testColumns}
+              rowKey={(t) => t.name}
+              busy={query.loading}
+            />
+          {:else}
+            <p class="muted">No passing tests with a recorded time in this range.</p>
+          {/if}
+          {#if detail.has_tests && detail.tests_cutoff !== null}
+            <p class="muted note">{TESTS_CUTOFF_NOTE}</p>
+          {/if}
+        </section>
+
         <section>
           <h3 class="section-title">
             Latest {formatCount(recent.length)}
@@ -421,6 +474,23 @@
   .muted {
     margin: 0;
     color: var(--text-muted);
+  }
+
+  .tests {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .tests .section-title {
+    margin: 0;
+  }
+
+  .note {
+    font-size: var(--text-xs);
+  }
+
+  .test-name {
+    overflow-wrap: anywhere;
   }
 
   .failures {

@@ -40,7 +40,7 @@ One row for each gate, with its runs, how often it skips, its run times, CPU use
 
 ![The details of one gate, with stat cards, a chart of passing run times, and a histogram of run times](../images/dashboard-gate-detail.png)
 
-The details of a gate show its run time over time, the spread of its run times, its failures, and which sources ran it.
+The details of a gate show its run time over time, the spread of its run times, its failures, and which sources ran it. If the gate records its test reports, the details also list its slowest tests. Read [Find slow and flaky tests](test-detail.md).
 
 ## Activity
 
@@ -50,7 +50,7 @@ A list of runs, newest first. Filter it by outcome, such as failures or skips.
 
 ![The Flaky page, a list of hashes with which one gate both failed and passed](../images/dashboard-flaky.png)
 
-Each gate that both failed and passed with the same hash. Read [Find flaky gates](flaky-gates.md).
+Each gate that both failed and passed with the same hash. For a gate that records its test reports, the page also lists its flaky tests and the tests that passed on a retry. Read [Find flaky gates](flaky-gates.md) and [Find slow and flaky tests](test-detail.md).
 
 ## Theme
 

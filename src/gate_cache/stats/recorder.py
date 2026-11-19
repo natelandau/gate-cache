@@ -62,6 +62,10 @@ class Event:
         wait_timed_out: Whether the wait ended at the timeout.
         reported: Whether the run reported the failure of the run it waited for instead
             of running the command.
+        junit: Number of tests stored from the run's JUnit reports, or why none were read:
+            `missing`, `stale`, or `invalid`. None when the run read no report.
+        junit_truncated: Whether the stored tests were cut at the per-run limit.
+        junit_problem: When some reports were read, the worst status of those that were not.
     """
 
     ts: float
@@ -97,6 +101,9 @@ class Event:
     waited: float | None = None
     wait_timed_out: bool = False
     reported: bool = False
+    junit: int | str | None = None
+    junit_truncated: bool = False
+    junit_problem: str | None = None
 
     def _encode(self, paths: list[str], *, truncated: bool, name: str | None = None) -> bytes:
         """Encode the event as one newline-terminated JSON line.
@@ -140,7 +147,12 @@ class Event:
             "agent": self.agent,
             "platform": self.platform,
             "waited": self.waited,
+            "junit": self.junit,
         }
+        if self.junit_truncated:
+            data["junit_truncated"] = True
+        if self.junit_problem is not None:
+            data["junit_problem"] = self.junit_problem
         if self.wait_timed_out:
             data["wait_timed_out"] = True
         if self.reported:

@@ -29,6 +29,7 @@ from gate_cache.gate_lock import HELD_ENV, LOCK_DIRNAME, GateLock, Holder, lock_
 from gate_cache.markers import marker_dir, marker_path, miss_path, write_marker, write_miss
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot, take_snapshot
+from gate_cache.stats import junit
 from gate_cache.wait_settings import FailedBehavior, WaitSettings
 from tests.conftest import Counter, git, hide_common_dir, markers, misses, read_records
 
@@ -1819,3 +1820,154 @@ def test_timeout_zero_publishes_held_env_to_child(
 
     assert path.name in capfd.readouterr().out.strip().split(":")
     assert HELD_ENV not in os.environ
+
+
+_REPORT_SCRIPT = """\
+import sys
+from pathlib import Path
+cases = "".join(f'<testcase classname="c" name="t{i}" time="0.1"/>' for i in range(int(sys.argv[2])))
+Path(sys.argv[1]).write_text(f"<testsuite>{cases}</testsuite>")
+sys.exit(int(sys.argv[3]))
+"""
+
+
+def _report_command(report: Path, *, tests: int = 2, exit_code: int = 0) -> list[str]:
+    """Return a command that writes a JUnit report with `tests` cases, then exits."""
+    return [sys.executable, "-c", _REPORT_SCRIPT, str(report), str(tests), str(exit_code)]
+
+
+def _events(state: Path) -> list[dict[str, object]]:
+    return [json.loads(line) for line in (state / "events.jsonl").read_text().splitlines()]
+
+
+@pytest.mark.parametrize("tests", [3, 0])
+def test_junit_results_recorded(
+    git_repo: Path, stats_on: None, stats_dirs: tuple[Path, Path], tests: int
+) -> None:
+    """Verify a fresh report, named relative to the cwd, counts its tests on the event.
+
+    The tests are stored only when the report has any.
+    """
+    report = git_repo / "report.xml"
+    assert run_gate(NAME, _report_command(report, tests=tests), junit=["report.xml"]) == 0
+
+    (event,) = _events(stats_dirs[1])
+    assert event["junit"] == tests
+    assert "junit_truncated" not in event
+    assert "junit_problem" not in event
+    stored_file = stats_dirs[1] / "tests" / f"{event['id']}.json"
+    if tests:
+        stored = json.loads(stored_file.read_text())
+        assert stored == [[f"c::t{i}", "pass", 0.1] for i in range(tests)]
+    else:
+        assert not stored_file.exists()
+
+
+def test_junit_partial_read_records_the_problem(
+    git_repo: Path, tmp_path: Path, stats_on: None, stats_dirs: tuple[Path, Path]
+) -> None:
+    """Verify a run that reads one report but misses another records the problem beside its count."""
+    report = tmp_path / "report.xml"
+
+    assert run_gate(NAME, _report_command(report), junit=[report, tmp_path / "gone.xml"]) == 0
+
+    (event,) = _events(stats_dirs[1])
+    assert event["junit"] == 2
+    assert event["junit_problem"] == "missing"
+
+
+def test_junit_stale_report_on_crash(
+    git_repo: Path,
+    counter: Counter,
+    tmp_path: Path,
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify a command that leaves an old report untouched keeps its exit code and records stale."""
+    report = tmp_path / "report.xml"
+    report.write_text('<testsuite><testcase name="old"/></testsuite>')
+
+    assert run_gate(NAME, counter.argv(exit_code=3), junit=[report]) == 3
+
+    (event,) = _events(stats_dirs[1])
+    assert event["exit_code"] == 3
+    assert event["junit"] == "stale"
+    assert not (stats_dirs[1] / "tests").exists()
+
+
+def test_junit_errors_never_change_exit_code(
+    git_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify a failure while reading reports still records the run, with no junit field."""
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError
+
+    monkeypatch.setattr(junit, "read_reports", fail)
+    report = tmp_path / "report.xml"
+
+    assert run_gate(NAME, _report_command(report, exit_code=4), junit=[report]) == 4
+
+    (event,) = _events(stats_dirs[1])
+    assert event["outcome"] == "fail"
+    assert event["exit_code"] == 4
+    assert event["junit"] is None
+    assert capfd.readouterr().err == ""
+
+
+def test_junit_ignored_without_stats(
+    git_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stats_dirs: tuple[Path, Path],
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify --junit with stats off takes no snapshot, stores nothing, and prints nothing."""
+    snapshots: list[object] = []
+    monkeypatch.setattr(junit, "snapshot_reports", snapshots.append)
+    report = tmp_path / "report.xml"
+
+    assert run_gate(NAME, _report_command(report), junit=[report]) == 0
+
+    assert snapshots == []
+    assert not (stats_dirs[1] / "tests").exists()
+    assert capfd.readouterr().err == ""
+
+
+def test_skip_reads_no_report(
+    git_repo: Path, tmp_path: Path, stats_on: None, stats_dirs: tuple[Path, Path]
+) -> None:
+    """Verify a skip stores no per-test file and leaves junit empty."""
+    report = tmp_path / "report.xml"
+    command = _report_command(report)
+    run_gate(NAME, command, junit=[report])
+    run_gate(NAME, command, junit=[report])
+
+    ran, skipped = _events(stats_dirs[1])
+    assert skipped["outcome"] == "skip"
+    assert skipped["junit"] is None
+    assert [p.stem for p in (stats_dirs[1] / "tests").iterdir()] == [ran["id"]]
+
+
+def test_junit_recorded_for_uncached_run(
+    git_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify a run with caching off still records its tests."""
+    monkeypatch.setenv("GATE_CACHE_DISABLE", "1")
+    report = tmp_path / "report.xml"
+
+    assert run_gate(NAME, _report_command(report), junit=[report]) == 0
+
+    (event,) = _events(stats_dirs[1])
+    assert event["outcome"] == "uncached"
+    assert event["junit"] == 2
+    assert (stats_dirs[1] / "tests" / f"{event['id']}.json").exists()

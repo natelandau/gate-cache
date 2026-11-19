@@ -12,7 +12,15 @@ from typing import IO, Any
 import pytest
 
 from gate_cache.stats import archive as archive_module
-from gate_cache.stats.archive import RETENTION_DAYS, Archive, archive_path
+from gate_cache.stats.archive import (
+    ORPHAN_GRACE_SECONDS,
+    RETENTION_DAYS,
+    SETTLE_SECONDS,
+    TEST_RETENTION_DAYS,
+    Archive,
+    archive_path,
+)
+from gate_cache.stats.junit import TESTS_DIR_NAME
 from gate_cache.stats.recorder import Event
 
 DAY = 86400.0
@@ -556,3 +564,223 @@ def test_v2_archive_backfills_timings(tmp_path: Path) -> None:
             (None, None, 1, 1, 0),
             (None, None, 0, 0, 0),
         ]
+
+
+def write_tests(inbox: Path, event_id: str, content: str, *, age: float, now: float) -> Path:
+    """Write a per-run test file with an mtime `age` seconds before `now`."""
+    folder = inbox.parent / TESTS_DIR_NAME
+    folder.mkdir(exist_ok=True)
+    path = folder / f"{event_id}.json"
+    path.write_text(content)
+    os.utime(path, (now - age, now - age))
+    return path
+
+
+def write_event(inbox: Path, event_id: str, *, now: float, name: str = "test@v1") -> None:
+    """Write a settled inbox holding one event with the given id."""
+    inbox.write_bytes(replace(make_event(now - 10, name=name), id=event_id).to_line())
+    os.utime(inbox, (now - 10, now - 10))
+
+
+def results(arch: Archive) -> list[tuple[Any, ...]]:
+    """Return the stored per-test results with their gate, sorted by name."""
+    return arch.connection.execute(
+        "SELECT t.repo, t.gate, t.name, r.outcome, r.duration FROM test_results r"
+        " JOIN tests t ON t.id = r.test_id ORDER BY t.name"
+    ).fetchall()
+
+
+SAMPLE = '[["a::one", "pass", 0.5], ["a::two", "fail", null]]'
+
+
+def test_ingest_test_results(arch: Archive, inbox: Path) -> None:
+    """A settled per-run file is stored under its event's gate and then deleted."""
+    now = time.time()
+    write_event(inbox, "abc", now=now)
+    path = write_tests(inbox, "abc", SAMPLE, age=SETTLE_SECONDS + 1, now=now)
+    assert arch.ingest(inbox, now=now) == 1
+    assert results(arch) == [
+        ("/r/.git", "test", "a::one", "pass", 0.5),
+        ("/r/.git", "test", "a::two", "fail", None),
+    ]
+    assert not path.exists()
+
+
+def test_test_file_waits_for_its_event(arch: Archive, inbox: Path) -> None:
+    """A file whose event is not archived yet stays until the event arrives."""
+    now = time.time()
+    path = write_tests(inbox, "abc", SAMPLE, age=SETTLE_SECONDS + 1, now=now)
+    arch.ingest(inbox, now=now)
+    assert path.exists()
+    assert results(arch) == []
+    write_event(inbox, "abc", now=now)
+    arch.ingest(inbox, now=now)
+    assert len(results(arch)) == 2
+    assert not path.exists()
+
+
+def test_orphan_test_file_deleted(arch: Archive, inbox: Path) -> None:
+    """A file with no event past the grace period, and an old temp file, are deleted."""
+    now = time.time()
+    path = write_tests(inbox, "abc", SAMPLE, age=ORPHAN_GRACE_SECONDS + 1, now=now)
+    folder = path.parent
+    old_tmp = folder / ".abc.x1.tmp"
+    old_tmp.write_text("[")
+    stale = now - ORPHAN_GRACE_SECONDS - 1
+    os.utime(old_tmp, (stale, stale))
+    young_tmp = folder / ".def.x2.tmp"
+    young_tmp.write_text("[")
+    os.utime(young_tmp, (now - 5, now - 5))
+    arch.ingest(inbox, now=now)
+    assert not path.exists()
+    assert not old_tmp.exists()
+    assert young_tmp.exists()
+    assert results(arch) == []
+
+
+def test_test_file_ingested_once(arch: Archive, inbox: Path) -> None:
+    """A file whose results are already stored adds nothing and is deleted."""
+    now = time.time()
+    write_event(inbox, "abc", now=now)
+    write_tests(inbox, "abc", SAMPLE, age=SETTLE_SECONDS + 1, now=now)
+    arch.ingest(inbox, now=now)
+    path = write_tests(inbox, "abc", SAMPLE, age=SETTLE_SECONDS + 1, now=now)
+    arch.ingest(inbox, now=now)
+    assert len(results(arch)) == 2
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    ("content", "stored"),
+    [
+        ('{"a": 1}', []),
+        ("not json", []),
+        ('["a::one", "pass", 0.5]', []),
+        ('[["a::one", "pass"], ["a::two", 7, 1], [1, "pass", 1], ["a::three", "skip", "x"]]', []),
+        ('[["a::one", "pass", 0.5], "bad"]', [("/r/.git", "test", "a::one", "pass", 0.5)]),
+    ],
+    ids=["not-a-list", "not-json", "flat-row", "bad-rows", "one-bad-row"],
+)
+def test_malformed_test_file_dropped(
+    arch: Archive, inbox: Path, content: str, stored: list[tuple[Any, ...]]
+) -> None:
+    """A malformed file or row adds no rows for itself, and the file is deleted."""
+    now = time.time()
+    write_event(inbox, "abc", now=now)
+    path = write_tests(inbox, "abc", content, age=SETTLE_SECONDS + 1, now=now)
+    arch.ingest(inbox, now=now)
+    assert results(arch) == stored
+    assert not path.exists()
+
+
+def test_test_retention(arch: Archive, inbox: Path) -> None:
+    """Results past the test retention window are pruned, keeping their event."""
+    now = time.time()
+    old = now - (TEST_RETENTION_DAYS + 1) * DAY
+    inbox.write_bytes(
+        replace(make_event(old, name="old"), id="old").to_line()
+        + replace(make_event(now - 10, name="new"), id="new").to_line()
+    )
+    os.utime(inbox, (now - 10, now - 10))
+    write_tests(inbox, "old", '[["x::old", "pass", 1]]', age=SETTLE_SECONDS + 1, now=now)
+    write_tests(inbox, "new", '[["x::new", "pass", 1]]', age=SETTLE_SECONDS + 1, now=now)
+    arch.ingest(inbox, now=now)
+    assert [r[2] for r in results(arch)] == ["x::new"]
+    names = [r[0] for r in arch.connection.execute("SELECT name FROM tests")]
+    assert names == ["x::new"]
+    assert count(arch) == 2
+
+
+def test_later_prune_drops_results_that_aged_out(arch: Archive, inbox: Path) -> None:
+    """Results stored in one cycle are pruned once their event passes the retention window."""
+    now = time.time()
+    write_event(inbox, "abc", now=now)
+    write_tests(inbox, "abc", SAMPLE, age=SETTLE_SECONDS + 1, now=now)
+    arch.ingest(inbox, now=now)
+    assert len(results(arch)) == 2
+    arch.prune(now=now + DAY)
+    assert len(results(arch)) == 2
+    arch.prune(now=now + (TEST_RETENTION_DAYS + 1) * DAY)
+    assert results(arch) == []
+    assert count(arch) == 1
+
+
+def test_migration_backfills_event_uid(tmp_path: Path) -> None:
+    """Opening a version 4 archive fills each event's uid from its raw line."""
+    path = tmp_path / "a.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        V1_SCHEMA.replace("reason TEXT\n", "reason TEXT,\n    raw TEXT\n").replace(
+            "'schema_version', '1'", "'schema_version', '4'"
+        )
+    )
+    connection.executemany(
+        "INSERT INTO events (line_hash, ts, name, paths, outcome, raw)"
+        " VALUES (?, ?, 'x', '[]', 'pass', ?)",
+        [("h2", 2.0, '{"v":1,"id":"u2"}'), ("h3", 3.0, '{"v":1,"id":7}'), ("h4", 4.0, "bad")],
+    )
+    connection.commit()
+    connection.close()
+    with Archive.open(path) as arch:
+        uids = arch.connection.execute("SELECT event_uid FROM events ORDER BY ts").fetchall()
+    assert uids == [(None,), ("u2",), (None,), (None,)]
+
+
+def test_old_test_file_kept_while_events_unread(arch: Archive, inbox: Path) -> None:
+    """An old file is kept while an unsettled inbox may still hold its event."""
+    now = time.time()
+    path = write_tests(inbox, "abc", SAMPLE, age=ORPHAN_GRACE_SECONDS + 1, now=now)
+    inbox.write_bytes(replace(make_event(now - 5000, name="test@v1"), id="abc").to_line())
+    os.utime(inbox, (now, now))
+    arch.ingest(inbox, now=now)
+    assert path.exists()
+    arch.ingest(inbox, now=now + 3)
+    assert len(results(arch)) == 2
+    assert not path.exists()
+
+
+def test_old_test_file_kept_while_event_file_fails(
+    arch: Archive, inbox: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An old file is kept while the event file that holds its event cannot be read."""
+    now = time.time()
+    path = write_tests(inbox, "abc", SAMPLE, age=ORPHAN_GRACE_SECONDS + 1, now=now)
+    bad = inbox.parent / f"events.{int((now - 10) * 1e9)}.processing"
+    bad.write_bytes(replace(make_event(now - 5000, name="test@v1"), id="abc").to_line())
+    real = Path.open
+
+    def flaky(self: Path, mode: str = "r") -> IO[Any]:
+        if self == bad:
+            msg = "denied"
+            raise PermissionError(msg)
+        return real(self, mode)
+
+    monkeypatch.setattr(Path, "open", flaky)
+    arch.ingest(inbox, now=now)
+    assert path.exists()
+    monkeypatch.undo()
+    arch.ingest(inbox, now=now)
+    assert len(results(arch)) == 2
+
+
+@pytest.mark.parametrize(
+    ("age", "kept"),
+    [(SETTLE_SECONDS + 1, True), (ORPHAN_GRACE_SECONDS + 1, False)],
+    ids=["young", "past-grace"],
+)
+def test_unreadable_test_file_dropped_after_grace(
+    arch: Archive, inbox: Path, monkeypatch: pytest.MonkeyPatch, age: float, *, kept: bool
+) -> None:
+    """A file that cannot be read is retried until the grace period, then deleted."""
+    now = time.time()
+    write_event(inbox, "abc", now=now)
+    path = write_tests(inbox, "abc", SAMPLE, age=age, now=now)
+
+    def denied(self: Path) -> bytes:
+        msg = "denied"
+        raise PermissionError(msg)
+
+    monkeypatch.setattr(Path, "read_bytes", denied)
+    arch.ingest(inbox, now=now)
+    assert path.exists() is kept
+    assert results(arch) == []

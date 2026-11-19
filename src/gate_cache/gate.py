@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from gate_cache.snapshot import Snapshot
+    from gate_cache.stats.junit import ReportSnapshot
 
 DISABLE_ENV = "GATE_CACHE_DISABLE"
 MAX_AGE_ENV = "GATE_CACHE_MAX_AGE_DAYS"
@@ -196,6 +197,27 @@ class _Stats:
             return {}
         return {"cpu": round(after.cpu - before.cpu, 3), "max_rss": after.max_rss}
 
+    def snapshot_reports(self, junit: Sequence[str | Path]) -> ReportSnapshot | None:
+        """Note the JUnit reports on disk before the command runs, when stats will read them.
+
+        Args:
+            junit: Report files or folders, relative to the working directory the command
+                starts in.
+
+        Returns:
+            The snapshot, or None when stats are off, no reports are named, or the reports
+            cannot be located, such as in a deleted working directory.
+        """
+        if not (self.enabled and junit):
+            return None
+        from gate_cache.stats import junit as junit_reports
+
+        # Stats must not change a gate's result, even when the reports cannot be located.
+        try:
+            return junit_reports.snapshot_reports([Path.cwd() / path for path in junit])
+        except Exception:  # noqa: BLE001
+            return None
+
     def common_dir(self, snapshot: Snapshot | None) -> Path | None:
         """Return the snapshot's git common directory, else look it up; never raise."""
         if not self.enabled:
@@ -216,6 +238,7 @@ class _Stats:
         common_dir: Path | None,
         overhead: float | None = None,
         marker: Path | None = None,
+        reports: ReportSnapshot | None = None,
         **fields: Any,
     ) -> None:
         """Record the run as a stats event when stats are on; never raise.
@@ -227,6 +250,8 @@ class _Stats:
             common_dir: Git common directory, when known.
             overhead: Seconds spent before deciding, for a run that checked its cache.
             marker: The marker a skip used.
+            reports: The JUnit reports as they stood before the command ran, to store the
+                tests the command reported.
             **fields: The remaining Event fields.
         """
         if not self.enabled:
@@ -236,6 +261,8 @@ class _Stats:
             context = self._context(
                 name=name, command=command, worktree=worktree, common_dir=common_dir
             )
+            if reports is not None:
+                fields.update(_junit_fields(reports, event_id=context["id"]))
             event = Event(
                 ts=time.time(),
                 name=name,
@@ -282,6 +309,36 @@ class _Stats:
             # Without --name the name is the command line, so storing it again adds nothing.
             "command": joined if joined != name else None,
         }
+
+
+def _junit_fields(reports: ReportSnapshot, *, event_id: str) -> dict[str, Any]:
+    """Store the tests from the reports the command wrote, and return the event's junit fields.
+
+    Args:
+        reports: The reports as they stood before the command ran.
+        event_id: The id of the run's event, which names the per-run file.
+
+    Returns:
+        `junit`, `junit_truncated`, and `junit_problem`, or an empty dict when reading or
+        storing fails.
+    """
+    from gate_cache.stats import junit
+
+    # A report problem must never cost the run its event.
+    try:
+        read = junit.read_reports(reports)
+        if read.status is not None:
+            return {"junit": read.status}
+        fields: dict[str, Any] = {"junit": 0, "junit_problem": read.problem}
+        if read.results:
+            # The per-run file goes first, so an event never points at tests that were not stored.
+            count, truncated = junit.write_results(
+                event_id, read.results, state=stats_config.state_dir()
+            )
+            fields.update(junit=count, junit_truncated=truncated)
+    except Exception:  # noqa: BLE001
+        return {}
+    return fields
 
 
 @dataclass(frozen=True)
@@ -431,6 +488,8 @@ class _GateRun:
         waited: Seconds spent blocked on other runs, or None when the run never waited.
         wait_timed_out: Whether a wait ended at the timeout.
         ran: The attempt whose command ran to completion, so its directory gets pruned.
+        junit: JUnit report files or folders the command writes, relative to the working
+            directory, read only when stats are on.
     """
 
     name: str
@@ -441,6 +500,7 @@ class _GateRun:
     waited: float | None = None
     wait_timed_out: bool = False
     ran: _Attempt | None = None
+    junit: Sequence[str | Path] = ()
 
     def run(self, snapshot: Snapshot) -> int:
         """Skip on a recorded pass, else run the command, waiting for a run with the same key.
@@ -643,6 +703,7 @@ class _GateRun:
         usual = usual_duration(attempt.durations)
         if usual is not None and usual > USUAL_DURATION_MIN_SECONDS:
             say(USUAL_DURATION_NOTICE.format(name=self.name, duration=format_duration(usual)))
+        reports = self.stats.snapshot_reports(self.junit)
         overhead = self._overhead()
         before = self.stats.usage()
         result = run_child(self.command)
@@ -666,6 +727,7 @@ class _GateRun:
             attempt.snapshot,
             common_dir=attempt.common_dir,
             overhead=overhead,
+            reports=reports,
             **usage,
             outcome=outcome,
             duration=result.duration,
@@ -694,6 +756,7 @@ class _GateRun:
             The command's exit code.
         """
         say(f"{reason}, running without cache")
+        reports = self.stats.snapshot_reports(self.junit)
         before = self.stats.usage()
         result = run_child(self.command)
         usage = self.stats.usage_since(before)
@@ -703,6 +766,7 @@ class _GateRun:
             snapshot,
             common_dir=self.stats.common_dir(snapshot) if resolve_repo else None,
             paths=paths,
+            reports=reports,
             **usage,
             outcome="uncached",
             duration=result.duration,
@@ -777,6 +841,7 @@ def run_gate(
     paths: Sequence[str] = (),
     *,
     wait: WaitSettings | None = None,
+    junit: Sequence[str | Path] = (),
 ) -> int:
     """Run a gate command unless it already passed on the content about to be tested.
 
@@ -790,6 +855,9 @@ def run_gate(
             on the whole tree.
         wait: How long to wait for another run and what to do when it failed. None reads
             the config file.
+        junit: JUnit report files or folders the command writes, relative to the working
+            directory. With stats on, a run that executes the command stores the tests they
+            report; they never affect skipping.
 
     Returns:
         The command's exit code, 0 when a recorded pass lets it skip, or the exit code of
@@ -798,11 +866,13 @@ def run_gate(
     stats = _Stats.load()
     reason = disabled_reason()
     if reason is not None:
-        return _GateRun(name=name, command=command, stats=stats).run_uncached(
+        return _GateRun(name=name, command=command, stats=stats, junit=junit).run_uncached(
             reason, None, paths=normalize_paths(paths), resolve_repo=True
         )
 
-    gate_run = _GateRun(name=name, command=command, stats=stats, started=stats.now(), wait=wait)
+    gate_run = _GateRun(
+        name=name, command=command, stats=stats, started=stats.now(), wait=wait, junit=junit
+    )
     try:
         return gate_run.run(take_snapshot(paths=paths))
     except Terminated as stop:
