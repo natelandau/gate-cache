@@ -28,7 +28,7 @@ describe("StatStrip", () => {
   it("draws a sparkline for a stat that has one, and highlights picked days", () => {
     const body = html(StatStrip, {
       props: {
-        stats: [{ label: "Runs", value: "4", spark: { values: [1, 2, 3], color: "var(--chart-runs)" } }],
+        stats: [{ label: "Runs", value: "4", spark: [{ values: [1, 2, 3], color: "var(--chart-runs)" }] }],
         highlight: [1, 1],
       },
     });

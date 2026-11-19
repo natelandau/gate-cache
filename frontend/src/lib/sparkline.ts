@@ -8,19 +8,17 @@ const PAD_BOTTOM = 2;
  * Return the SVG path of a sparkline and of the area under it, scaled to `width` by `height`.
  *
  * A null value is a day with nothing to plot: the line breaks there instead of dropping to
- * zero. An empty or all-zero series draws a flat line at the bottom.
+ * zero. An empty or all-zero series draws a flat line at the bottom. Pass `domain`, from
+ * `sparkDomain`, to draw several series on one scale.
  */
 export function sparkPath(
   values: (number | null)[],
   width: number,
   height: number,
+  domain: [min: number, max: number] = sparkDomain([values]),
 ): { line: string; area: string } {
   if (values.length === 0) return { line: "", area: "" };
-  const known = values.filter((v): v is number => v !== null);
-  const max = Math.max(0, ...known);
-  // Net saved goes below zero on days that cost more than they saved, so scale from the
-  // lowest value, not from zero, to keep every point inside the box.
-  const min = Math.min(0, ...known);
+  const [min, max] = domain;
   const step = values.length > 1 ? width / (values.length - 1) : 0;
   const bottom = height - PAD_BOTTOM;
   const y = (v: number) => (max > min ? bottom - ((v - min) / (max - min)) * (bottom - PAD_TOP) : bottom);
@@ -48,6 +46,16 @@ export function sparkPath(
     })
     .join(" ");
   return { line, area };
+}
+
+/**
+ * Return the lowest and highest value to scale sparklines to, across every series. The range
+ * always takes in zero, and values can go below zero, so it starts at the lowest value to
+ * keep every point inside the box.
+ */
+export function sparkDomain(series: (number | null)[][]): [min: number, max: number] {
+  const known = series.flat().filter((v): v is number => v !== null);
+  return [Math.min(0, ...known), Math.max(0, ...known)];
 }
 
 function round(n: number): number {

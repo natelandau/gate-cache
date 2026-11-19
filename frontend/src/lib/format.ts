@@ -17,17 +17,6 @@ export function formatDuration(seconds: number | null): string {
   return `${Math.floor(minutes / MINUTE)}h ${minutes % MINUTE}m`;
 }
 
-/** Return whether a duration reads as at least one whole second below zero. */
-export function isNegativeDuration(seconds: number): boolean {
-  // formatDuration shows anything under a second as "<1s", which carries no sign.
-  return seconds <= -1;
-}
-
-/** Render a duration that can be negative, with a leading minus sign (U+2212) when it is. */
-export function formatSignedDuration(seconds: number): string {
-  return isNegativeDuration(seconds) ? `\u2212${formatDuration(-seconds)}` : formatDuration(seconds);
-}
-
 /** Render an axis tick duration: ticks fall on whole units, so `10m 0s` reads as `10m`. */
 export function formatAxisDuration(seconds: number): string {
   return seconds === 0 ? "0" : formatDuration(seconds).replace(/ 0[sm]$/, "");
@@ -158,6 +147,21 @@ export function valueParts(value: string): { text: string; unit: boolean }[] {
     parts.push({ text, unit: !digits && !!unit });
   }
   return parts;
+}
+
+/** One number of a value that shows several, such as the "6 failed" of "21 ran, 6 failed". */
+export interface ValuePart {
+  /** The formatted number, such as "21". */
+  value: string;
+  /** A word after the number, set smaller and muted like a unit, such as "ran". */
+  unit?: string;
+  tone?: "danger";
+}
+
+/** Render a value as plain text, joining several parts with commas, such as "21 ran, 6 failed". */
+export function valueText(value: string | ValuePart[]): string {
+  if (typeof value === "string") return value;
+  return value.map((p) => (p.unit ? `${p.value} ${p.unit}` : p.value)).join(", ");
 }
 
 /** Split a pause between runs into whole days from 48 hours up, and whole hours below. */

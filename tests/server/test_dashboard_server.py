@@ -114,7 +114,7 @@ def test_api_summary_shape(server: DashboardServer) -> None:
         "repos",
         "breakdown?by=source",
         "activity",
-        "flaky",
+        "triage",
         "slowdowns",
         "spent",
         "freshness",
@@ -365,9 +365,11 @@ def test_activity_reason_filter(server: DashboardServer, archive: Archive) -> No
     status, body = get(server, "/api/v1/activity?reason=a%20b%26c")
     assert status == 200
     assert [e["reason"] for e in body["events"]] == ["a b&c"]
+    _, body = get(server, "/api/v1/activity?reason=a%20b%26c&reason=other")
+    assert [e["reason"] for e in body["events"]] == ["other", "a b&c"]
 
 
-def test_api_coalescing_and_net_saved(server: DashboardServer, archive: Archive) -> None:
+def test_api_coalescing_and_overhead(server: DashboardServer, archive: Archive) -> None:
     """Ingested wait and overhead timings reach the summary and the coalescing endpoint."""
     now = time.time()
     events = [
@@ -378,7 +380,7 @@ def test_api_coalescing_and_net_saved(server: DashboardServer, archive: Archive)
     archive.ingest(inbox_path(), now=now)
     archive.ingest(inbox_path(), now=now + 3)
     summary = get(server, "/api/v1/summary")[1]
-    assert summary["net_saved"] == pytest.approx(60.0 - 1.0 - 10.0)
+    assert summary["overhead"] == pytest.approx(1.0)
     assert summary["cost_unknown_runs"] == 0
     status, body = get(server, "/api/v1/coalescing")
     assert status == 200
@@ -640,54 +642,42 @@ def test_breakdown_row_drills_into_activity(server: DashboardServer, archive: Ar
     assert [e["ts"] for e in page["events"]] == [1000.0]
 
 
-def test_activity_weekday_hour_filter(server: DashboardServer, archive: Archive) -> None:
-    """The weekday and hour parameters keep only events in that local hour."""
-    # 1970-01-04 was a Sunday; 3600 s is 01:00 UTC on Thursday 1970-01-01.
-    sunday_0105 = 3 * 86400 + 3900.0
+def test_activity_spot_check_filter(server: DashboardServer, archive: Archive) -> None:
+    """The spot_check=1 parameter keeps only spot-check events."""
     archive.connection.executemany(
-        "INSERT INTO events (line_hash, ts, name, paths, outcome) VALUES (?, ?, 'lint', '[]', 'pass')",
-        [("h1", sunday_0105), ("h2", sunday_0105 + 3600), ("h3", 3900.0)],
+        "INSERT INTO events (line_hash, ts, name, paths, outcome, spot_check)"
+        " VALUES (?, ?, 'lint', '[]', 'pass', ?)",
+        [("h1", 1.0, 1), ("h2", 2.0, 0)],
     )
     archive.connection.commit()
-    status, body = get(server, "/api/v1/activity?weekday=0&hour=1&tz=UTC")
-    assert status == 200
-    assert [e["ts"] for e in body["events"]] == [sunday_0105]
-
-
-@pytest.mark.parametrize(
-    ("query", "word"),
-    [
-        ("weekday=1", "hour"),
-        ("hour=1", "hour"),
-        ("weekday=x&hour=1", "weekday"),
-        ("hour=25&weekday=1", "hour"),
-    ],
-)
-def test_activity_rejects_bad_slot(server: DashboardServer, query: str, word: str) -> None:
-    """A lone, non-integer, or out-of-range weekday or hour is a bad request."""
-    status, body = get(server, f"/api/v1/activity?{query}")
-    assert status == 400
-    assert word in body["error"]
+    _, body = get(server, "/api/v1/activity?spot_check=1")
+    assert [(e["ts"], e["spot_check"]) for e in body["events"]] == [(1.0, True)]
 
 
 def test_activity_gate_filter(server: DashboardServer, archive: Archive) -> None:
-    """The gate and gate_repo parameters keep one gate; gate_repo=- is the unknown repo."""
+    """Each gate parameter is its repo and name joined by a NUL; - is the unknown repo."""
     archive.connection.executemany(
         "INSERT INTO events (line_hash, ts, repo, name, paths, outcome)"
         " VALUES (?, ?, ?, ?, '[]', 'pass')",
         [("h1", 1.0, None, "lint"), ("h2", 2.0, "/r/.git", "lint"), ("h3", 3.0, None, "test")],
     )
     archive.connection.commit()
-    status, body = get(server, "/api/v1/activity?gate=lint&gate_repo=-")
+    status, body = get(server, "/api/v1/activity?gate=-%00lint")
     assert status == 200
     assert [e["ts"] for e in body["events"]] == [1.0]
+    _, body = get(server, f"/api/v1/activity?gate={quote('/r/.git')}%00lint")
+    assert [e["ts"] for e in body["events"]] == [2.0]
+    query = "gate=-%00lint&gate=-%00test&outcome=pass&outcome=fail"
+    _, body = get(server, f"/api/v1/activity?{query}")
+    assert [e["ts"] for e in body["events"]] == [3.0, 1.0]
 
 
-def test_activity_gate_requires_repo(server: DashboardServer) -> None:
-    """A gate filter without gate_repo is a bad request."""
-    status, body = get(server, "/api/v1/activity?gate=lint")
+@pytest.mark.parametrize("query", ["gate=lint", "gate=-%00", "gate=%00lint", "gate="])
+def test_activity_gate_requires_repo(server: DashboardServer, query: str) -> None:
+    """Each gate names both its repo and its name."""
+    status, body = get(server, f"/api/v1/activity?{query}")
     assert status == 400
-    assert "gate_repo" in body["error"]
+    assert "each gate" in body["error"]
 
 
 def test_activity_flaky_filter(server: DashboardServer, archive: Archive) -> None:
@@ -701,6 +691,26 @@ def test_activity_flaky_filter(server: DashboardServer, archive: Archive) -> Non
     status, body = get(server, "/api/v1/activity?flaky=1")
     assert status == 200
     assert [e["ts"] for e in body["events"]] == [2.0, 1.0]
+
+
+def test_triage_route_honors_filters(server: DashboardServer, archive: Archive) -> None:
+    """The triage route lists rows with their reason and evidence, under the repo filter."""
+    archive.connection.executemany(
+        "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome, spot_check,"
+        " exit_code) VALUES (?, ?, ?, 'lint', 't1', '[]', 'fail', 1, 3)",
+        [("h1", 1.0, "/a/.git"), ("h2", 2.0, "/b/.git")],
+    )
+    archive.connection.commit()
+    status, body = get(server, f"/api/v1/triage?repo={quote('/a/.git')}")
+    assert status == 200
+    (item,) = body["items"]
+    assert set(item) == {"repo", "repo_name", "name", "reason", "last_seen", "evidence"}
+    assert (item["repo"], item["reason"]) == ("/a/.git", "failed_spot_check")
+    assert [r["exit_code"] for r in item["evidence"]["runs"]] == [3]
+    _, body = get(server, "/api/v1/triage?reason=flaky")
+    assert body["items"] == []
+    status, body = get(server, "/api/v1/triage?reason=slow")
+    assert status == 400
 
 
 def _fake_exe(directory: Path) -> Path:

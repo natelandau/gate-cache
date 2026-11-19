@@ -3,52 +3,66 @@
   A top bar control: a button that shows the current value and opens a popover of choices.
   Opening moves focus to the popover's first control, or the checked radio of a group. Escape
   and a click outside close the popover and return focus to the button when focus was inside
-  it; Escape in a text or date field stays with the field. Tabbing out of the popover closes it.
+  it; Escape in a text or date field, or one a control inside already handled, stays with it. Tabbing out of the popover closes it.
 
   Props:
   - `caption`: what the control sets, such as "Date range"; read before the label by screen
     readers and used as the popover's name
   - `label`: the current value, shown on the button
   - `title`: tooltip text for the button
-  - `width`: the popover width, such as "380px"
+  - `width`: the popover width, such as "380px"; left out, the popover shrink-wraps its content
+  - `open`: whether the popover is open; bind it to open the popover from outside
   - `onopen`: called each time the popover opens
   - `icon`: the button icon, 16px, drawn with `currentColor`
   - `children`: the popover content; receives a `close` function that closes the popover and
     focuses the button
 -->
 <script lang="ts">
-  import { type Snippet, tick } from "svelte";
+  import { type Snippet, tick, untrack } from "svelte";
+  import { popoverShift } from "../popoverShift";
   import Icon from "./Icon.svelte";
 
   interface Props {
     caption: string;
     label: string;
     title?: string;
-    width: string;
+    width?: string;
+    open?: boolean;
     onopen?: () => void;
     icon: Snippet;
     children: Snippet<[close: () => void]>;
   }
 
-  let { caption, label, title, width, onopen, icon, children }: Props = $props();
+  let { caption, label, title, width, open = $bindable(false), onopen, icon, children }: Props = $props();
 
   const uid = $props.id();
   const TEXT_FIELD = "input:not([type='checkbox'], [type='radio']), select, textarea";
-  let open = $state(false);
   let root: HTMLElement;
   let button: HTMLButtonElement;
   let popover: HTMLElement;
+  let shift = $state(0);
 
   const FIRST_CONTROL =
     "input:not([type='radio']), input[type='radio']:checked, button, select, textarea, [tabindex]:not([tabindex='-1'])";
 
-  async function toggle() {
-    open = !open;
-    if (!open) return;
-    onopen?.();
-    await tick();
-    popover.querySelector<HTMLElement>(FIRST_CONTROL)?.focus();
+  function place() {
+    const gutter = parseFloat(getComputedStyle(popover).getPropertyValue("--space-4"));
+    shift = popoverShift(
+      root.getBoundingClientRect().left,
+      popover.offsetWidth,
+      document.documentElement.clientWidth,
+      gutter,
+    );
   }
+
+  $effect(() => {
+    if (!open) return;
+    untrack(() => onopen?.());
+    void tick().then(() => {
+      place();
+      popover.querySelector<HTMLElement>(FIRST_CONTROL)?.focus();
+    });
+  });
 
   function close() {
     open = false;
@@ -61,13 +75,21 @@
     if (focusInside) button.focus();
   }
 
+  // Content that changes the popover's width, such as a picker replacing a list, needs a new shift.
+  $effect(() => {
+    if (!open) return;
+    const observer = new ResizeObserver(place);
+    observer.observe(popover);
+    return () => observer.disconnect();
+  });
+
   $effect(() => {
     if (!open) return;
     const onPointer = (event: PointerEvent) => {
       if (!root.contains(event.target as Node)) dismiss();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
       // Escape in a text or date field belongs to the field, such as closing a date picker.
       const target = event.target;
       if (target instanceof Element && target.closest(TEXT_FIELD)) return;
@@ -100,14 +122,14 @@
     aria-expanded={open}
     aria-controls="{uid}-popover"
     {title}
-    onclick={toggle}
+    onclick={() => (open = !open)}
   >
     {@render icon()}
     <span class="visually-hidden">{caption}:</span>
     <span class="label">{label}</span>
     <span class="caret"><Icon name="chevron-down" size={14} /></span>
   </button>
-  <div class="popover" bind:this={popover} id="{uid}-popover" role="dialog" aria-label={caption} hidden={!open} style:width>
+  <div class="popover" class:fit={!width} bind:this={popover} id="{uid}-popover" role="dialog" aria-label={caption} hidden={!open} style:width style:translate={shift ? `${shift}px` : undefined}>
     {@render children(close)}
   </div>
 </div>
@@ -171,6 +193,10 @@
     background: var(--surface);
     box-shadow: var(--shadow-popover);
     animation: fade-in var(--dur-fast) var(--ease-in);
+  }
+
+  .popover.fit {
+    width: max-content;
   }
 
   .popover[hidden] {

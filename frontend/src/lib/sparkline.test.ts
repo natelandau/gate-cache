@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sparkPath } from "./sparkline";
+import { sparkDomain, sparkPath } from "./sparkline";
 
 const ys = (path: string) => [...path.matchAll(/[ML]\s*[\d.]+\s+([\d.]+)/g)].map((m) => Number(m[1]));
 
@@ -50,5 +50,14 @@ describe("sparkPath", () => {
     const { area } = sparkPath([-10, 10], 200, 34);
     expect(area).not.toContain(" 34 ");
     expect(area).not.toMatch(/L\d+ 34\b/);
+  });
+
+  it("draws series that share a domain on one scale", () => {
+    const series = [[0, 10], [0, 5]];
+    const domain = sparkDomain(series);
+    const [ran, failed] = series.map((values) => ys(sparkPath(values, 200, 34, domain).line));
+    expect(ran![0]).toBe(failed![0]);
+    // Half the peak sits halfway between the zero line and the peak.
+    expect(failed![1]).toBeCloseTo((ran![0]! + ran![1]!) / 2, 0);
   });
 });

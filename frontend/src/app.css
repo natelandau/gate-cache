@@ -72,6 +72,7 @@
   --topbar-height: 52px;
   --sidebar-width: 220px;
   --content-max: 1480px;
+  --picker-min-width: 280px;
   --radius-control: 6px;
   --radius-card: 10px;
   --radius-chip: 4px;
@@ -292,6 +293,20 @@ code {
 .num {
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+/* A list drawn as rows or cards, with no bullets or indent. */
+.bare-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A bordered block on the page surface, such as a Triage card. */
+.outlined {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
 }
 
 

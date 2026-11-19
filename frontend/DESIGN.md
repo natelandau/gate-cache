@@ -10,8 +10,8 @@ The dashboard is an operations tool that people open many times a day. These pri
 
 - Data comes first. Every card earns its space with a number, a chart, or a table. Do not add hero sections or decorative images.
 - One typeface. Every string is Geist, with tabular figures for numbers. Do not use a monospace face, not even for tree hashes, durations, or commands. One table column never mixes faces.
-- Freshness and filters are always visible. Every page reads the global date range and the global repo filter, and the top bar shows when the data last updated. Page-local filters, such as the Activity outcome, reason, and Breakdown row and the days picked on the Overview, live only in the hash route. They are not saved, and other pages ignore them. Each one shows as a `FilterChip` that removes it.
-- A chart mark or count that stands for a set of runs is a way into those runs. A day on a chart scopes the Overview, and a count links to Activity filtered to exactly those runs. Build the link with `activityHref` in `src/lib/router.svelte.ts`, and keep the day selection logic in `src/lib/selection.ts`.
+- Freshness and filters are always visible. Every page reads the global date range and the global repo filter, and the top bar shows when the data last updated. Page-local filters, such as the Activity outcomes, reasons, and Breakdown row and the days picked on the Overview, live only in the hash route. They are not saved, and other pages ignore them. Each one shows as a `FilterChip` that removes it.
+- A chart mark or count that stands for a set of runs is a way into those runs. A day on a chart scopes the Overview, and a count links to Activity filtered to exactly those runs. Build the link with `activityHref` in `src/lib/router.svelte.ts`, and keep the day selection logic in `src/lib/selection.ts`. The cells of the weekday and hour heatmap are the one exception and link nowhere.
 - Familiar controls win over new ones. Use native `<select>`, radio buttons, and buttons, styled with tokens.
 - Every control is reachable with the keyboard and shows a visible focus ring.
 - Light and dark themes are equal. Check every change in both. The theme button in the top bar switches between System (the default), Light, and Dark.
@@ -46,7 +46,7 @@ Use the type tokens, never a pixel size in a component. Weights are 400, 500, an
 
 Every table column header takes the `col-head` class from `src/app.css`: one step larger than the cells (`--text-md` against `--text-sm`) and weight 600. Change header type there, never in a table component.
 
-In a headline value, set units such as `h`, `m`, `s`, and `%` smaller and muted. Render the value with `UnitValue`, which splits it with `valueParts` in `src/lib/format.ts`.
+In a headline value, set units such as `h`, `m`, `s`, and `%` smaller and muted. Render the value with `UnitValue`, which splits it with `valueParts` in `src/lib/format.ts`. A card that shows two counts, such as "21 ran" and "6 failed", stacks them one per line. Give `StatStrip` its value as a list of parts: each part has a number, a word set like a unit, and an optional tone.
 
 ## Surfaces and space
 
@@ -65,6 +65,7 @@ Cards are raised with the `--ring` shadow, not a border. A card that is a link o
 | `--row-height`     | 34px  | Table rows and navigation items             |
 | `--control-height` | 32px  | Buttons, selects, and the top bar controls  |
 | `--content-max`    | 1480px | The widest the main column grows           |
+| `--picker-min-width` | 280px | The narrowest a Filter menu picker gets   |
 
 Space comes from `--space-1` (4px) through `--space-6` (32px). The Overview lays out modules on a 12-column grid with a 16px gap. Modules in one row stretch to the same height.
 
@@ -151,7 +152,8 @@ Use an existing component before you write markup of your own. If a page needs a
 | A change, such as "+6%" or "slower by 20%"           | `TrendBadge`                      |
 | A value with smaller units, such as "6h 38m"         | `UnitValue`                       |
 | A thin inline bar for a row's share                   | `Meter`                           |
-| A page-local filter that the user can remove          | `FilterChip`                      |
+| A page-local filter that the user can remove, and reopen with `onedit` | `FilterChip`     |
+| A pick of any number of values, with search when long | `CheckList`                       |
 | A labeled choice from a short list, such as a filter  | `Select` (a native `<select>`)    |
 | A command                                             | `Button` (`accent` for at most one control per view) |
 | A one-line message above page content                 | `Notice` (`info`, `warning`, `error`) |

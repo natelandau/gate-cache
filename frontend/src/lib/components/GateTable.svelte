@@ -138,6 +138,13 @@
     },
     { key: "failures", label: "Failures", align: "right", cell: failuresCell },
     {
+      key: "spot_checks",
+      label: TERMS.spotChecks.column,
+      align: "right",
+      cell: spotChecksCell,
+      info: TERMS.spotChecks.about,
+    },
+    {
       key: "fail_time",
       label: "Lost to failures",
       align: "right",
@@ -163,6 +170,11 @@
 
 {#snippet failuresCell(g: GateRow)}
   <span class:danger={g.failures > 0}>{formatCount(g.failures)}</span>
+{/snippet}
+
+{#snippet spotChecksCell(g: GateRow)}
+  {formatCount(g.spot_checks)}{#if g.spot_check_failures > 0}
+    <span class="danger">({formatCount(g.spot_check_failures)} failed)</span>{/if}
 {/snippet}
 
 <DataTable

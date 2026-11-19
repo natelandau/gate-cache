@@ -41,28 +41,4 @@ describe("HourHeatmap", () => {
     expect(body.match(/<th scope="row">/g)?.length).toBe(7);
     expect(body.match(/<th scope="col">/g)?.length).toBe(25);
   });
-
-  it("stays static without links", () => {
-    const { body } = render(HourHeatmap, { props: { cells, metric: "runs" } });
-    expect(body).not.toContain("<a ");
-  });
-
-  it("links every cell with runs, with one tab stop and a spoken name", () => {
-    const { body } = render(HourHeatmap, {
-      props: { cells, metric: "runs", href: (w: number, h: number) => `#/activity?weekday=${w}&hour=${h}` },
-    });
-    expect(body.match(/<a /g)?.length).toBe(2);
-    expect(body.match(/tabindex="0"/g)?.length).toBe(1);
-    expect(body).toContain('href="#/activity?weekday=1&amp;hour=9"');
-    const monday = new Date(1970, 0, 5).toLocaleString(undefined, { weekday: "long" });
-    expect(body).toContain(`aria-label="${monday} 09:00, Gate calls: 8. Open in Activity"`);
-  });
-
-  it("links only the cells whose shown value is not zero", () => {
-    const { body } = render(HourHeatmap, {
-      props: { cells, metric: "fail", href: (w: number, h: number) => `#/activity?weekday=${w}&hour=${h}` },
-    });
-    expect(body.match(/<a /g)?.length).toBe(1);
-    expect(body).toContain('href="#/activity?weekday=3&amp;hour=14"');
-  });
 });

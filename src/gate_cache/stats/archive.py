@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 RETENTION_DAYS = 365
 TEST_RETENTION_DAYS = 90
 # How long a per-run test file may wait for its event, or a temp file for its rename, before
@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS events (
     reported INTEGER NOT NULL DEFAULT 0,
     wait_timed_out INTEGER NOT NULL DEFAULT 0,
     event_uid TEXT,
+    spot_check INTEGER NOT NULL DEFAULT 0,
     {_GATE_COLUMN}
 );
 CREATE INDEX IF NOT EXISTS events_repo_ts ON events (repo, ts);
@@ -97,8 +98,8 @@ CREATE INDEX IF NOT EXISTS test_results_event_id ON test_results (event_id);
 _INSERT = (
     "INSERT OR IGNORE INTO events "
     "(line_hash, ts, repo, name, tree, paths, outcome, duration, saved, exit_code, reason, raw,"
-    " overhead, waited, wait_known, reported, wait_timed_out, event_uid) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    " overhead, waited, wait_known, reported, wait_timed_out, event_uid, spot_check) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 # Columns added after version 1, which an older archive fills from the raw line of each row.
@@ -111,6 +112,7 @@ _ADDED_COLUMNS = (
     ("reported", "INTEGER NOT NULL DEFAULT 0"),
     ("wait_timed_out", "INTEGER NOT NULL DEFAULT 0"),
     ("event_uid", "TEXT"),
+    ("spot_check", "INTEGER NOT NULL DEFAULT 0"),
 )
 _WAIT_VERSION = 3
 _BACKFILL_WAIT = (
@@ -121,6 +123,13 @@ _UID_VERSION = 5
 _BACKFILL_UID = (
     "UPDATE events SET event_uid = json_extract(raw, '$.id')"
     " WHERE event_uid IS NULL AND json_valid(raw) AND json_type(raw, '$.id') = 'text'"
+)
+# An older gate-cache can ingest a newer event and drop the flag, so migration fills the
+# column from each row's raw line.
+_SPOT_CHECK_VERSION = 6
+_BACKFILL_SPOT_CHECK = (
+    "UPDATE events SET spot_check = 1 WHERE spot_check = 0 AND raw IS NOT NULL"
+    " AND CASE WHEN json_valid(raw) THEN json_type(raw, '$.spot_check') END = 'true'"
 )
 _BACKFILL_BATCH = 1000
 # The per-test cutoff of the last prune, below which no event holds results.
@@ -273,6 +282,7 @@ def _row(raw: bytes) -> tuple[Any, ...] | None:
         text,
         *_wait_fields(data),
         _event_uid(data),
+        data.get("spot_check") is True,
     )
 
 
@@ -325,6 +335,8 @@ def _migrate(connection: sqlite3.Connection, *, stored: int | None) -> None:
         _backfill(connection, update=_BACKFILL_WAIT, fields=_wait_fields)
     if stored is None or stored < _UID_VERSION:
         connection.execute(_BACKFILL_UID)
+    if stored is None or stored < _SPOT_CHECK_VERSION:
+        connection.execute(_BACKFILL_SPOT_CHECK)
 
 
 def _backfill(

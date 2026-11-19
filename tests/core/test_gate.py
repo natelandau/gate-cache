@@ -1,6 +1,7 @@
 """Tests for the cached gate flow, status, and clear."""
 
 import contextlib
+import functools
 import json
 import os
 import re
@@ -18,6 +19,8 @@ from gate_cache import gate as gate_module
 from gate_cache import scratch
 from gate_cache.durations import DURATIONS_DIRNAME, durations_dir, durations_path, usual_duration
 from gate_cache.gate import (
+    SPOT_CHECK_FAILED_NOTICE,
+    SPOT_CHECK_NOTICE,
     USUAL_DURATION_NOTICE,
     clear_cache,
     disabled_reason,
@@ -25,10 +28,19 @@ from gate_cache.gate import (
     marker_max_age_days,
     run_gate,
 )
-from gate_cache.gate_lock import HELD_ENV, LOCK_DIRNAME, GateLock, Holder, lock_path, read_holder
+from gate_cache.gate_lock import (
+    HELD_ENV,
+    LOCK_DIRNAME,
+    GateLock,
+    Holder,
+    held_env,
+    lock_path,
+    read_holder,
+)
 from gate_cache.markers import marker_dir, marker_path, miss_path, write_marker, write_miss
 from gate_cache.runner import ChildResult
 from gate_cache.snapshot import Snapshot, take_snapshot
+from gate_cache.spot_check import SPOT_CHECK_ENV, SpotCheck, decide
 from gate_cache.stats import junit
 from gate_cache.wait_settings import FailedBehavior, WaitSettings
 from tests.conftest import Counter, git, hide_common_dir, markers, misses, read_records
@@ -1376,12 +1388,29 @@ def test_waits_then_runs_when_other_run_failed(
     assert len(markers(git_repo)) == 1
 
 
+@pytest.mark.parametrize("holder", ["failed run", "failed spot check"])
 def test_report_returns_other_runs_exit_code(
-    git_repo: Path, counter: Counter, other_run: OtherRun, capfd: pytest.CaptureFixture[str]
+    git_repo: Path,
+    counter: Counter,
+    other_run: OtherRun,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    holder: str,
 ) -> None:
     """Verify report exits with the awaited run's exit code and does not run."""
     snap, path = _current_lock()
-    with other_run(path, then=lambda: _write_miss(snap, 3)):
+
+    def failed_spot_check() -> None:
+        _write_marker(snap)
+        # The test holds the lock on the holder run's behalf.
+        with held_env(path):
+            run_gate(NAME, ["holder"], spot_check=True)
+
+    monkeypatch.setattr(
+        "gate_cache.gate.run_child", lambda _argv: ChildResult(3, interrupted=False)
+    )
+    then = failed_spot_check if holder == "failed spot check" else lambda: _write_miss(snap, 3)
+    with other_run(path, then=then):
         code = run_gate(NAME, counter.argv(), wait=WaitSettings(failed="report"))
 
     assert code == 3
@@ -1836,10 +1865,6 @@ def _report_command(report: Path, *, tests: int = 2, exit_code: int = 0) -> list
     return [sys.executable, "-c", _REPORT_SCRIPT, str(report), str(tests), str(exit_code)]
 
 
-def _events(state: Path) -> list[dict[str, object]]:
-    return [json.loads(line) for line in (state / "events.jsonl").read_text().splitlines()]
-
-
 @pytest.mark.parametrize("tests", [3, 0])
 def test_junit_results_recorded(
     git_repo: Path, stats_on: None, stats_dirs: tuple[Path, Path], tests: int
@@ -1851,7 +1876,7 @@ def test_junit_results_recorded(
     report = git_repo / "report.xml"
     assert run_gate(NAME, _report_command(report, tests=tests), junit=["report.xml"]) == 0
 
-    (event,) = _events(stats_dirs[1])
+    (event,) = _events(stats_dirs)
     assert event["junit"] == tests
     assert "junit_truncated" not in event
     assert "junit_problem" not in event
@@ -1871,7 +1896,7 @@ def test_junit_partial_read_records_the_problem(
 
     assert run_gate(NAME, _report_command(report), junit=[report, tmp_path / "gone.xml"]) == 0
 
-    (event,) = _events(stats_dirs[1])
+    (event,) = _events(stats_dirs)
     assert event["junit"] == 2
     assert event["junit_problem"] == "missing"
 
@@ -1889,7 +1914,7 @@ def test_junit_stale_report_on_crash(
 
     assert run_gate(NAME, counter.argv(exit_code=3), junit=[report]) == 3
 
-    (event,) = _events(stats_dirs[1])
+    (event,) = _events(stats_dirs)
     assert event["exit_code"] == 3
     assert event["junit"] == "stale"
     assert not (stats_dirs[1] / "tests").exists()
@@ -1913,7 +1938,7 @@ def test_junit_errors_never_change_exit_code(
 
     assert run_gate(NAME, _report_command(report, exit_code=4), junit=[report]) == 4
 
-    (event,) = _events(stats_dirs[1])
+    (event,) = _events(stats_dirs)
     assert event["outcome"] == "fail"
     assert event["exit_code"] == 4
     assert event["junit"] is None
@@ -1948,7 +1973,7 @@ def test_skip_reads_no_report(
     run_gate(NAME, command, junit=[report])
     run_gate(NAME, command, junit=[report])
 
-    ran, skipped = _events(stats_dirs[1])
+    ran, skipped = _events(stats_dirs)
     assert skipped["outcome"] == "skip"
     assert skipped["junit"] is None
     assert [p.stem for p in (stats_dirs[1] / "tests").iterdir()] == [ran["id"]]
@@ -1967,7 +1992,279 @@ def test_junit_recorded_for_uncached_run(
 
     assert run_gate(NAME, _report_command(report), junit=[report]) == 0
 
-    (event,) = _events(stats_dirs[1])
+    (event,) = _events(stats_dirs)
     assert event["outcome"] == "uncached"
     assert event["junit"] == 2
     assert (stats_dirs[1] / "tests" / f"{event['id']}.json").exists()
+
+
+@pytest.fixture
+def spot_check_due(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every run roll a spot check at a rate of 1 in 50."""
+    monkeypatch.setattr(
+        gate_module, "decide", lambda **_: SpotCheck(due=True, forced=False, one_run_in=50)
+    )
+
+
+def _events(stats_dirs: tuple[Path, Path]) -> list[dict[str, object]]:
+    """Return the stats events recorded so far."""
+    inbox = stats_dirs[1] / "events.jsonl"
+    if not inbox.exists():
+        return []
+    return [json.loads(line) for line in inbox.read_text().splitlines()]
+
+
+@pytest.mark.parametrize(("forced", "rate"), [(False, "1 in 50"), (True, "requested")])
+def test_spot_check_runs_a_would_be_skip(
+    git_repo: Path,
+    counter: Counter,
+    request: pytest.FixtureRequest,
+    capfd: pytest.CaptureFixture[str],
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+    forced: bool,
+    rate: str,
+) -> None:
+    """Verify a spot check runs the command where a skip would, and keeps a fresh marker."""
+    run_gate(NAME, counter.argv())
+    capfd.readouterr()
+    if not forced:
+        request.getfixturevalue("spot_check_due")
+    snap = take_snapshot()
+
+    assert run_gate(NAME, counter.argv(), spot_check=forced) == 0
+
+    assert counter.count == 2
+    assert len(markers(git_repo)) == 1
+    assert (
+        SPOT_CHECK_NOTICE.format(name=NAME, label=snap.label, rate=rate) in capfd.readouterr().err
+    )
+    first, spot = _events(stats_dirs)
+    assert "spot_check" not in first
+    assert spot["outcome"] == "pass"
+    assert spot["spot_check"] is True
+    assert spot["saved"] is None
+
+
+def test_failed_spot_check_deletes_marker_and_fails(
+    git_repo: Path,
+    counter: Counter,
+    spot_check_due: None,
+    capfd: pytest.CaptureFixture[str],
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify a failed spot check exits with its code, records a miss, and drops the pass."""
+    run_gate(NAME, counter.argv())
+    snap = take_snapshot()
+
+    assert run_gate(NAME, counter.argv(exit_code=3)) == 3
+
+    assert markers(git_repo) == []
+    assert [record["exit_code"] for record in read_records(misses(git_repo))] == [3]
+    assert SPOT_CHECK_FAILED_NOTICE.format(name=NAME, label=snap.label) in capfd.readouterr().err
+    assert _events(stats_dirs)[-1]["spot_check"] is True
+    run_gate(NAME, counter.argv())
+    assert counter.count == 3
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_failed_spot_check_keeps_exit_code_when_pass_cannot_be_removed(
+    git_repo: Path, counter: Counter, spot_check_due: None, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a marker that cannot be deleted warns and keeps the command's exit code."""
+    run_gate(NAME, counter.argv())
+    directory = marker_dir(git_repo / ".git")
+    directory.chmod(0o500)
+    try:
+        assert run_gate(NAME, counter.argv(exit_code=3)) == 3
+    finally:
+        directory.chmod(0o700)
+    assert "gate-cache: warning: could not remove pass: " in capfd.readouterr().err
+
+
+def test_unrecorded_spot_check_deletes_marker(
+    git_repo: Path,
+    counter: Counter,
+    spot_check_due: None,
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify a spot check that changes the keyed files leaves no pass behind."""
+    run_gate(NAME, counter.argv())
+
+    assert run_gate(NAME, counter.argv(touch=git_repo / "a.txt")) == 0
+
+    assert markers(git_repo) == []
+    assert _events(stats_dirs)[-1]["outcome"] == "pass_unrecorded"
+
+
+def test_interrupted_spot_check_keeps_marker(
+    git_repo: Path,
+    counter: Counter,
+    spot_check_due: None,
+    monkeypatch: pytest.MonkeyPatch,
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify an interrupted spot check changes nothing, so the next run still skips."""
+    run_gate(NAME, counter.argv())
+    monkeypatch.setattr(
+        "gate_cache.gate.run_child", lambda _argv: ChildResult(130, interrupted=True)
+    )
+
+    assert run_gate(NAME, counter.argv()) == 130
+
+    assert len(markers(git_repo)) == 1
+    assert len(_events(stats_dirs)) == 1
+
+
+@pytest.mark.parametrize("marker_before_wait", [True, False])
+def test_spot_check_after_wait_runs(
+    git_repo: Path,
+    counter: Counter,
+    spot_check_due: None,
+    other_run: OtherRun,
+    capfd: pytest.CaptureFixture[str],
+    marker_before_wait: bool,
+) -> None:
+    """Verify a pass found before or after the wait leads to one spot check, announced once."""
+    snap, path = _current_lock()
+    if marker_before_wait:
+        _write_marker(snap)
+    with other_run(path, then=None if marker_before_wait else lambda: _write_marker(snap)):
+        assert run_gate(NAME, counter.argv()) == 0
+
+    assert counter.count == 1
+    assert capfd.readouterr().err.count("spot-checking") == 1
+
+
+def test_spot_check_key_change_during_wait_is_ordinary(
+    git_repo: Path,
+    counter: Counter,
+    spot_check_due: None,
+    other_run: OtherRun,
+    capfd: pytest.CaptureFixture[str],
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify a run whose content changed while waiting runs as usual and keeps the old pass."""
+    snap, path = _current_lock()
+    _write_marker(snap)
+    old = markers(git_repo)
+
+    with other_run(path, then=lambda: (git_repo / "a.txt").write_text("edited while waiting\n")):
+        assert run_gate(NAME, counter.argv(exit_code=3)) == 3
+
+    assert markers(git_repo) == old
+    assert "spot-checking" not in capfd.readouterr().err
+    event = _events(stats_dirs)[-1]
+    assert event["outcome"] == "fail"
+    assert "spot_check" not in event
+
+
+def test_pass_removed_during_wait_is_ordinary(
+    git_repo: Path,
+    counter: Counter,
+    spot_check_due: None,
+    other_run: OtherRun,
+    capfd: pytest.CaptureFixture[str],
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify a pass another run deleted while this one waited leaves an ordinary run."""
+    snap, path = _current_lock()
+    _write_marker(snap)
+
+    with other_run(path, then=lambda: markers(git_repo)[0].unlink()):
+        assert run_gate(NAME, counter.argv()) == 0
+
+    assert "spot-checking" not in capfd.readouterr().err
+    assert "spot_check" not in _events(stats_dirs)[-1]
+
+
+def test_spot_check_flag_without_marker_is_ordinary(
+    git_repo: Path, counter: Counter, stats_on: None, stats_dirs: tuple[Path, Path]
+) -> None:
+    """Verify the flag on content with no recorded pass runs as an ordinary run."""
+    assert run_gate(NAME, counter.argv(), spot_check=True) == 0
+
+    assert len(markers(git_repo)) == 1
+    assert "spot_check" not in _events(stats_dirs)[0]
+
+
+@pytest.mark.parametrize("where", ["disabled", "outside a repository"])
+def test_spot_check_flag_when_disabled_runs_uncached(
+    git_repo: Path,
+    tmp_path: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    stats_on: None,
+    stats_dirs: tuple[Path, Path],
+    where: str,
+) -> None:
+    """Verify the flag runs uncached, unflagged, when caching cannot apply."""
+    if where == "disabled":
+        monkeypatch.setenv("GATE_CACHE_DISABLE", "1")
+    else:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        monkeypatch.chdir(outside)
+
+    assert run_gate(NAME, counter.argv(), spot_check=True) == 0
+
+    assert "spot-checking" not in capfd.readouterr().err
+    event = _events(stats_dirs)[0]
+    assert event["outcome"] == "uncached"
+    assert "spot_check" not in event
+
+
+def test_spot_check_setting_read_only_on_a_recorded_pass(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """Verify an invalid rate warns only on a run that finds a pass, never on one that runs."""
+    monkeypatch.setenv(SPOT_CHECK_ENV, "abc")
+
+    run_gate(NAME, counter.argv())
+    assert SPOT_CHECK_ENV not in capfd.readouterr().err
+    run_gate(NAME, counter.argv())
+    assert SPOT_CHECK_ENV in capfd.readouterr().err
+
+
+def test_rate_zero_never_spot_checks(
+    git_repo: Path,
+    counter: Counter,
+    monkeypatch: pytest.MonkeyPatch,
+    stats_dirs: tuple[Path, Path],
+) -> None:
+    """Verify a rate of 0 in the config file skips even on the luckiest roll."""
+    config_file = stats_dirs[0]
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text("spot_check_one_run_in = 0\n", encoding="utf-8")
+    monkeypatch.delenv(SPOT_CHECK_ENV)
+    monkeypatch.setattr(gate_module, "decide", functools.partial(decide, chance=lambda: 0.0))
+
+    run_gate(NAME, counter.argv())
+    assert run_gate(NAME, counter.argv()) == 0
+
+    assert counter.count == 1
+
+
+def test_spot_check_reads_junit_reports(
+    git_repo: Path, tmp_path: Path, stats_on: None, stats_dirs: tuple[Path, Path]
+) -> None:
+    """Verify a spot check stores the tests its report lists, like any run of the command."""
+    report = tmp_path / "report.xml"
+    run_gate(NAME, _report_command(report), junit=[report])
+
+    assert run_gate(NAME, _report_command(report), junit=[report], spot_check=True) == 0
+
+    _, spot = _events(stats_dirs)
+    assert spot["spot_check"] is True
+    assert spot["junit"] == 2
+    assert (stats_dirs[1] / "tests" / f"{spot['id']}.json").exists()

@@ -200,10 +200,10 @@ def test_stats_failure_is_invisible(
         out, err = capfd.readouterr()
         return codes, out.replace(prefix, "NAME"), err.replace(prefix, "NAME")
 
-    config_file.write_text("[stats]\nenabled = false\n", encoding="utf-8")
+    config_file.write_text("stats_enabled = false\n", encoding="utf-8")
     baseline = run_all("base")
 
-    config_file.write_text("[stats]\nenabled = true\n", encoding="utf-8")
+    config_file.write_text("stats_enabled = true\n", encoding="utf-8")
     state.parent.mkdir(parents=True, exist_ok=True)
     if breakage == "readonly_state":
         state.mkdir(mode=0o500)
@@ -337,7 +337,7 @@ def test_gate_path_does_not_load_dashboard(
     """Running a gate never imports the archive, queries, or dashboard modules."""
     config_file, state = stats_dirs
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(f"[stats]\nenabled = {str(enabled).lower()}\n", encoding="utf-8")
+    config_file.write_text(f"stats_enabled = {str(enabled).lower()}\n", encoding="utf-8")
     script = (
         "import sys\n"
         "from pathlib import Path\n"

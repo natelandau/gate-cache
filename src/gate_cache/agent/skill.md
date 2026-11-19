@@ -28,7 +28,9 @@ The saved time in parentheses is how long the command ran when it passed.
 
 When the command runs, gate-cache exits with the exit code of the command. It exits 127 when the command is not found, 126 when it cannot run, and 128 plus N when signal N stops it. A usage error exits 2 and runs nothing.
 
-A waiting run happens when two runs of the same gate and content overlap, for example two agents in two worktrees. The wait lasts at most 15 minutes by default. `--wait-timeout SECONDS` and `--on-wait-failure rerun|report` change the behavior, and the `[wait]` table of the config file sets them for every run. The flags win over the config file. Waiting works on macOS and Linux only.
+A waiting run happens when two runs of the same gate and content overlap, for example two agents in two worktrees. The wait lasts at most 15 minutes by default. `--wait-timeout SECONDS` and `--on-wait-failure rerun|report` change the behavior, and the `wait_timeout` and `wait_on_failure` keys of the config file set them for every run. The flags win over the config file. Waiting works on macOS and Linux only.
+
+About one run in 50 of a gate that would skip runs the command anyway, as a spot check that the skip is still right. The `spot_check_one_run_in` key of the config file sets the rate for every run, and `GATE_CACHE_SPOT_CHECK_ONE_RUN_IN` sets it for one shell. `0` turns spot checks off.
 
 ## Run checks in a repository that uses gate-cache
 
@@ -78,7 +80,7 @@ gate-cache --name go-test --junit reports/go.xml -- gotestsum --junitfile report
 
 The syntax is `gate-cache [--name NAME] [--path PATHSPEC]... [--junit PATH]... -- COMMAND [ARGS...]`.
 
-- `--` is required. Only `--name`, `--path`, `--junit`, `--wait-timeout`, and `--on-wait-failure` can come before it, each as `--name VALUE` or `--name=VALUE`.
+- `--` is required. Only `--name`, `--path`, `--junit`, `--wait-timeout`, `--on-wait-failure`, and `--spot-check` can come before it. Each takes a value as `--name VALUE` or `--name=VALUE`, except `--spot-check`, which takes none.
 - Everything after `--` is the command, exactly as given. gate-cache does not use a shell. To use a pipe or `&&`, put the command in a script or use `sh -c '...'`.
 - If the repository already runs the command from a script, a package script, or a task-runner recipe, put gate-cache there. Then the terminal, the git hooks, and agents all run the same gate and share its markers. Do not wrap the same command in two places. Do not add a task runner that the repository does not use.
 
@@ -208,5 +210,5 @@ After you add or change a gate, do these steps to make sure that it works:
 - Never put a secret in a gate name or in the command line of a gate without `--name`.
 - A line that ends with `waiting` is normal. Never kill the run, and never run the tool directly to avoid the wait.
 - A wait can last as long as the wait timeout, 15 minutes by default. If your tool stops a command sooner, run the gate in the background or increase the time limit of the tool. You can also give a smaller `--wait-timeout`.
-- Never edit or delete files in `.git/gate-cache-locks/`. Never change `[wait]` settings or add `--wait-timeout 0` unless the user asks.
+- Never edit or delete files in `.git/gate-cache-locks/`. Never change the `wait_timeout` or `wait_on_failure` settings or add `--wait-timeout 0` unless the user asks.
 - When a gate skips, do not run the tool another way to confirm the result.

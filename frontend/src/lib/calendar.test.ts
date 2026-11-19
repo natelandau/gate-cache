@@ -19,7 +19,8 @@ const bucket = (day: string, runs: number): DayBucket => ({
   spent: 0,
   skips: 0,
   ran: 0,
-  cost: 0,
+  spot_checks: 0,
+  spot_check_failures: 0,
 });
 
 describe("calendarLayout", () => {

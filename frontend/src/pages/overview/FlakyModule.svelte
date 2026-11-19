@@ -8,7 +8,7 @@
   - `span`: page-local days the overview is scoped to, if any
 -->
 <script lang="ts">
-  import { getFlaky, spanScope, type FlakyGate } from "../../lib/api";
+  import { getTriage, spanScope, type FlakyItem } from "../../lib/api";
   import Badge from "../../lib/components/Badge.svelte";
   import DataTable from "../../lib/components/DataTable.svelte";
   import Module from "../../lib/components/Module.svelte";
@@ -31,29 +31,30 @@
   let { repoLabel, span }: Props = $props();
 
   const query = createQuery(
-    (signal) => getFlaky({ signal, scope: spanScope(span) }),
+    (signal) => getTriage({ signal, scope: spanScope(span), reason: "flaky" }),
     () => span,
   );
 
-  const rows = $derived(topFlaky(query.data?.gates ?? []));
+  const rows = $derived(topFlaky(query.data?.items ?? []));
 
   function treeText(count: number): string {
     return `${formatCount(count)} flaky ${count === 1 ? "tree" : "trees"}`;
   }
 </script>
 
-{#snippet trees(gate: FlakyGate)}
+{#snippet trees(gate: FlakyItem)}
+  {@const count = gate.evidence.trees.length}
   <a
     class="trees"
     href={activityHref({ gate: { repo: gate.repo, name: gate.name }, flaky: true }, span)}
-    aria-label="{treeText(gate.tree_count)} for {gate.name}. Open their runs in Activity"
+    aria-label="{treeText(count)} for {gate.name}. Open their runs in Activity"
   >
-    <Badge tone="flaky" title={treeText(gate.tree_count)}>{formatCount(gate.tree_count)}</Badge>
+    <Badge tone="flaky" title={treeText(count)}>{formatCount(count)}</Badge>
   </a>
 {/snippet}
 
 <Module
-  more={{ href: href({ page: "flaky" }), label: "All flaky gates" }}
+  more={{ href: href({ page: "triage", reason: "flaky" }), label: "All flaky gates" }}
   title="Flaky gates"
   titleId="flaky-gates-title"
   loading={query.loading && !query.data}
@@ -70,7 +71,7 @@
     columns={[
       { key: "name", label: "Gate", sortable: false },
       { key: "repo_name", label: "Repo", sortable: false, title: (g) => g.repo ?? undefined },
-      { key: "tree_count", label: "Flaky trees", align: "right", sortable: false, cell: trees },
+      { key: "trees", label: "Flaky trees", align: "right", sortable: false, cell: trees },
     ]}
     onRowClick={(g) => openGatePanel(g)}
     rowLabel={(g) => `Open ${g.name}`}

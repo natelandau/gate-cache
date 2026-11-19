@@ -1,6 +1,6 @@
 /** Rankings and shares for the homepage modules. */
 
-import type { FlakyGate, GateRow } from "./api";
+import type { FlakyItem, GateRow, TriageItem } from "./api";
 import { formatDuration } from "./format";
 
 /** What Top gates ranks by: time saved, time spent, runs, failures, or median passing run time. */
@@ -42,11 +42,11 @@ export function rankGates(rows: GateRow[], by: GateRank, limit = 8): GateRow[] {
     .slice(0, limit);
 }
 
-/** Return the `limit` gates with the most flaky trees, ties by name; gates with none are left out. */
-export function topFlaky(gates: FlakyGate[], limit = 5): FlakyGate[] {
-  return gates
-    .filter((g) => g.tree_count > 0)
-    .sort((a, b) => b.tree_count - a.tree_count || byName(a, b))
+/** Return the `limit` flaky gates among triage rows with the most flaky trees, ties by name; gates with none are left out. */
+export function topFlaky(items: TriageItem[], limit = 5): FlakyItem[] {
+  return items
+    .filter((item): item is FlakyItem => item.reason === "flaky" && item.evidence.trees.length > 0)
+    .sort((a, b) => b.evidence.trees.length - a.evidence.trees.length || byName(a, b))
     .slice(0, limit);
 }
 

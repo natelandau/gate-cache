@@ -4,7 +4,7 @@
  */
 
 import type { QueryScope } from "./api";
-import { parseDay, rangeLabel, resolveRange, type RangeSpec } from "./range";
+import { localDay, parseDay, rangeLabel, resolveRange, type RangeSpec } from "./range";
 import { nowSeconds } from "./state.svelte";
 
 /** A run of local days, both ends included, as `YYYY-MM-DD`. */
@@ -143,4 +143,23 @@ export function spanAt(days: { day: string }[], range: [number, number] | null):
   const from = range ? days[range[0]]?.day : undefined;
   const to = range ? days[range[1]]?.day : undefined;
   return from && to ? spanOf(from, to) : undefined;
+}
+
+/** Return the first and last day, as `YYYY-MM-DD`, that `range` allows at `now`. `min` is unset for an open start. */
+export function rangeDays(range: RangeSpec, now: Date): { min?: string; max: string } {
+  const { from, to } = resolveRange(range, now);
+  // A custom range's end is exclusive midnight, so the last day it covers is just before it.
+  const last = new Date(Math.min(to ?? Infinity, now.getTime() / 1000) * 1000 - (to === undefined ? 0 : 1000));
+  return { min: from === undefined ? undefined : localDay(new Date(from * 1000)), max: localDay(last) };
+}
+
+/**
+ * Return the span two date inputs describe. An empty `to` means the same day as `from`.
+ * Return undefined for a missing or invalid day, `from` after `to`, or a day outside `min`..`max`.
+ */
+export function spanFromInputs(from: string, to: string, min?: string, max?: string): DaySpan | undefined {
+  const end = to === "" ? from : to;
+  if (!isDay(from) || !isDay(end) || from > end) return undefined;
+  if ((min !== undefined && from < min) || (max !== undefined && end > max)) return undefined;
+  return { from, to: end };
 }

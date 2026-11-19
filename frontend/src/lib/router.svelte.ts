@@ -5,10 +5,11 @@
  * - `#/overview` (also the default for an empty or unknown hash), with an optional
  *   `?from=<day>&to=<day>` span of local days
  * - `#/gates`, `#/gates/<repo>/<name>` with each part URI-encoded and `-` for the unknown repo
- * - `#/activity`, with optional `outcome`, `reason`, `from`, `to`, `weekday`, `hour`, `gate`,
- *   `gate_repo`, and `flaky` filters, URI-encoded, and an optional Breakdown row as
- *   `group=<dimension>&key=<key>&label=<chip text>`
- * - `#/flaky`
+ * - `#/activity`, with optional `outcome`, `reason`, `from`, `to`, `gate`, `flaky`, and
+ *   `spot_check` filters, URI-encoded, and an optional Breakdown row as
+ *   `group=<dimension>&key=<key>&label=<chip text>`. `outcome`, `reason`, and `gate` repeat once
+ *   per value, and each `gate` is `<repo>\0<name>`, as in the API.
+ * - `#/triage`, with an optional `reason` filter
  *
  * Spans and activity filters are page-local: they live only in the hash. A malformed one is
  * dropped, not an error.
@@ -17,18 +18,20 @@
  * that into a repo filter. `startRouter` replaces any old `#/repos` hash with `#/overview`.
  */
 
-import type { ActivityFilter, Outcome } from "./api";
+import type { ActivityFilter, ActivityLink, GateRef, Outcome, TriageReason } from "./api";
 import { dimension, isDimension } from "./dimensions";
 import { OUTCOMES } from "./events";
+import { hasKey } from "./guards";
 import { isDay, spanOf, type DaySpan } from "./selection";
 import { setRepos } from "./state.svelte";
+import { isTriageReason } from "./triage";
 
 export type Route =
   | { page: "overview"; selectRepo?: string; span?: DaySpan }
   | { page: "gates" }
   | { page: "gate"; repo: string | null; name: string }
   | ({ page: "activity" } & ActivityFilter)
-  | { page: "flaky" };
+  | { page: "triage"; reason?: TriageReason };
 
 export type Page = Route["page"];
 
@@ -38,7 +41,7 @@ export type Page = Route["page"];
  */
 export const UNKNOWN_REPO = "-";
 
-const SIMPLE_PAGES = new Set(["overview", "gates", "activity", "flaky"]);
+const SIMPLE_PAGES = new Set(["overview", "gates", "activity", "triage"]);
 
 function decode(part: string): string | null {
   try {
@@ -48,8 +51,40 @@ function decode(part: string): string | null {
   }
 }
 
-function isOutcome(value: string | null): value is Outcome {
-  return value !== null && Object.hasOwn(OUTCOMES, value);
+function isOutcome(value: string): value is Outcome {
+  return hasKey(OUTCOMES, value);
+}
+
+/** Return the distinct values of a repeated parameter that pass `keep`, in order. */
+function listParam<T extends string>(params: URLSearchParams, key: string, keep: (value: string) => value is T): T[] {
+  return [...new Set(params.getAll(key).filter(keep))];
+}
+
+function isText(value: string): value is string {
+  return value !== "";
+}
+
+// A NUL joins a gate's repo and name, since neither a path nor a command holds one.
+const GATE_SEPARATOR = "\0";
+
+/** Return a gate as one `gate` parameter value: its repo and name joined by a NUL. */
+export function gateParam(gate: GateRef): string {
+  return `${gate.repo ?? UNKNOWN_REPO}${GATE_SEPARATOR}${gate.name}`;
+}
+
+/** Return the gate a `gate` parameter value names, or null when it lacks a repo or a name. */
+export function parseGateParam(value: string): GateRef | null {
+  const at = value.indexOf(GATE_SEPARATOR);
+  const repo = value.slice(0, at);
+  const name = value.slice(at + 1);
+  if (at === -1 || !repo || !name) return null;
+  return { repo: repo === UNKNOWN_REPO ? null : repo, name };
+}
+
+/** Return the distinct gates of repeated `gate` parameters, in order, dropping malformed ones. */
+function parseGates(params: URLSearchParams): GateRef[] {
+  const values = [...new Set(params.getAll("gate"))];
+  return values.map(parseGateParam).filter((gate) => gate !== null);
 }
 
 function parseSpan(params: URLSearchParams): DaySpan | undefined {
@@ -58,33 +93,29 @@ function parseSpan(params: URLSearchParams): DaySpan | undefined {
   return from && to && isDay(from) && isDay(to) ? spanOf(from, to) : undefined;
 }
 
-function parseBounded(text: string | null, max: number): number | undefined {
-  if (text === null || !/^\d{1,2}$/.test(text)) return undefined;
-  const value = Number(text);
-  return value <= max ? value : undefined;
-}
-
 function activityRoute(query: string): Route {
   const params = new URLSearchParams(query);
-  const outcome = params.get("outcome");
-  const reason = params.get("reason");
+  const outcome = listParam(params, "outcome", isOutcome);
+  const reason = listParam(params, "reason", isText);
   const by = params.get("group");
   const key = params.get("key");
   const span = parseSpan(params);
-  const weekday = parseBounded(params.get("weekday"), 6);
-  const hour = parseBounded(params.get("hour"), 23);
-  const gate = params.get("gate");
-  const gateRepo = params.get("gate_repo");
+  const gate = parseGates(params);
   return {
     page: "activity",
-    ...(isOutcome(outcome) ? { outcome } : {}),
-    ...(reason ? { reason } : {}),
+    ...(outcome.length ? { outcome } : {}),
+    ...(reason.length ? { reason } : {}),
     ...(isDimension(by) && key ? { group: { by, key, label: params.get("label") || dimension(by).label } } : {}),
     ...(span ? { span } : {}),
-    ...(weekday !== undefined && hour !== undefined ? { slot: { weekday, hour } } : {}),
-    ...(gate && gateRepo ? { gate: { repo: gateRepo === UNKNOWN_REPO ? null : gateRepo, name: gate } } : {}),
+    ...(gate.length ? { gate } : {}),
     ...(params.get("flaky") === "1" ? { flaky: true as const } : {}),
+    ...(params.get("spot_check") === "1" ? { spotCheck: true as const } : {}),
   };
+}
+
+function triageRoute(query: string): Route {
+  const reason = new URLSearchParams(query).get("reason");
+  return isTriageReason(reason) ? { page: "triage", reason } : { page: "triage" };
 }
 
 function overviewRoute(query: string): Route {
@@ -96,19 +127,13 @@ function overviewRoute(query: string): Route {
  * Return the query parameters of an activity filter, except its span, in the names both the
  * hash route and the API use. The API takes the span as Unix seconds, not days.
  */
-export function activityParams(filter: Omit<ActivityFilter, "span">): Record<string, string> {
-  const params: Record<string, string> = {};
+export function activityParams(filter: Omit<ActivityFilter, "span">): Record<string, string | string[]> {
+  const params: Record<string, string | string[]> = {};
   if (filter.outcome) params.outcome = filter.outcome;
   if (filter.reason) params.reason = filter.reason;
-  if (filter.slot) {
-    params.weekday = String(filter.slot.weekday);
-    params.hour = String(filter.slot.hour);
-  }
-  if (filter.gate) {
-    params.gate = filter.gate.name;
-    params.gate_repo = filter.gate.repo ?? UNKNOWN_REPO;
-  }
+  if (filter.gate) params.gate = filter.gate.map(gateParam);
   if (filter.flaky) params.flaky = "1";
+  if (filter.spotCheck) params.spot_check = "1";
   if (filter.group) {
     params.group = filter.group.by;
     params.key = filter.group.key;
@@ -121,7 +146,7 @@ function activityQuery(filter: ActivityFilter): string {
   const label = filter.group ? { label: filter.group.label } : {};
   const params = { ...activityParams(filter), ...label, ...(filter.span ?? {}) };
   return Object.entries(params)
-    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .flatMap(([key, value]) => [value].flat().map((item) => `${key}=${encodeURIComponent(item)}`))
     .join("&");
 }
 
@@ -145,6 +170,7 @@ export function parseHash(hash: string): Route {
   }
   if (head === "activity" && rest.length === 0) return activityRoute(query);
   if (head === "overview" && rest.length === 0) return overviewRoute(query);
+  if (head === "triage" && rest.length === 0) return triageRoute(query);
   if (rest.length === 0 && SIMPLE_PAGES.has(head)) return { page: head } as Route;
   return { page: "overview" };
 }
@@ -162,12 +188,24 @@ export function href(route: Route): string {
   if (route.page === "overview" && route.span) {
     return `#/overview?from=${route.span.from}&to=${route.span.to}`;
   }
+  if (route.page === "triage" && route.reason) return `#/triage?reason=${route.reason}`;
   return `#/${route.page}`;
 }
 
+/** Return the filter a link sets, with each single value as a one-item list. */
+export function linkFilter(link: ActivityLink): ActivityFilter {
+  const { outcome, reason, gate, ...rest } = link;
+  return {
+    ...rest,
+    ...(outcome ? { outcome: [outcome] } : {}),
+    ...(reason ? { reason: [reason] } : {}),
+    ...(gate ? { gate: [gate] } : {}),
+  };
+}
+
 /** Return the Activity link for a filter, narrowed to `span` when one is given. */
-export function activityHref(filter: ActivityFilter, span?: DaySpan): string {
-  return href({ page: "activity", ...filter, ...(span ? { span } : {}) });
+export function activityHref(link: ActivityLink, span?: DaySpan): string {
+  return href({ page: "activity", ...linkFilter(link), ...(span ? { span } : {}) });
 }
 
 /**

@@ -19,6 +19,7 @@ gate-cache [OPTIONS] -- COMMAND [ARGS...]
 | `--junit PATH` | With stats recording on, record the tests in this JUnit XML report, or in the `.xml` files directly in this folder, that the command writes. Give it once for each path. Read [Find slow and flaky tests](../stats/test-detail.md). |
 | `--wait-timeout SECONDS` | The longest time to wait for another run of the same gate. `0` never waits. The default is 900. |
 | `--on-wait-failure rerun\|report` | What to do when the run that this run waited for failed. `rerun` runs the command. `report` exits with the failure. The default is `rerun`. |
+| `--spot-check` | Run the command even when it already passed with the current hash, as a spot check. Read [Spot checks](../guides/spot-checks.md). |
 
 `--` is required. Only these options can come before it. gate-cache runs everything after `--` exactly as given, without a shell.
 

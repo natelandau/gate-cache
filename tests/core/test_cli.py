@@ -115,7 +115,7 @@ def test_run_without_name_uses_quoted_command(
     run_gate = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--", *command) == 0
-    run_gate.assert_called_once_with(name, command, paths=[], wait=None, junit=[])
+    run_gate.assert_called_once_with(name, command, paths=[], wait=None, junit=[], spot_check=False)
 
 
 def test_empty_command_is_usage_error(
@@ -143,7 +143,12 @@ def test_run_passes_options_through_verbatim(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--name", "x", "--", "uv", "run", "pytest", "-x", "--name", "y") == 0
     run_gate.assert_called_once_with(
-        "x", ["uv", "run", "pytest", "-x", "--name", "y"], paths=[], wait=None, junit=[]
+        "x",
+        ["uv", "run", "pytest", "-x", "--name", "y"],
+        paths=[],
+        wait=None,
+        junit=[],
+        spot_check=False,
     )
 
 
@@ -154,7 +159,9 @@ def test_double_dash_protects_subcommand_names(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(cli, "run_gate", run_gate)
     monkeypatch.setattr(cli, "gate_status", status)
     assert invoke(monkeypatch, "--name", "s", "--", "status") == 0
-    run_gate.assert_called_once_with("s", ["status"], paths=[], wait=None, junit=[])
+    run_gate.assert_called_once_with(
+        "s", ["status"], paths=[], wait=None, junit=[], spot_check=False
+    )
     status.assert_not_called()
 
 
@@ -349,7 +356,9 @@ def test_name_equals_form_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     run_gate = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--name=a", "--", "echo", "hi") == 0
-    run_gate.assert_called_once_with("a", ["echo", "hi"], paths=[], wait=None, junit=[])
+    run_gate.assert_called_once_with(
+        "a", ["echo", "hi"], paths=[], wait=None, junit=[], spot_check=False
+    )
 
 
 @pytest.mark.parametrize(
@@ -365,7 +374,7 @@ def test_wait_flags_reach_run_gate(monkeypatch: pytest.MonkeyPatch, flags: list[
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, *flags, "--", "true") == 0
     run_gate.assert_called_once_with(
-        "true", ["true"], paths=[], wait=WaitSettings(30, "report"), junit=[]
+        "true", ["true"], paths=[], wait=WaitSettings(30, "report"), junit=[], spot_check=False
     )
 
 
@@ -413,7 +422,7 @@ def test_wait_flag_after_separator_is_part_of_command(monkeypatch: pytest.Monkey
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--", "--wait-timeout", "5") == 0
     run_gate.assert_called_once_with(
-        "--wait-timeout 5", ["--wait-timeout", "5"], paths=[], wait=None, junit=[]
+        "--wait-timeout 5", ["--wait-timeout", "5"], paths=[], wait=None, junit=[], spot_check=False
     )
 
 
@@ -539,7 +548,9 @@ def test_name_starting_with_dash_is_accepted(monkeypatch: pytest.MonkeyPatch) ->
     run_gate = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--name", "-x", "--", "echo", "hi") == 0
-    run_gate.assert_called_once_with("-x", ["echo", "hi"], paths=[], wait=None, junit=[])
+    run_gate.assert_called_once_with(
+        "-x", ["echo", "hi"], paths=[], wait=None, junit=[], spot_check=False
+    )
 
 
 def test_later_double_dash_reaches_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -548,7 +559,7 @@ def test_later_double_dash_reaches_the_command(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, "--name", "x", "--", "uv", "run", "--", "pytest") == 0
     run_gate.assert_called_once_with(
-        "x", ["uv", "run", "--", "pytest"], paths=[], wait=None, junit=[]
+        "x", ["uv", "run", "--", "pytest"], paths=[], wait=None, junit=[], spot_check=False
     )
 
 
@@ -564,7 +575,9 @@ def test_path_options_reach_the_gate(monkeypatch: pytest.MonkeyPatch, args: list
     run_gate = MagicMock(return_value=0)
     monkeypatch.setattr(cli, "run_gate", run_gate)
     assert invoke(monkeypatch, *args) == 0
-    run_gate.assert_called_once_with("x", ["echo", "hi"], paths=["a", "b"], wait=None, junit=[])
+    run_gate.assert_called_once_with(
+        "x", ["echo", "hi"], paths=["a", "b"], wait=None, junit=[], spot_check=False
+    )
 
 
 @pytest.mark.parametrize(
@@ -598,7 +611,12 @@ def test_junit_options_reach_the_gate(git_repo: Path, monkeypatch: pytest.Monkey
     assert invoke(monkeypatch, *args) == 0
 
     run_gate.assert_called_once_with(
-        "echo", ["echo"], paths=[], wait=None, junit=["a.xml", "b/", "/abs/c.xml"]
+        "echo",
+        ["echo"],
+        paths=[],
+        wait=None,
+        junit=["a.xml", "b/", "/abs/c.xml"],
+        spot_check=False,
     )
 
 
@@ -723,7 +741,7 @@ def test_stats_on_reports_an_unwritable_config(
     [
         (b"[stats\n", "not valid TOML"),
         (b"\xff\xfe\x00", "not valid UTF-8"),
-        (b"stats.enabled = false\n", "safely"),
+        (b"stats_enabled.x = 1\n", "safely"),
     ],
 )
 def test_stats_on_leaves_an_uneditable_config_untouched(
@@ -793,6 +811,37 @@ def test_skill_timeout_line_matches_default_timeout_format() -> None:
     assert f"after {format_duration(DEFAULT_WAIT_TIMEOUT)}, running anyway" in cli.agent_text(
         "skill.md"
     )
+
+
+def test_spot_check_flag_reaches_run_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--spot-check before -- reaches run_gate as spot_check=True."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, "--spot-check", "--", "true") == 0
+    run_gate.assert_called_once_with(
+        "true", ["true"], paths=[], wait=None, junit=[], spot_check=True
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--spot-check", "--spot-check"], "--spot-check given more than once"),
+        (["--spot-check=1"], "put -- before the command"),
+    ],
+)
+def test_spot_check_flag_misuse_is_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    args: list[str],
+    message: str,
+) -> None:
+    """A repeated or valued --spot-check is a usage error."""
+    run_gate = MagicMock(return_value=0)
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, *args, "--", "true") == 2
+    run_gate.assert_not_called()
+    assert message in capfd.readouterr().err
 
 
 def test_hook_flag_puts_the_users_path_first(

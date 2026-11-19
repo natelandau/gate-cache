@@ -12,6 +12,7 @@ from typing import IO, Any
 import pytest
 
 from gate_cache.stats import archive as archive_module
+from gate_cache.stats import queries
 from gate_cache.stats.archive import (
     ORPHAN_GRACE_SECONDS,
     RETENTION_DAYS,
@@ -784,3 +785,66 @@ def test_unreadable_test_file_dropped_after_grace(
     arch.ingest(inbox, now=now)
     assert path.exists() is kept
     assert results(arch) == []
+
+
+def test_ingest_stores_spot_check_flag(arch: Archive, inbox: Path) -> None:
+    """Ingest stores 1 for a spot-check event and 0 for any other."""
+    now = time.time()
+    inbox.write_bytes(
+        replace(make_event(now), spot_check=True).to_line() + make_event(now + 1).to_line()
+    )
+    arch.ingest(inbox, now=now)
+    arch.ingest(inbox, now=now + 3)
+    rows = arch.connection.execute("SELECT spot_check FROM events ORDER BY ts").fetchall()
+    assert rows == [(1,), (0,)]
+
+
+V4_COLUMNS = (
+    "reason TEXT,\n    raw TEXT,\n    overhead REAL,\n"
+    "    waited REAL,\n    wait_known INTEGER NOT NULL DEFAULT 0,\n"
+    "    reported INTEGER NOT NULL DEFAULT 0,\n    wait_timed_out INTEGER NOT NULL DEFAULT 0"
+)
+V5_TABLES = """
+CREATE TABLE tests (
+    id INTEGER PRIMARY KEY, repo TEXT, gate TEXT NOT NULL, name TEXT NOT NULL,
+    UNIQUE (repo, gate, name)
+);
+CREATE TABLE test_results (
+    event_id INTEGER NOT NULL, test_id INTEGER NOT NULL, outcome TEXT NOT NULL, duration REAL
+);
+INSERT INTO tests VALUES (1, NULL, 'x', 'a::one');
+INSERT INTO test_results VALUES (2, 1, 'fail', 0.5);
+"""
+
+
+@pytest.mark.parametrize("stored", [4, 5], ids=["v4", "v5"])
+def test_migration_adds_spot_check(tmp_path: Path, stored: int) -> None:
+    """Opening a version 4 or 5 archive fills spot_check from raw lines and keeps test results."""
+    path = tmp_path / "a.sqlite3"
+    columns = V4_COLUMNS + (",\n    event_uid TEXT\n" if stored == 5 else "\n")
+    script = V1_SCHEMA.replace("reason TEXT\n", columns).replace(
+        "'schema_version', '1'", f"'schema_version', '{stored}'"
+    )
+    connection = sqlite3.connect(path)
+    connection.executescript(script + (V5_TABLES if stored == 5 else ""))
+    # Rows an older gate-cache ingested from newer lines keep the flag only in raw.
+    connection.executemany(
+        "INSERT INTO events (id, line_hash, ts, name, paths, outcome, raw)"
+        " VALUES (?, ?, ?, 'x', '[]', 'fail', ?)",
+        [
+            (2, "h2", 2.0, '{"v":1,"spot_check":true}'),
+            (3, "h3", 3.0, '{"v":1,"spot_check":1}'),
+            (4, "h4", 4.0, "not json"),
+        ],
+    )
+    connection.commit()
+    connection.close()
+    with Archive.open(path) as arch:
+        assert arch.meta("schema_version") == str(archive_module.SCHEMA_VERSION)
+        rows = arch.connection.execute("SELECT spot_check FROM events ORDER BY ts").fetchall()
+        assert rows == [(0,), (1,), (0,), (0,)]
+        totals = queries.summary(arch.connection, queries.Filters())
+        assert totals["runs"] == 4
+        assert (totals["spot_checks"], totals["spot_check_failures"]) == (1, 1)
+        expected = [(None, "x", "a::one", "fail", 0.5)] if stored == 5 else []
+        assert results(arch) == expected

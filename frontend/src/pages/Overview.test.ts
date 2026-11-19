@@ -3,6 +3,7 @@ import { html } from "../lib/render.test-utils";
 import type { Summary } from "../lib/api";
 import type { Query } from "../lib/query.svelte";
 import type { SummaryView } from "../lib/summary";
+import { TERMS } from "../lib/terms";
 import Overview from "./Overview.svelte";
 
 const summary: Summary = {
@@ -12,7 +13,6 @@ const summary: Summary = {
   unknown_saved_skips: 0,
   overhead: 0,
   waited: 0,
-  net_saved: 118,
   cost_unknown_runs: 0,
   runs: 12,
   skips: 6,
@@ -20,16 +20,19 @@ const summary: Summary = {
   uncached: 0,
   failures: 0,
   flaky_gates: 0,
+  triage_items: 0,
+  spot_checks: 37,
+  spot_check_failures: 2,
   outcomes: { skip: 6, pass: 6, pass_unrecorded: 0, fail: 0, uncached: 0 },
   previous: {
     time_saved: 100,
     time_spent: 60,
-    net_saved: 100,
     runs: 12,
     skips: 6,
     skip_rate: 0.5,
     failures: 0,
     flaky_gates: 0,
+    spot_check_failures: 2,
     days: 30,
   },
   daily: [],
@@ -39,7 +42,7 @@ function query(data: SummaryView | undefined, loading = false): Query<SummaryVie
   return { data, error: undefined, loading } as unknown as Query<SummaryView>;
 }
 
-const days = [{ day: "2026-11-17", saved: 118, failures: 0, runs: 12, spent: 0, skips: 0, ran: 0, cost: 0 }];
+const days = [{ day: "2026-11-17", saved: 118, failures: 0, runs: 12, spent: 0, skips: 0, ran: 0, spot_checks: 0, spot_check_failures: 0 }];
 
 describe("Overview", () => {
   it("shows the stat strip with deltas, the activity calendar, and the daily chart", () => {
@@ -73,6 +76,19 @@ describe("Overview", () => {
     expect(body).toMatch(/<h2[^>]*id="breakdown-title"[^>]*>Breakdown<\/h2>/);
     expect(body).toMatch(/<select[^>]*>[\s\S]*Repo[\s\S]*Gate[\s\S]*Source[\s\S]*Branch[\s\S]*Machine/);
     expect(body).toContain("All repos, click a name to filter");
+  });
+
+  it("shows the spot check counts as one link to the spot check runs", () => {
+    const body = html(Overview, {
+      props: { query: query({ summary, days }), repoLabel: null },
+    });
+    const link = body.match(
+      new RegExp(`<dt[^>]*>[\\s\\S]*?<span>${TERMS.spotChecks.label}</span>[\\s\\S]*?<a[^>]*href="#/activity\\?spot_check=1"[^>]*>([\\s\\S]*?)</a>`),
+    );
+    // The text a screen reader reads for the link, with the hidden comma between the counts.
+    const text = link?.[1]?.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+    expect(text).toBe(`37 ${TERMS.spotChecks.ran}, 2 ${TERMS.spotChecks.failed}`);
+    expect(body).not.toMatch(/href="#\/activity\?outcome=fail&amp;spot_check=1"/);
   });
 
   it("hides deltas when there is no previous window", () => {
@@ -133,7 +149,7 @@ describe("Overview", () => {
     ]) {
       expect(body).toMatch(new RegExp(`<h2[^>]*>${title}</h2>`));
     }
-    for (const label of ["Gate calls", "Time gates ran", "Gate failures", "Flaky gates", "Cache skip rate", "Time saved by cache", "Net saved by cache"]) {
+    for (const label of ["Gate calls", "Time gates ran", "Gate failures", "Flaky gates", "Cache skip rate", TERMS.saved.label]) {
       expect(body).toMatch(new RegExp(`<dt[^>]*>[\\s\\S]*?<span>${label}</span>`));
     }
   });

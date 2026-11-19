@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { ActivityPage, EventRow } from "./api";
+import type { ActivityFilter, ActivityPage, EventRow } from "./api";
 import { activityHint, activitySubject, addPage, feedView, filterParts } from "./activity";
 import type { RangeSpec } from "./range";
+import { OUTCOMES } from "./events";
+import { ACTIVITY_FILTERS } from "./terms";
 
 function ev(ts: number): EventRow {
   return {
@@ -17,6 +19,7 @@ function ev(ts: number): EventRow {
     reason: null,
     tree: null,
     reported: false,
+    spot_check: false,
   };
 }
 
@@ -77,24 +80,28 @@ describe("feedView inputs", () => {
 });
 
 describe("activitySubject", () => {
-  it("names the active outcome and reason", () => {
+  it("names the active outcomes and reasons, any of each", () => {
     expect(activitySubject({})).toBe("gate calls");
-    expect(activitySubject({ outcome: "fail" })).toBe('"Ran and failed" gate calls');
-    expect(activitySubject({ reason: "x y" })).toBe('gate calls with reason "x y"');
-    expect(activitySubject({ outcome: "uncached", reason: "x y" })).toBe(
-      '"Ran with cache off" gate calls with reason "x y"',
+    expect(activitySubject({ outcome: ["fail"] })).toBe('"Ran and failed" gate calls');
+    expect(activitySubject({ outcome: ["fail", "skip"] })).toBe('"Ran and failed" or "Skipped by cache" gate calls');
+    expect(activitySubject({ reason: ["x y"] })).toBe('gate calls with reason "x y"');
+    expect(activitySubject({ outcome: ["uncached"], reason: ["a", "b", "c"] })).toBe(
+      '"Ran with cache off" gate calls with reason "a", "b", or "c"',
     );
-    expect(activitySubject({ outcome: "fail", group: { by: "branch", key: "[]", label: "Branch: main" } })).toBe(
+    expect(activitySubject({ outcome: ["fail"], group: { by: "branch", key: "[]", label: "Branch: main" } })).toBe(
       '"Ran and failed" gate calls in "Branch: main"',
     );
   });
 
-  it("names the day, hour, gate, and flaky filters", () => {
+  it("names the day, gate, and flaky filters", () => {
     // Days are named by the empty-state title in place of the range, not by the subject.
     expect(activitySubject({ span: { from: "2026-11-03", to: "2026-11-03" } })).toBe("gate calls");
-    expect(activitySubject({ slot: { weekday: 2, hour: 9 } })).toBe("gate calls on Tuesdays 09:00 to 10:00");
-    expect(activitySubject({ outcome: "fail", gate: { repo: null, name: "lint" }, flaky: true })).toBe(
-      '"Ran and failed" gate calls of lint on flaky trees',
+    const gates = [
+      { repo: null, name: "lint" },
+      { repo: "/a/.git", name: "test" },
+    ];
+    expect(activitySubject({ outcome: ["fail"], gate: gates, flaky: true })).toBe(
+      '"Ran and failed" gate calls of lint or test on flaky trees',
     );
   });
 });
@@ -109,52 +116,40 @@ describe("activityHint", () => {
   });
 
   it("asks to turn recording on first", () => {
-    expect(activityHint({ outcome: "fail" }, { ...scope, recording: false })).toBe(
+    expect(activityHint({ outcome: ["fail"] }, { ...scope, recording: false })).toBe(
       "Turn recording on with gate-cache stats on, then run a gate through gate-cache.",
     );
   });
 
-  it("names the filter to clear", () => {
-    expect(activityHint({ outcome: "fail" }, scope)).toBe(
-      "Pick All outcomes, or pick a longer range.",
-    );
-    expect(activityHint({ reason: "x" }, scope)).toBe(
-      "Remove the reason filter, or pick a longer range.",
-    );
-    expect(activityHint({ outcome: "uncached", reason: "x" }, scope)).toBe(
-      "Pick All outcomes and remove the reason filter, or pick a longer range.",
-    );
+  it("names every page filter to remove", () => {
+    expect(activityHint({ outcome: ["fail", "skip"] }, scope)).toBe("Remove the outcome filter, or pick a longer range.");
     expect(activityHint({ group: { by: "source", key: "[]", label: "Source: CI" } }, scope)).toBe(
       'Remove the "Source: CI" filter, or pick a longer range.',
     );
-  });
-
-  it("names every page filter to remove", () => {
-    expect(activityHint({ flaky: true }, scope)).toBe(
-      "Remove the flaky filter, or pick a longer range.",
-    );
     expect(
-      activityHint({ outcome: "fail", span: { from: "2026-11-03", to: "2026-11-03" }, slot: { weekday: 1, hour: 2 } }, scope),
-    ).toBe("Pick All outcomes and remove the day and hour filters, or pick a longer range.");
-    expect(
-      activityHint({ reason: "x", gate: { repo: null, name: "a" }, flaky: true }, scope),
-    ).toBe("Remove the reason, gate, and flaky filters, or pick a longer range.");
+      activityHint({ outcome: ["fail"], span: { from: "2026-11-03", to: "2026-11-03" } }, scope),
+    ).toBe("Remove the outcome and day filters, or pick a longer range.");
   });
 
   it("drops the range advice for all time", () => {
-    expect(activityHint({ reason: "x" }, { ...scope, range: all })).toBe(
-      "Remove the reason filter.",
-    );
+    expect(activityHint({ reason: ["x"] }, { ...scope, range: all })).toBe("Remove the reason filter.");
   });
 });
 
 describe("filterParts", () => {
-  it("lists each removable filter with its chip text and the filter left without it", () => {
-    const filter = { outcome: "fail" as const, reason: "x", gate: { repo: "/a/.git", name: "lint" }, flaky: true as const };
+  it("lists each removable filter with its chip text", () => {
+    const gate = [
+      { repo: "/a/.git", name: "lint" },
+      { repo: null, name: "test" },
+    ];
+    const filter: ActivityFilter = { outcome: ["fail", "skip"], reason: ["x"], gate, flaky: true };
     const parts = filterParts(filter);
-    expect(parts.map((p) => p.label)).toEqual(["Reason: x", "Gate: lint", "Flaky trees only"]);
-    expect(parts[1]?.title).toBe("lint in /a/.git");
-    expect(parts[2]?.without).toEqual({ outcome: "fail", reason: "x", gate: { repo: "/a/.git", name: "lint" } });
-    expect(filterParts({ outcome: "fail" })).toEqual([]);
+    expect(parts.map((p) => p.label)).toEqual([
+      ACTIVITY_FILTERS.chip(ACTIVITY_FILTERS.outcome, [OUTCOMES.fail.label, OUTCOMES.skip.label]),
+      ACTIVITY_FILTERS.chip(ACTIVITY_FILTERS.gate, ["lint", "test"]),
+      ACTIVITY_FILTERS.chip(ACTIVITY_FILTERS.reason, ["x"]),
+      ACTIVITY_FILTERS.flakyChip,
+    ]);
+    expect(parts[1]?.title).toBe("lint in /a/.git, test");
   });
 });

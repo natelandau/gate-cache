@@ -5,7 +5,7 @@ import sqlite3
 import statistics
 from collections.abc import Iterator
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
@@ -17,7 +17,6 @@ from gate_cache.stats.queries import (
     Filters,
     activity,
     coalescing,
-    flaky,
     gate_detail,
     gates,
     hourly,
@@ -27,12 +26,20 @@ from gate_cache.stats.queries import (
     repos,
     slowdowns,
     summary,
+    triage,
 )
 
 BASE = 1_699_920_000.0  # midnight UTC
 DAY = 86400.0
 REPO_A = "/x/proj/.git"
 REPO_B = "/x/other/.git"
+
+
+def flaky(
+    conn: sqlite3.Connection, filters: Filters, *, now: float | None = None
+) -> list[dict[str, Any]]:
+    """Return the triage rows for flaky gates."""
+    return triage(conn, filters, reason="flaky", now=now)["items"]
 
 
 def insert(
@@ -51,14 +58,15 @@ def insert(
     wait_known: bool = False,
     reported: bool = False,
     wait_timed_out: bool = False,
+    spot_check: bool = False,
     exit_code: int | None = None,
     raw: dict[str, object] | None = None,
 ) -> None:
     """Insert one event row."""
     conn.execute(
         "INSERT INTO events (line_hash, ts, repo, name, tree, paths, outcome, duration, saved,"
-        " reason, overhead, waited, wait_known, reported, wait_timed_out, exit_code, raw)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " reason, overhead, waited, wait_known, reported, wait_timed_out, exit_code, raw, spot_check)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             f"h{conn.total_changes}-{ts}",
             ts,
@@ -77,6 +85,7 @@ def insert(
             wait_timed_out,
             exit_code,
             json.dumps(raw) if raw is not None else None,
+            spot_check,
         ),
     )
     conn.commit()
@@ -121,24 +130,43 @@ def test_summary_values(conn: sqlite3.Connection) -> None:
         "spent": 35.0,
         "skips": 3,
         "ran": 5,
-        "cost": 0.0,
+        "spot_checks": 0,
+        "spot_check_failures": 0,
     }
     json.dumps(s)
 
 
 def test_summary_daily_sums_match_totals(empty_conn: sqlite3.Connection) -> None:
-    """Per-day run time, skips, and cost add up to the headline totals."""
+    """Per-day run time, skips, and spot checks add up to the headline totals."""
     insert(empty_conn, BASE + 100, "skip", saved=40.0, overhead=0.5, waited=2.0, wait_known=True)
-    insert(empty_conn, BASE + 200, "pass", duration=12.0, overhead=0.25, wait_known=True)
-    insert(empty_conn, BASE + DAY + 100, "fail", duration=8.0, overhead=0.25, waited=1.0)
+    insert(
+        empty_conn,
+        BASE + 200,
+        "pass",
+        duration=12.0,
+        overhead=0.25,
+        wait_known=True,
+        spot_check=True,
+    )
+    insert(
+        empty_conn,
+        BASE + DAY + 100,
+        "fail",
+        duration=8.0,
+        overhead=0.25,
+        waited=1.0,
+        spot_check=True,
+    )
     insert(empty_conn, BASE + DAY + 200, "uncached", tree=None, duration=20.0)
     s = summary(empty_conn, Filters())
     daily = s["daily"]
     assert len(daily) == 2
     assert sum(d["spent"] for d in daily) == s["time_spent"]
     assert sum(d["skips"] for d in daily) == s["skips"]
-    assert sum(d["cost"] for d in daily) == pytest.approx(s["overhead"] + s["waited"])
     assert [d["ran"] for d in daily] == [2, 1]
+    assert [d["spot_checks"] for d in daily] == [1, 1]
+    assert [d["spot_check_failures"] for d in daily] == [0, 1]
+    assert sum(d["spot_checks"] for d in daily) == s["spot_checks"]
 
 
 def test_empty_archive(empty_conn: sqlite3.Connection) -> None:
@@ -148,7 +176,7 @@ def test_empty_archive(empty_conn: sqlite3.Connection) -> None:
     assert s["skip_rate"] is None
     assert s["daily"] == []
     assert gates(empty_conn, Filters()) == {"gates": []}
-    assert flaky(empty_conn, Filters())["gates"] == []
+    assert triage(empty_conn, Filters())["items"] == []
     assert repos(empty_conn, Filters()) == {"repos": []}
     assert activity(empty_conn, Filters()) == {"events": [], "next_before": None}
 
@@ -228,9 +256,83 @@ def test_null_repo(empty_conn: sqlite3.Connection) -> None:
     assert summary(empty_conn, Filters())["flaky_gates"] == 1
     assert gates(empty_conn, Filters())["gates"][0]["repo_name"] == "unknown repo"
     assert gates(empty_conn, Filters())["gates"][0]["flaky"] is True
-    f = flaky(empty_conn, Filters())["gates"]
+    f = flaky(empty_conn, Filters())
     assert f[0]["repo"] is None
-    assert len(f[0]["trees"][0]["runs"]) == 2
+    assert len(f[0]["evidence"]["trees"][0]["runs"]) == 2
+
+
+def test_spot_check_failure_is_not_flaky(empty_conn: sqlite3.Connection) -> None:
+    """A failed spot check does not make a tree flaky, but an ordinary fail still does."""
+    insert(empty_conn, BASE, "pass", tree="a")
+    insert(empty_conn, BASE + 1, "fail", tree="a", spot_check=True)
+    insert(empty_conn, BASE + 2, "pass", name="other", tree="b")
+    insert(empty_conn, BASE + 3, "fail", name="other", tree="b")
+    insert(empty_conn, BASE + 4, "pass", name="other", tree="b", spot_check=True)
+    assert [g["name"] for g in flaky(empty_conn, Filters())] == ["other"]
+    (run_rows,) = [g["evidence"]["trees"][0]["runs"] for g in flaky(empty_conn, Filters())]
+    assert [r["spot_check"] for r in run_rows] == [False, False]
+    assert summary(empty_conn, Filters())["flaky_gates"] == 1
+    tags = {g["name"]: g["flaky"] for g in gates(empty_conn, Filters())["gates"]}
+    assert tags == {"lint": False, "other": True}
+    assert gate_detail(empty_conn, Filters(), repo=REPO_A, name="lint")["flaky_trees"] == []
+    flaky_rows = activity(empty_conn, Filters(), flaky=True)["events"]
+    assert [e["spot_check"] for e in flaky_rows] == [False, False]
+
+
+def test_triage_lists_one_row_per_gate_and_reason_newest_first(
+    empty_conn: sqlite3.Connection,
+) -> None:
+    """A gate that is flaky and failed a spot check gets two rows, ordered by latest occurrence."""
+    insert(empty_conn, BASE, "fail", tree="a")
+    insert(empty_conn, BASE + 1, "pass", tree="a")
+    insert(empty_conn, BASE + 2, "pass", tree="b")
+    insert(empty_conn, BASE + 3, "fail", tree="b", spot_check=True, exit_code=2)
+    insert(empty_conn, BASE + 4, "fail", name="lint@v2", tree="c", spot_check=True, exit_code=1)
+    insert(empty_conn, BASE + 5, "fail", name="other", tree="d")
+    insert(empty_conn, BASE + 6, "pass", name="other", tree="d")
+    insert(empty_conn, BASE - 1, "fail", repo=None, tree="e", spot_check=True)
+    items = triage(empty_conn, Filters())["items"]
+    assert [(i["name"], i["reason"], i["last_seen"]) for i in items] == [
+        ("other", "flaky", BASE + 6),
+        ("lint", "failed_spot_check", BASE + 4),
+        ("lint", "flaky", BASE + 1),
+        ("lint", "failed_spot_check", BASE - 1),
+    ]
+    spot = items[1]["evidence"]
+    assert spot["count"] == 2
+    assert [(r["ts"], r["tree"], r["exit_code"]) for r in spot["runs"]] == [
+        (BASE + 4, "c", 1),
+        (BASE + 3, "b", 2),
+    ]
+    assert summary(empty_conn, Filters())["triage_items"] == len(items)
+    narrowed = Filters(start=BASE + 2)
+    assert summary(empty_conn, narrowed)["triage_items"] == 2
+    assert [i["reason"] for i in triage(empty_conn, narrowed)["items"]] == [
+        "flaky",
+        "failed_spot_check",
+    ]
+    spot_rows = triage(empty_conn, Filters(), reason="failed_spot_check")["items"]
+    assert [(i["repo"], i["reason"]) for i in spot_rows] == [
+        (REPO_A, "failed_spot_check"),
+        (None, "failed_spot_check"),
+    ]
+
+
+def test_triage_rejects_unknown_reason(empty_conn: sqlite3.Connection) -> None:
+    """An unknown triage reason is an error, not an empty list."""
+    with pytest.raises(ValueError, match="unknown triage reason"):
+        triage(empty_conn, Filters(), reason="slow")  # ty: ignore[invalid-argument-type]
+
+
+def test_triage_caps_spot_check_evidence(empty_conn: sqlite3.Connection) -> None:
+    """Each gate's failed spot check row keeps its newest runs as evidence and counts every one."""
+    for i in range(12):
+        insert(empty_conn, BASE + i, "fail", tree=f"t{i}", spot_check=True)
+    insert(empty_conn, BASE + 20, "fail", name="other", spot_check=True)
+    other, lint = triage(empty_conn, Filters())["items"]
+    assert (other["evidence"]["count"], len(other["evidence"]["runs"])) == (1, 1)
+    assert lint["evidence"]["count"] == 12
+    assert [r["tree"] for r in lint["evidence"]["runs"]] == [f"t{i}" for i in range(11, 1, -1)]
 
 
 def test_flaky_pass_unrecorded_and_null_tree(empty_conn: sqlite3.Connection) -> None:
@@ -239,7 +341,7 @@ def test_flaky_pass_unrecorded_and_null_tree(empty_conn: sqlite3.Connection) -> 
     insert(empty_conn, BASE + 1, "pass_unrecorded", tree="a")
     insert(empty_conn, BASE + 2, "fail", name="other", tree=None)
     insert(empty_conn, BASE + 3, "pass", name="other", tree=None, duration=1.0)
-    assert [g["name"] for g in flaky(empty_conn, Filters())["gates"]] == ["lint"]
+    assert [g["name"] for g in flaky(empty_conn, Filters())] == ["lint"]
     assert summary(empty_conn, Filters())["flaky_gates"] == 1
 
 
@@ -324,6 +426,7 @@ def test_activity_paging(conn: sqlite3.Connection) -> None:
         "reason",
         "tree",
         "reported",
+        "spot_check",
         "gate",
     }
 
@@ -361,7 +464,7 @@ def test_keys_of_one_gate_share_its_stats_but_not_its_flakiness(
     assert {e["name"] for e in detail["recent"]} == {"test@v20", "test@v22"}
     assert {e["gate"] for e in detail["recent"]} == {"test"}
     assert detail["flaky_trees"] == []
-    events = activity(empty_conn, Filters(), gate=(REPO_A, "test"))["events"]
+    events = activity(empty_conn, Filters(), gates=[(REPO_A, "test")])["events"]
     assert len(events) == 2
 
 
@@ -436,31 +539,33 @@ def test_activity_limit_capped_at_500(empty_conn: sqlite3.Connection) -> None:
 
 
 def test_activity_outcome_filter(conn: sqlite3.Connection) -> None:
-    """An outcome filter keeps only events with that outcome, within the other filters."""
-    fails = activity(conn, Filters(repos=(REPO_A,)), outcome="fail")["events"]
+    """An outcome filter keeps events with any of its outcomes, within the other filters."""
+    fails = activity(conn, Filters(repos=(REPO_A,)), outcomes=["fail"])["events"]
     assert [(e["name"], e["outcome"]) for e in fails] == [("test", "fail")]
-    skips = activity(conn, Filters(), outcome="skip", limit=2)
+    skips = activity(conn, Filters(), outcomes=["skip"], limit=2)
     assert [e["outcome"] for e in skips["events"]] == ["skip", "skip"]
-    rest = activity(conn, Filters(), outcome="skip", before=skips["next_before"])
+    rest = activity(conn, Filters(), outcomes=["skip"], before=skips["next_before"])
     assert [e["outcome"] for e in rest["events"]] == ["skip"]
     assert rest["next_before"] is None
-    assert activity(conn, Filters(repos=(REPO_B,)), outcome="fail")["events"] == []
+    assert activity(conn, Filters(repos=(REPO_B,)), outcomes=["fail"])["events"] == []
+    either = activity(conn, Filters(), outcomes=["fail", "uncached"])["events"]
+    assert [e["outcome"] for e in either] == ["uncached", "fail"]
 
 
 def test_activity_unknown_outcome(conn: sqlite3.Connection) -> None:
     """An unknown outcome raises ValueError."""
     with pytest.raises(ValueError, match="outcome"):
-        activity(conn, Filters(), outcome="exploded")
+        activity(conn, Filters(), outcomes=["exploded"])
 
 
 def test_flaky(conn: sqlite3.Connection) -> None:
     """Flaky lists trees with a fail and a pass."""
-    g = flaky(conn, Filters())["gates"]
+    g = flaky(conn, Filters())
     assert len(g) == 1
     assert g[0]["name"] == "test"
-    assert g[0]["tree_count"] == 1
     assert g[0]["last_seen"] == BASE + 500
-    assert [r["outcome"] for r in g[0]["trees"][0]["runs"]] == ["fail", "pass"]
+    (tree,) = g[0]["evidence"]["trees"]
+    assert [r["outcome"] for r in tree["runs"]] == ["fail", "pass"]
 
 
 def test_repo_names_use_the_work_tree_folder() -> None:
@@ -550,11 +655,11 @@ def test_flaky_orders_trees_newest_first(empty_conn: sqlite3.Connection) -> None
     insert(empty_conn, BASE + 30, "fail", tree="new")
     insert(empty_conn, BASE + 40, "pass", tree="new", duration=1.0)
     insert(empty_conn, BASE + 50, "pass", tree="clean", duration=1.0)
-    (gate,) = flaky(empty_conn, Filters())["gates"]
-    assert gate["tree_count"] == 2
+    (gate,) = flaky(empty_conn, Filters())
     assert gate["last_seen"] == BASE + 40
-    assert [t["tree"] for t in gate["trees"]] == ["new", "old"]
-    assert [r["outcome"] for r in gate["trees"][0]["runs"]] == ["fail", "pass"]
+    trees = gate["evidence"]["trees"]
+    assert [t["tree"] for t in trees] == ["new", "old"]
+    assert [r["outcome"] for r in trees[0]["runs"]] == ["fail", "pass"]
 
 
 def test_unknown_outcomes_are_not_counted(conn: sqlite3.Connection) -> None:
@@ -566,7 +671,7 @@ def test_unknown_outcomes_are_not_counted(conn: sqlite3.Connection) -> None:
             summary(conn, filters),
             gates(conn, filters),
             repos(conn, filters),
-            flaky(conn, filters, now=BASE),
+            triage(conn, filters, now=BASE),
             activity(conn, filters),
             gate_detail(conn, filters, repo=REPO_A, name="lint", now=BASE),
             gate_detail(conn, filters, repo=REPO_A, name="test", now=BASE),
@@ -626,10 +731,13 @@ def test_summary_outcomes(conn: sqlite3.Connection) -> None:
 def test_previous_window_totals(empty_conn: sqlite3.Connection) -> None:
     """Previous totals cover the window of equal length before the start."""
     insert(empty_conn, BASE, "skip", saved=10.0)
+    insert(empty_conn, BASE + 1, "pass", spot_check=True)
+    insert(empty_conn, BASE + 2, "fail", spot_check=True)
     insert(empty_conn, BASE + DAY + 100, "skip", saved=30.0)
     s = summary(empty_conn, Filters(start=BASE + DAY, end=BASE + 2 * DAY), now=BASE + 2 * DAY)
     assert s["previous"]["time_saved"] == 10.0
     assert s["previous"]["days"] == 1.0
+    assert s["previous"]["spot_check_failures"] == 1
 
 
 def test_summary_time_spent(empty_conn: sqlite3.Connection) -> None:
@@ -747,12 +855,17 @@ def test_reasons_same_reason_under_two_outcomes(empty_conn: sqlite3.Connection) 
 
 
 def test_activity_reason_filter(empty_conn: sqlite3.Connection) -> None:
-    """The reason filter keeps only events with that exact reason."""
+    """The reason filter keeps events with one of its exact reasons, bound as data."""
     insert(empty_conn, BASE + 1, "uncached", tree="t1", reason="a")
     insert(empty_conn, BASE + 2, "uncached", tree="t2", reason="b")
     insert(empty_conn, BASE + 3, "pass", tree="t3")
-    events = activity(empty_conn, Filters(), reason="a")["events"]
+    events = activity(empty_conn, Filters(), reasons=["a"])["events"]
     assert [e["tree"] for e in events] == ["t1"]
+    events = activity(empty_conn, Filters(), reasons=["a", "b"])["events"]
+    assert [e["tree"] for e in events] == ["t2", "t1"]
+    injected = ["a' OR '1'='1", "a); DROP TABLE events; --"]
+    assert activity(empty_conn, Filters(), reasons=injected)["events"] == []
+    assert len(activity(empty_conn, Filters())["events"]) == 3
 
 
 def _passes(
@@ -854,8 +967,8 @@ def test_repo_names_avoid_another_repos_folder_name() -> None:
     }
 
 
-def test_summary_net_saved(empty_conn: sqlite3.Connection) -> None:
-    """Net time saved subtracts overhead and waits, and counts runs missing either."""
+def test_summary_overhead_and_unknown_costs(empty_conn: sqlite3.Connection) -> None:
+    """Overhead and waits are summed, and runs missing either are counted."""
     insert(empty_conn, BASE + 1, "skip", saved=100.0, overhead=1.0, waited=20.0, wait_known=True)
     insert(empty_conn, BASE + 2, "pass", duration=5.0, overhead=2.0, wait_known=True)
     insert(empty_conn, BASE + 3, "pass", duration=5.0, overhead=3.0)
@@ -863,28 +976,8 @@ def test_summary_net_saved(empty_conn: sqlite3.Connection) -> None:
     insert(empty_conn, BASE + 5, "uncached", tree=None)
     s = summary(empty_conn, Filters())
     assert (s["overhead"], s["waited"]) == (6.0, 20.0)
-    assert s["net_saved"] == pytest.approx(110.0 - 6.0 - 20.0)
     # The uncached run never checks the cache, so it is not missing a cost.
     assert s["cost_unknown_runs"] == 2
-
-
-def test_summary_net_saved_can_be_negative(empty_conn: sqlite3.Connection) -> None:
-    """Overhead with no skips gives a negative net, and the previous window carries it."""
-    insert(empty_conn, BASE + DAY + 1, "pass", duration=5.0, overhead=2.0, wait_known=True)
-    insert(empty_conn, BASE, "skip", saved=4.0, overhead=1.0, wait_known=True)
-    s = summary(empty_conn, Filters(start=BASE + DAY, end=BASE + 2 * DAY), now=BASE + 2 * DAY)
-    assert s["net_saved"] == -2.0
-    assert s["previous"]["net_saved"] == 3.0
-    assert "cost_unknown_runs" not in s["previous"]
-
-
-def test_summary_previous_net_saved_needs_known_costs(empty_conn: sqlite3.Connection) -> None:
-    """The previous net saved is None when either window holds a run with no recorded cost."""
-    insert(empty_conn, BASE + DAY + 1, "pass", duration=5.0, overhead=2.0, wait_known=True)
-    insert(empty_conn, BASE, "skip", saved=4.0)
-    s = summary(empty_conn, Filters(start=BASE + DAY, end=BASE + 2 * DAY), now=BASE + 2 * DAY)
-    assert s["cost_unknown_runs"] == 0
-    assert s["previous"]["net_saved"] is None
 
 
 def test_coalescing(empty_conn: sqlite3.Connection) -> None:
@@ -1345,7 +1438,7 @@ def test_tests_cutoff(
     filters = Filters(start=start)
     detail = gate_detail(empty_conn, filters, repo=REPO_A, name="lint", now=1_000 * DAY)
     assert detail["tests_cutoff"] == expected
-    assert flaky(empty_conn, filters, now=1_000 * DAY)["tests_cutoff"] == expected
+    assert triage(empty_conn, filters, now=1_000 * DAY)["tests_cutoff"] == expected
 
 
 def test_flaky_tests_on_flaky_tree(empty_conn: sqlite3.Connection) -> None:
@@ -1359,9 +1452,11 @@ def test_flaky_tests_on_flaky_tree(empty_conn: sqlite3.Connection) -> None:
     insert(empty_conn, BASE + 3, "pass", name="test", tree="t2", duration=1.0)
     insert_results(empty_conn, {"steady": ("pass", 1.0)})
 
-    (gate,) = flaky(empty_conn, Filters(), now=BASE)["gates"]
+    (gate,) = flaky(empty_conn, Filters(), now=BASE)
 
-    assert gate["tests"] == [{"name": "same", "fails": 1, "passes": 1, "last": BASE + 1}]
+    assert gate["evidence"]["tests"] == [
+        {"name": "same", "fails": 1, "passes": 1, "last": BASE + 1}
+    ]
 
 
 def test_flaky_keys_split(empty_conn: sqlite3.Connection) -> None:
@@ -1375,24 +1470,25 @@ def test_flaky_keys_split(empty_conn: sqlite3.Connection) -> None:
     insert(empty_conn, BASE + 3, "pass", name="test@v22", tree="t1", duration=1.0)
     insert_results(empty_conn, {"keyed": ("pass", 1.0)})
 
-    (gate,) = flaky(empty_conn, Filters(), now=BASE)["gates"]
+    (gate,) = flaky(empty_conn, Filters(), now=BASE)
 
-    assert [t["name"] for t in gate["tests"]] == ["real"]
+    assert [t["name"] for t in gate["evidence"]["tests"]] == ["real"]
 
 
 def test_retried_tests_listed_for_passing_gate(empty_conn: sqlite3.Connection) -> None:
-    """A gate with retried tests and no flaky tree is listed for its retried tests."""
+    """A gate with retried tests and no flaky tree is listed for them, spot checks aside."""
     insert(empty_conn, BASE, "pass", name="test", duration=1.0)
     insert_results(empty_conn, {"wobbly": ("retried", 1.0), "steady": ("pass", 1.0)})
     insert(empty_conn, BASE + 5, "pass", name="test", duration=1.0)
     insert_results(empty_conn, {"wobbly": ("retried", 1.0)})
+    insert(empty_conn, BASE + 6, "pass", name="test", duration=1.0, spot_check=True)
+    insert_results(empty_conn, {"spot": ("retried", 1.0)})
 
-    (gate,) = flaky(empty_conn, Filters(), now=BASE)["gates"]
+    (gate,) = flaky(empty_conn, Filters(), now=BASE)
 
-    assert gate["trees"] == []
-    assert gate["tree_count"] == 0
-    assert gate["tests"] == []
-    assert gate["retried"] == [{"name": "wobbly", "runs": 2, "last": BASE + 5}]
+    assert gate["evidence"]["trees"] == []
+    assert gate["evidence"]["tests"] == []
+    assert gate["evidence"]["retried"] == [{"name": "wobbly", "runs": 2, "last": BASE + 5}]
 
 
 def test_per_test_queries_skip_results_past_retention(empty_conn: sqlite3.Connection) -> None:
@@ -1405,12 +1501,45 @@ def test_per_test_queries_skip_results_past_retention(empty_conn: sqlite3.Connec
     insert_results(empty_conn, {"wobbly": ("pass", 1.0)})
     later = BASE + 91 * DAY
 
-    (gate,) = flaky(empty_conn, Filters(), now=later)["gates"]
+    (gate,) = flaky(empty_conn, Filters(), now=later)
 
     assert gate["name"] == "lint"
-    assert gate["tree_count"] == 1
-    assert gate["tests"] == []
+    assert len(gate["evidence"]["trees"]) == 1
+    assert gate["evidence"]["tests"] == []
     assert (
         gate_detail(empty_conn, Filters(), repo=REPO_A, name="test", now=later)["slowest_tests"]
         == []
     )
+
+
+def _spot_check_events(conn: sqlite3.Connection) -> None:
+    """Insert two spot checks (one failing) and two ordinary runs on one gate."""
+    insert(conn, BASE + 1, "pass", spot_check=True)
+    insert(conn, BASE + 2, "fail", spot_check=True)
+    insert(conn, BASE + 3, "pass")
+    insert(conn, BASE + 4, "fail")
+
+
+def test_summary_counts_spot_checks(empty_conn: sqlite3.Connection) -> None:
+    """Summary totals count spot checks and their failures apart from other runs."""
+    totals = summary(empty_conn, Filters())
+    assert (totals["spot_checks"], totals["spot_check_failures"]) == (0, 0)
+    _spot_check_events(empty_conn)
+    totals = summary(empty_conn, Filters())
+    assert (totals["spot_checks"], totals["spot_check_failures"]) == (2, 1)
+
+
+def test_gates_count_spot_checks(empty_conn: sqlite3.Connection) -> None:
+    """Each gate row counts its spot checks and their failures."""
+    _spot_check_events(empty_conn)
+    (row,) = gates(empty_conn, Filters())["gates"]
+    assert (row["spot_checks"], row["spot_check_failures"]) == (2, 1)
+
+
+def test_activity_spot_check_flag_and_filter(empty_conn: sqlite3.Connection) -> None:
+    """Event rows carry the spot-check flag, and the filter keeps only flagged rows."""
+    _spot_check_events(empty_conn)
+    events = activity(empty_conn, Filters())["events"]
+    assert [e["spot_check"] for e in events] == [False, False, True, True]
+    only = activity(empty_conn, Filters(), spot_check=True)["events"]
+    assert [e["ts"] for e in only] == [BASE + 2, BASE + 1]

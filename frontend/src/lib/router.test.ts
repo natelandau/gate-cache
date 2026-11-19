@@ -19,11 +19,11 @@ describe("parseHash", () => {
     expect(parseHash("#/repos")).toEqual({ page: "overview" });
     expect(parseHash("#/repos/a/b")).toEqual({ page: "overview" });
     expect(parseHash("#/repos/")).toEqual({ page: "overview" });
-    expect(parseHash("#/flaky/extra")).toEqual({ page: "overview" });
+    expect(parseHash("#/triage/extra")).toEqual({ page: "overview" });
   });
 
   it("parses the simple pages", () => {
-    for (const page of ["overview", "gates", "activity", "flaky"]) {
+    for (const page of ["overview", "gates", "activity", "triage"]) {
       expect(parseHash(`#/${page}`)).toEqual({ page });
     }
   });
@@ -42,16 +42,26 @@ describe("parseHash", () => {
     expect(parseHash("#/repos/-")).toEqual({ page: "overview", selectRepo: "-" });
   });
 
-  it("parses the activity filters", () => {
-    expect(parseHash("#/activity?outcome=fail&reason=x%20y")).toEqual({
+  it("parses the activity filters, repeated once per value", () => {
+    expect(parseHash("#/activity?outcome=fail&outcome=skip&outcome=fail&reason=x%20y")).toEqual({
       page: "activity",
-      outcome: "fail",
-      reason: "x y",
+      outcome: ["fail", "skip"],
+      reason: ["x y"],
     });
-    expect(parseHash("#/activity?outcome=fail")).toEqual({ page: "activity", outcome: "fail" });
+    expect(parseHash("#/activity?gate=-%00a&gate=%2Fr%00b&gate=-%00a")).toEqual({
+      page: "activity",
+      gate: [
+        { repo: null, name: "a" },
+        { repo: "/r", name: "b" },
+      ],
+    });
+    const gate = [{ repo: "/a&b/.git", name: "lint@v2" }];
+    expect(parseHash(href({ page: "activity", gate }))).toEqual({ page: "activity", gate });
   });
 
-  it("drops an unknown outcome and an empty reason", () => {
+  it("drops an unknown outcome, an empty reason, and gates without a repo or a name", () => {
+    expect(parseHash("#/activity?outcome=nope&outcome=fail&reason=")).toEqual({ page: "activity", outcome: ["fail"] });
+    expect(parseHash("#/activity?gate=a&gate=-%00&gate=%00b")).toEqual({ page: "activity" });
     expect(parseHash("#/activity?outcome=nope&reason=")).toEqual({ page: "activity" });
     expect(parseHash("#/activity?outcome=toString")).toEqual({ page: "activity" });
     expect(parseHash("#/activity?")).toEqual({ page: "activity" });
@@ -71,16 +81,13 @@ describe("parseHash", () => {
   });
 
   it("ignores query parameters on other pages", () => {
-    expect(parseHash("#/flaky?outcome=fail")).toEqual({ page: "flaky" });
+    expect(parseHash("#/gates?outcome=fail")).toEqual({ page: "gates" });
   });
 
   it("drops malformed page-local filters", () => {
+    expect(parseHash("#/triage?reason=bogus")).toEqual({ page: "triage" });
     expect(parseHash("#/activity?from=2026-13-40&to=2026-11-05")).toEqual({ page: "activity" });
     expect(parseHash("#/activity?from=2026-11-05")).toEqual({ page: "activity" });
-    expect(parseHash("#/activity?weekday=2")).toEqual({ page: "activity" });
-    expect(parseHash("#/activity?weekday=2&hour=24")).toEqual({ page: "activity" });
-    expect(parseHash("#/activity?weekday=7&hour=1")).toEqual({ page: "activity" });
-    expect(parseHash("#/activity?weekday=2&hour=1.5")).toEqual({ page: "activity" });
     expect(parseHash("#/activity?gate=lint")).toEqual({ page: "activity" });
     expect(parseHash("#/activity?flaky=0")).toEqual({ page: "activity" });
     expect(parseHash("#/overview?from=2026-11-05")).toEqual({ page: "overview" });
@@ -103,28 +110,31 @@ describe("href", () => {
   it("round-trips through parseHash", () => {
     const routes: Route[] = [
       { page: "overview" },
-      { page: "flaky" },
+      { page: "triage" },
+      { page: "triage", reason: "failed_spot_check" },
       { page: "gate", repo: "/a b/.git", name: "ruff check #1" },
       { page: "gate", repo: null, name: "test" },
       { page: "activity" },
-      { page: "activity", outcome: "uncached", reason: "GATE_CACHE_DISABLE is set & 50% #1+2" },
+      { page: "activity", outcome: ["uncached"], reason: ["GATE_CACHE_DISABLE is set & 50% #1+2", "b,c"] },
       {
         page: "activity",
-        outcome: "fail",
+        outcome: ["fail", "pass"],
         span: { from: "2026-11-03", to: "2026-11-05" },
-        slot: { weekday: 2, hour: 14 },
-        gate: { repo: "/a b/.git", name: "ruff #1" },
+        gate: [
+          { repo: "/a b/.git", name: "ruff #1" },
+          { repo: null, name: "lint" },
+        ],
         flaky: true,
       },
-      { page: "activity", gate: { repo: null, name: "lint" } },
+      { page: "activity", gate: [{ repo: null, name: "lint" }] },
       { page: "overview", span: { from: "2026-11-03", to: "2026-11-05" } },
     ];
     for (const route of routes) expect(parseHash(href(route))).toEqual(route);
   });
 
   it("encodes the activity filters", () => {
-    expect(href({ page: "activity", outcome: "fail" })).toBe("#/activity?outcome=fail");
-    expect(href({ page: "activity", reason: "x y" })).toBe("#/activity?reason=x%20y");
+    expect(href({ page: "activity", outcome: ["fail", "skip"] })).toBe("#/activity?outcome=fail&outcome=skip");
+    expect(href({ page: "activity", reason: ["x y"] })).toBe("#/activity?reason=x%20y");
     expect(href({ page: "activity" })).toBe("#/activity");
   });
 
@@ -133,12 +143,11 @@ describe("href", () => {
       href({
         page: "activity",
         flaky: true,
-        slot: { weekday: 0, hour: 9 },
         span: { from: "2026-11-03", to: "2026-11-03" },
       }),
-    ).toBe("#/activity?weekday=0&hour=9&flaky=1&from=2026-11-03&to=2026-11-03");
-    expect(href({ page: "activity", gate: { repo: null, name: "a b" } })).toBe(
-      "#/activity?gate=a%20b&gate_repo=-",
+    ).toBe("#/activity?flaky=1&from=2026-11-03&to=2026-11-03");
+    expect(activityHref({ gate: { repo: null, name: "a b" } })).toBe(
+      "#/activity?gate=-%00a%20b",
     );
     expect(activityHref({ outcome: "fail" }, { from: "2026-11-03", to: "2026-11-04" })).toBe(
       "#/activity?outcome=fail&from=2026-11-03&to=2026-11-04",

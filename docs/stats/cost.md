@@ -24,7 +24,7 @@ A gate that is slow and runs often costs the most. Each run of a 5-minute suite 
 | A slow gate, with no clue which tests make it slow | Record its test reports. The gate details then list its slowest tests. Read [Find slow and flaky tests](test-detail.md). |
 | High CPU per second of run time | The gate uses several cores. Running gates one after another can be faster than running them at the same time. |
 | Much time lost to failures | Failures that end early are cheap. Failures late in a long run are expensive. Move the checks that fail most often to the start, or into a faster gate. |
-| A flaky gate | Each flaky failure costs a full run again. Read [Find flaky gates](flaky-gates.md). |
+| A flaky gate | Each flaky failure costs a full run again. Read [Triage gates](triage.md). |
 
 ## Measure the result
 

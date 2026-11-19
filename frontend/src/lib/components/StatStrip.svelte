@@ -3,11 +3,13 @@
   A row of headline numbers separated by hairlines. Wraps on narrow screens.
 
   Props:
-  - `stats`: the cells, each `{ label, value, hint?, title?, tone?, href?, delta?, spark? }`. `tone` "danger" or
-    "flaky" colors a non-zero problem count; `href` turns the value into a link (for example to the
-    Flaky page); `delta` adds a line with the change against the previous window, from
-    `statDeltas` in `src/lib/deltas.ts`; `spark` adds a sparkline, from `summaryStats` in
-    `src/lib/summary.ts`.
+  - `stats`: the cells, each `{ label, value, hint?, title?, tone?, href?, delta?, spark? }`.
+    `value` is a formatted string, or a list of parts, such as "21 ran" and "6 failed", shown
+    stacked one per line at headline size and read as "21 ran, 6 failed"; a part's `tone` "danger"
+    colors its number. `tone` "danger" or "flaky" colors a non-zero problem count; `href` turns
+    the value into a link (for example to the Triage page); `delta` adds a line with the change
+    against the previous window, from `statDeltas` in `src/lib/deltas.ts`; `spark` adds
+    sparklines, one or more series on one scale, from `summaryStats` in `src/lib/summary.ts`.
   - `deltaLabel`: optional text after each delta, such as "vs prev 30d"
   - `note`: optional footnote below the strip
   - `busy`: dims the values while newer numbers load
@@ -17,9 +19,12 @@
     numbers load
 -->
 <script lang="ts" module>
+  import type { ValuePart } from "../format";
+  import type { SparkSeries } from "./Sparkline.svelte";
+
   export interface Stat {
     label: string;
-    value: string;
+    value: string | ValuePart[];
     /** Secondary text under the value, such as a count the value excludes. */
     hint?: string;
     /** How the value is computed, shown as a tooltip on the label. */
@@ -28,13 +33,14 @@
     href?: string;
     /** Change against the previous window; its arrow and text carry the meaning, not the tone. */
     delta?: { text: string; tone: "good" | "bad" | "neutral"; dir: "up" | "down" | null };
-    /** One value per day, null for a day with nothing to plot, and the line's CSS color. */
-    spark?: { values: (number | null)[]; color: string };
+    /** Lines of one value per day, null for a day with nothing to plot, each with its CSS color. */
+    spark?: SparkSeries[];
   }
 </script>
 
 <script lang="ts">
   import { fly } from "svelte/transition";
+  import { valueText } from "../format";
   import { prefersReducedMotion } from "../motion";
   import Icon from "./Icon.svelte";
   import InfoTip from "./InfoTip.svelte";
@@ -58,6 +64,22 @@
 
 </script>
 
+{#snippet shown(value: Stat["value"])}
+  {#if typeof value === "string"}
+    <UnitValue {value} />
+  {:else}
+    <span class="parts"
+      >{#each value as part, i (i)}{#if i}<span class="visually-hidden">{", "}</span>{/if}<span
+          class="part"
+          class:danger={part.tone === "danger"}
+          ><span class="num">{part.value}</span>{#if part.unit}<span class="visually-hidden">{" "}</span><span
+              class="word">{part.unit}</span
+            >{/if}</span
+        >{/each}</span
+    >
+  {/if}
+{/snippet}
+
 <div class="strip-wrap" aria-busy={busy}>
   <dl class="strip" class:busy>
     {#if stats.length === 0 && placeholders}
@@ -76,28 +98,30 @@
             >{:else}<span>{stat.label}</span>{/if}
           {#if stat.href}<span class="go"><Icon name="arrow-up-right" size={14} /></span>{/if}
         </dt>
-        <dd class="value" class:danger={stat.tone === "danger"} class:flaky={stat.tone === "flaky"}>
-          {#key stat.value}
-            <span class="swap" title={stat.value} in:fly={{ y: 3, duration: reduced ? 0 : 200 }}>
+        <dd class="value" class:multi={typeof stat.value !== "string"} class:danger={stat.tone === "danger"} class:flaky={stat.tone === "flaky"}>
+          {#key valueText(stat.value)}
+            <span class="swap" title={valueText(stat.value)} in:fly={{ y: 3, duration: reduced ? 0 : 200 }}>
               {#if stat.href}
-                <a href={stat.href}><UnitValue value={stat.value} /></a>
+                <a href={stat.href}>{@render shown(stat.value)}</a>
               {:else}
-                <UnitValue value={stat.value} />
+                {@render shown(stat.value)}
               {/if}
             </span>
           {/key}
         </dd>
         <!-- Every card renders all five rows, so the subgrid lines them up across cards. -->
-        <dd class="meta" aria-hidden={stat.delta ? undefined : "true"}>
+        <dd class="meta" class:multi={typeof stat.value !== "string"} aria-hidden={stat.delta ? undefined : "true"}>
           {#if stat.delta}
             <TrendBadge dir={stat.delta.dir} text={stat.delta.text} tone={stat.delta.tone} />{#if deltaLabel}<span
                 class="vs">{deltaLabel}</span
               >{/if}
           {/if}
         </dd>
-        <dd class="hint" title={stat.hint} aria-hidden={stat.hint ? undefined : "true"}>{stat.hint ?? ""}</dd>
+        {#if typeof stat.value === "string"}
+          <dd class="hint" title={stat.hint} aria-hidden={stat.hint ? undefined : "true"}>{stat.hint ?? ""}</dd>
+        {/if}
         <dd class="spark-cell" aria-hidden={stat.spark ? undefined : "true"}>
-          {#if stat.spark}<Sparkline values={stat.spark.values} color={stat.spark.color} {highlight} />{/if}
+          {#if stat.spark}<Sparkline series={stat.spark} {highlight} />{/if}
         </dd>
       </div>
     {/each}
@@ -177,7 +201,7 @@
   }
 
   .value {
-    margin: var(--space-2) 0;
+    margin: var(--space-1) 0 var(--space-2);
     font-size: var(--text-kpi);
     font-weight: 600;
     line-height: 32px;
@@ -211,6 +235,31 @@
   .value a:focus-visible::after {
     outline: 2px solid var(--focus);
     outline-offset: 1px;
+  }
+
+  /* One part per line at headline size, its word set like a unit beside the number. */
+  .parts {
+    display: flex;
+    flex-direction: column;
+    line-height: 26px;
+  }
+
+  /* A multi-part value takes the value and delta rows, and its delta moves to the hint row, which
+     the card leaves empty, so the stacked lines fit in rows the other cards already use. */
+  .value.multi {
+    grid-row: 2 / span 2;
+  }
+
+  .meta.multi {
+    grid-row: 4;
+  }
+
+  .word {
+    margin-left: 4px;
+    color: var(--text-muted);
+    font-size: 0.6em;
+    font-weight: 500;
+    letter-spacing: 0;
   }
 
   .danger {

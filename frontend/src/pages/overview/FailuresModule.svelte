@@ -33,7 +33,7 @@
 
   const query = createQuery(
     (signal) =>
-      getActivity({ outcome: "fail", limit: LIMIT }, { signal, scope: spanScope(span) }),
+      getActivity({ outcome: ["fail"], limit: LIMIT }, { signal, scope: spanScope(span) }),
     () => span,
   );
 

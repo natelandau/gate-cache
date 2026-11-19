@@ -1,6 +1,6 @@
 /** Bars and drill-downs for the overview's Breakdown panel. */
 
-import type { BreakdownRow } from "./api";
+import type { ActivityGroup, BreakdownRow } from "./api";
 import type { Bar } from "./components/BarList.svelte";
 import { dimension, type Dimension } from "./dimensions";
 import { UNKNOWN_REPO, type Route } from "./router.svelte";
@@ -92,6 +92,10 @@ export type DrillDown =
 export function drillDown(group: Dimension, row: BreakdownRow): DrillDown {
   if (group === "repo") return { kind: "repo", repo: row.repo ?? UNKNOWN_REPO };
   if (group === "gate" && row.name !== null) return { kind: "gate", repo: row.repo, name: row.name };
-  const label = `${dimension(group).label}: ${row.label}`;
-  return { kind: "activity", route: { page: "activity", group: { by: group, key: row.key, label } } };
+  return { kind: "activity", route: { page: "activity", group: rowGroup(group, row) } };
+}
+
+/** Return the Activity filter to the runs of one Breakdown row, with chip text such as "Branch: main". */
+export function rowGroup(by: Dimension, row: Pick<BreakdownRow, "key" | "label">): ActivityGroup {
+  return { by, key: row.key, label: `${dimension(by).label}: ${row.label}` };
 }

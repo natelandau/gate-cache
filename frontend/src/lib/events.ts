@@ -18,7 +18,7 @@ export const OUTCOMES: Record<Outcome, { label: string; long: string; tone: Outc
   },
   pass: { label: "Pass", long: "Ran and passed", tone: "ok", description: "Ran and passed; the pass was cached." },
   pass_unrecorded: {
-    label: "Pass, not cached",
+    label: "Pass (not cached)",
     long: "Passed, pass not cached",
     tone: "info",
     description: "Ran and passed, but the pass was not cached because the files changed.",
@@ -63,6 +63,16 @@ export function timeText(event: EventRow): string {
 /** Return the first 10 characters of a git tree hash, or "" without one. */
 export function shortTree(tree: string | null): string {
   return tree ? tree.slice(0, 10) : "";
+}
+
+/** Return the hover text for a run's outcome badge: its details and its time. */
+export function runTitle(event: EventRow): string {
+  return `${eventTitle(event)} · ${timeText(event)}`;
+}
+
+/** Return the key a run's name adds to its gate, such as "@v2", or "" when it has none. */
+export function runSuffix(event: EventRow): string {
+  return event.name.slice(event.gate.length);
 }
 
 /** Return the hover text for an event: outcome, time, and whichever details it has. */

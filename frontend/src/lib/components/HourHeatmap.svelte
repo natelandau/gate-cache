@@ -4,17 +4,11 @@
   columns. Cells are colored on the metric's ramp, scaled to the busiest hour. Each cell's
   tooltip names the weekday, hour, and value, and a hidden table lists the same data.
 
-  With `href`, each cell with a value is a link, and the grid has one tab stop: arrow keys move
-  between linked cells and Enter follows the focused one.
-
   Props:
   - `cells`: the hourly buckets; a missing weekday and hour counts as zero
   - `metric`: which value to show and which ramp to use
-  - `href`: optional link for a weekday and hour, such as Activity filtered to the runs the
-    metric counts there
 -->
 <script lang="ts">
-  import { tick } from "svelte";
   import type { HourCell } from "../api";
   import {
     formatHeatAmount,
@@ -25,7 +19,6 @@
     heatValue,
     hourLabel,
     METRIC_COLORS,
-    nextActive,
     weekdayName,
     type HeatMetric,
   } from "../heat";
@@ -35,10 +28,9 @@
   interface Props {
     cells: HourCell[];
     metric: HeatMetric;
-    href?: (weekday: number, hour: number) => string;
   }
 
-  let { cells, metric, href }: Props = $props();
+  let { cells, metric }: Props = $props();
 
   const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
   const WEEKDAYS = Array.from({ length: 7 }, (_, weekday) => ({
@@ -64,46 +56,10 @@
   const hourMax = $derived(Math.max(0, ...byHour));
   const weekdayMax = $derived(Math.max(0, ...byWeekday));
   const peak = $derived(peakCell(cells, metric));
-
-  // Cells are numbered weekday * 24 + hour, so Up and Down move a day.
-  const STEPS = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -24, ArrowDown: 24 };
-  let moved: number | null = $state(null);
-  let grid: HTMLElement | undefined = $state();
-
-  // A cell whose shown value is zero stands for no runs, so it gets no link.
-  const linked = $derived(rows.flatMap((row) => row.values.map((value) => value > 0)));
-  const focusAt = $derived(moved !== null && linked[moved] ? moved : (nextActive(0, 1, linked) ?? -1));
-
-  async function onkeydown(event: KeyboardEvent): Promise<void> {
-    // Arrows keep moving the same way past hours with no runs; Home and End search inward.
-    // Enter follows the focused link natively.
-    let start: number;
-    let step: number;
-    if (event.key === "Home") [start, step] = [0, 1];
-    else if (event.key === "End") [start, step] = [167, -1];
-    else if (Object.hasOwn(STEPS, event.key)) {
-      step = STEPS[event.key as keyof typeof STEPS];
-      start = focusAt + step;
-    } else return;
-    event.preventDefault();
-    const next = nextActive(start, step, linked);
-    if (next === null) return;
-    moved = next;
-    await tick();
-    grid?.querySelector<HTMLElement>(`[data-index="${next}"]`)?.focus();
-  }
 </script>
 
 <figure class="hours">
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="grid"
-    aria-hidden={href ? undefined : "true"}
-    role={href ? "group" : undefined}
-    aria-label={href ? "Open the gate calls of a weekday and hour" : undefined}
-    onkeydown={href ? onkeydown : undefined}
-    bind:this={grid}
-  >
+  <div class="grid" aria-hidden="true">
     <span aria-hidden="true"></span>
     {#each byHour as total, hour (hour)}
       <span class="hour-total" aria-hidden="true" title="{hourLabel(hour)}: {formatHeatValue(metric, total)}"
@@ -119,21 +75,7 @@
       {#each row.values as value, hour (hour)}
         {@const text = `${HEAT_LABELS[metric]}: ${formatHeatValue(metric, value)}`}
         {@const title = `${row.short} ${hourLabel(hour)}\n${text}`}
-        {@const index = weekday * 24 + hour}
-        {#if href && linked[index]}
-          <a
-            class="cell"
-            href={href(weekday, hour)}
-            style:background={heatColor(metric, heatStep(value, max))}
-            {title}
-            aria-label="{row.long} {hourLabel(hour)}, {text}. Open in Activity"
-            tabindex={index === focusAt ? 0 : -1}
-            data-index={index}
-            onfocus={() => (moved = index)}
-          ></a>
-        {:else}
-          <span class="cell" style:background={heatColor(metric, heatStep(value, max))} {title}></span>
-        {/if}
+        <span class="cell" style:background={heatColor(metric, heatStep(value, max))} {title}></span>
       {/each}
       <span class="day-total" aria-hidden="true"
         ><i style:width="{weekdayMax ? (byWeekday[weekday]! / weekdayMax) * 28 : 0}px" style:background={METRIC_COLORS[metric]}
@@ -199,21 +141,6 @@
     aspect-ratio: 1;
     border-radius: 3px;
     transition: background-color var(--dur-slow) var(--ease);
-  }
-
-  a.cell {
-    transition:
-      background-color var(--dur-slow) var(--ease),
-      box-shadow var(--dur-fast) var(--ease);
-  }
-
-  a.cell:hover {
-    box-shadow: inset 0 0 0 1.5px var(--text);
-  }
-
-  a.cell:focus-visible {
-    outline: 2px solid var(--focus);
-    outline-offset: 1px;
   }
 
   .hour-total {
