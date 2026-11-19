@@ -233,10 +233,20 @@ def _gitlink_reason(directory: Path, label: str, env: dict[str, str]) -> str | N
         return hidden
     if _status(directory, env):
         return f"submodule not at its index state: {label}"
+    if _ignores_case(directory, env):
+        mismatch = _case_mismatch_reason(root=directory, paths=listing.paths(), label=f"{label}/")
+        if mismatch:
+            return mismatch
     nested = (
         _gitlink_reason(directory / path, f"{label}/{path}", env) for path in listing.gitlinks()
     )
     return next((reason for reason in nested if reason), None)
+
+
+def _ignores_case(directory: Path, env: dict[str, str]) -> bool:
+    """Return True when the repository at DIRECTORY sets core.ignorecase."""
+    result = run_git("config", "--bool", "core.ignorecase", cwd=directory, env=env, check=False)
+    return result.stdout.strip() == "true"
 
 
 @dataclass(frozen=True)
@@ -346,13 +356,12 @@ def _staged_reason(root: Path, env: dict[str, str]) -> str | None:
             reason = _gitlink_reason(root / path, path, submodule_env)
             if reason:
                 return reason
-    ignorecase = run_git("config", "--bool", "core.ignorecase", cwd=root, env=env, check=False)
-    if ignorecase.stdout.strip() == "true":
+    if _ignores_case(root, env):
         return _case_mismatch_reason(root=root, paths=listing.paths())
     return None
 
 
-def _case_mismatch_reason(root: Path, paths: Iterable[str]) -> str | None:
+def _case_mismatch_reason(root: Path, paths: Iterable[str], label: str = "") -> str | None:
     """Return a reason when an indexed path is spelled differently on disk than in the index.
 
     On a case-insensitive filesystem a case-only rename keeps the old index entry, so the tree
@@ -366,7 +375,7 @@ def _case_mismatch_reason(root: Path, paths: Iterable[str]) -> str | None:
             if parent not in listings:
                 listings[parent] = {child.name for child in parent.iterdir()}
             if part not in listings[parent]:
-                return f"path differs from the index only by case: {path}"
+                return f"path differs from the index only by case: {label}{path}"
             parent = parent / part
     return None
 

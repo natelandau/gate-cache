@@ -826,6 +826,23 @@ def test_case_only_rename_is_unknown(git_repo: Path) -> None:
     assert take_snapshot().reason == "path differs from the index only by case: a.txt"
 
 
+def test_case_only_rename_in_nested_submodule_is_unknown(git_repo: Path, tmp_path: Path) -> None:
+    """Verify a case-only rename two submodule levels down makes the tree unknown."""
+    sub = add_submodule(git_repo, tmp_path)
+    if not (sub / ".GIT").exists():
+        pytest.skip("needs a case-insensitive filesystem")
+    inner = sub / "inner"
+    inner.mkdir()
+    git("init", "-q", cwd=inner)
+    (inner / "x.txt").write_text("one\n")
+    _commit_in(inner, "inner")
+    _commit_in(sub, "embed inner")
+    git("add", "sub", cwd=git_repo)
+    git("commit", "-q", "-m", "bump", cwd=git_repo)
+    (inner / "x.txt").rename(inner / "X.txt")
+    assert take_snapshot().reason == "path differs from the index only by case: sub/inner/x.txt"
+
+
 def test_file_ignored_only_case_insensitively_is_known(git_repo: Path) -> None:
     """A file that an exclude ignores only by matching case-insensitively is not a rename."""
     if not (git_repo / "A.TXT").exists():
