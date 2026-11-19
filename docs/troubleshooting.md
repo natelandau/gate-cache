@@ -65,11 +65,7 @@ To run every command in full while you find the cause, set `GATE_CACHE_DISABLE=1
 
 ??? question "The hook fails with exit code 127, or uses the wrong tool version"
 
-    The gate-cache hook runs in its own Python environment, which comes first on the `PATH`. Start the command with the command that your project uses to run its tools, such as `npm test`, or with an absolute path. Read [Git hooks](guides/git-hooks.md#start-the-command-in-the-project-environment).
-
-??? question "A warning says that `VIRTUAL_ENV` does not match the project"
-
-    The warning comes from the hook environment and has no effect on the run.
+    The gate-cache hook starts the command with the `PATH` of git. A tool that is installed only in the project, such as in `.venv/bin`, is not on that `PATH`. Start the command with the command that your project uses to run its tools, such as `npm test`, or with a path such as `.venv/bin/pytest`. Read [Git hooks](guides/git-hooks.md#find-the-tools-of-the-command).
 
 ## The dashboard
 

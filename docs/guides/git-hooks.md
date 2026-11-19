@@ -47,7 +47,7 @@ Use the same gate name in the hook as in your terminal, so that a pass in one ma
 
     The hook runs at commit time and at push time. To limit it to one stage, add `stages: [pre-push]`. At commit time, prek and pre-commit put aside the changes that you did not stage, so gate-cache matches the content that you commit.
 
-    Read [Start the command in the project environment](#start-the-command-in-the-project-environment) before you use this hook.
+    Read [Find the tools of the command](#find-the-tools-of-the-command) before you use this hook.
 
 === "prek or pre-commit, with your own command"
 
@@ -67,16 +67,16 @@ Use the same gate name in the hook as in your terminal, so that a pass in one ma
 
     This form needs `gate-cache` on the `PATH` of each developer.
 
-## Start the command in the project environment
+## Find the tools of the command
 
-This section applies only to the gate-cache hook of prek and pre-commit. That hook runs in its own Python environment, and that environment comes first on the `PATH` of the command. A bare tool name, such as `pytest`, finds the copy in the hook environment, or finds nothing.
+This section applies only to the gate-cache hook of prek and pre-commit. The hook starts the command with the `PATH` of the git command that runs the hook. A bare tool name, such as `pytest` or `npm`, therefore finds the same copy as in your terminal.
 
-Start the command in one of these ways:
+If a tool is installed only in the project, such as in `.venv/bin` or `node_modules/.bin`, and that directory is not on your `PATH`, start the command in one of these ways:
 
 - With the command that your project uses to run its tools, such as `npm test`, `bundle exec rspec`, or `poetry run pytest`.
-- With an absolute path, such as `.venv/bin/pytest`.
+- With a path from the top of the repository, such as `.venv/bin/pytest`.
 
-Some Python project tools print a warning that `VIRTUAL_ENV` does not match the project. The warning comes from the hook environment and has no effect on the run.
+A Python tool that you add to the hook with `additional_dependencies` also works. The hook uses it only when no tool with the same name is on your `PATH`.
 
 ## Things that hooks do not support
 

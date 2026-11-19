@@ -148,8 +148,8 @@ repos:
 
 - Hook `args` do not go through a shell. A name that uses `$(...)` must live in a script or a task-runner recipe that the hook calls.
 - At commit time, gate-cache matches the staged content that you commit.
-- The hook runs in its own virtual environment, which comes first on `PATH`. Start the command with the runner that the project already uses, such as `npm test`, `bundle exec`, or `uv run`, or with an absolute path. Never a bare tool name.
-- If the project already runs its checks from a script, a package script, or a task-runner recipe, a local hook that calls that command is simpler. It runs the command from the `PATH` of the developer:
+- The hook starts the command with the `PATH` of the developer, so a bare tool name finds the same copy as in the terminal. If the tool is installed only in the project, such as in `.venv/bin` or `node_modules/.bin`, start the command with the runner that the project already uses, such as `npm test`, `bundle exec`, or `uv run`, or with a path such as `.venv/bin/pytest`.
+- If the project already runs its checks from a script, a package script, or a task-runner recipe, a local hook that calls that command is simpler. A commit, a push, an agent, and the terminal then all run the same command:
 
 ```yaml
 repos:

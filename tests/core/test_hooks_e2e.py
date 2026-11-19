@@ -32,6 +32,33 @@ def _isolate_homes(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
         monkeypatch.setenv(var, str(home))
 
 
+def _install_hook(git_repo: Path, hook_repo: tuple[Path, str], args: list[str]) -> None:
+    """Commit a config that runs the gate-cache hook with args."""
+    repo_path, sha = hook_repo
+    config = (
+        "repos:\n"
+        f"  - repo: {repo_path}\n"
+        f"    rev: {sha}\n"
+        "    hooks:\n"
+        "      - id: gate-cache\n"
+        f"        args: {json.dumps(args)}\n"
+    )
+    (git_repo / ".pre-commit-config.yaml").write_text(config, encoding="utf-8")
+    git("add", ".pre-commit-config.yaml", cwd=git_repo)
+    git("commit", "-q", "-m", "add config", cwd=git_repo)
+
+
+def _run_hook(runner: str, git_repo: Path) -> subprocess.CompletedProcess[str]:
+    """Run every hook on all files, as a developer or an agent would."""
+    return subprocess.run(  # noqa: S603
+        [runner, "run", "--all-files", "--verbose"],
+        cwd=git_repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 @pytest.fixture(scope="session")
 def hook_repo(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, str]:
     """Build a committed copy of the project to serve as the hook repository."""
@@ -103,36 +130,48 @@ def test_hook_runs_then_skips(
     repo_path, sha = request.getfixturevalue("hook_repo")
     _isolate_homes(monkeypatch, runner_homes[runner])
     args = ["--name", "check", "--", sys.executable, *counter.argv()[1:]]
-    config = (
-        "repos:\n"
-        f"  - repo: {repo_path}\n"
-        f"    rev: {sha}\n"
-        "    hooks:\n"
-        "      - id: gate-cache\n"
-        f"        args: {json.dumps(args)}\n"
-    )
-    (git_repo / ".pre-commit-config.yaml").write_text(config, encoding="utf-8")
-    git("add", ".pre-commit-config.yaml", cwd=git_repo)
-    git("commit", "-q", "-m", "add config", cwd=git_repo)
+    _install_hook(git_repo=git_repo, hook_repo=(repo_path, sha), args=args)
 
-    first = subprocess.run(  # noqa: S603
-        [runner, "run", "--all-files", "--verbose"],
-        cwd=git_repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    first = _run_hook(runner=runner, git_repo=git_repo)
     assert first.returncode == 0, first.stdout + first.stderr
     assert counter.count == 1
     assert "check already passed on tree" not in first.stdout + first.stderr
 
-    second = subprocess.run(  # noqa: S603
-        [runner, "run", "--all-files", "--verbose"],
-        cwd=git_repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    second = _run_hook(runner=runner, git_repo=git_repo)
     assert second.returncode == 0, second.stdout + second.stderr
     assert counter.count == 1
     assert "check already passed on tree" in second.stdout + second.stderr
+
+
+@pytest.mark.parametrize("runner", RUNNERS)
+def test_hook_command_finds_the_users_tools(
+    runner: str,
+    runner_homes: dict[str, Path],
+    git_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """A bare tool name in the hook's args finds the user's copy, outside the hook's Python env."""
+    _require(runner)
+    repo_path, sha = request.getfixturevalue("hook_repo")
+    _isolate_homes(monkeypatch, runner_homes[runner])
+    # The hook env's bin/ holds a gate-cache script, so a user tool by that name shows
+    # which one a bare name resolves to. A shell script keeps the project free of Python.
+    user_bin = tmp_path / "user-bin"
+    user_bin.mkdir()
+    seen = tmp_path / "seen"
+    tool = user_bin / "gate-cache"
+    tool.write_text(
+        f'#!/bin/sh\nprintf "%s" "${{VIRTUAL_ENV-unset}}" > "{seen}"\n', encoding="utf-8"
+    )
+    tool.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{user_bin}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    _install_hook(
+        git_repo=git_repo, hook_repo=(repo_path, sha), args=["--name", "probe", "--", "gate-cache"]
+    )
+
+    result = _run_hook(runner=runner, git_repo=git_repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert seen.read_text(encoding="utf-8") == "unset"
