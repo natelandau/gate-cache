@@ -1,6 +1,6 @@
 # gate-cache
 
-gate-cache is a CLI that wraps a lint or test command. It skips the command when the same named command already passed on the same git tree. The code is in `src/gate_cache/` and the tests are in `tests/`. `README.md` and the documentation site in `docs/` hold the user documentation. `CONTRIBUTING.md` holds the developer setup and workflow for people. `src/gate_cache/agent/skill.md` and `prompt.md` hold the guides for coding agents that `gate-cache --skill` and `--prompt` print. When a change alters behavior, an option, or a message that a guide describes, update the guide in the same change.
+gate-cache is a CLI that wraps a lint or test command. It skips the command when the same named command already passed on the same git tree. The code is in `src/gate_cache/` and the tests are in `tests/`. `README.md` and the documentation site in `docs/` hold the user documentation. `CONTRIBUTING.md` holds the developer setup and workflow for people. `src/gate_cache/agent/skill.md` and `prompt.md` hold the guides for coding agents that `gate-cache --skill` and `--prompt` print. [Agent guides](#agent-guides) sets what goes in them.
 
 ## Purpose
 
@@ -16,17 +16,26 @@ No goal justifies a wrong skip. A skip of a command that would fail is the worst
 
 `docs/` is the source of the documentation site at https://natelandau.github.io/gate-cache/. Zensical builds it from `zensical.toml`, and each release publishes it. The README is a short introduction that links to the site.
 
-- The reader is a developer who adds gate-cache to a project. Give that reader enough to install, use, configure, and troubleshoot gate-cache, and no more. Leave out how the code works inside, the algorithms, and edge cases that the reader will not meet.
+- The reader is a developer who adds gate-cache to a project. Give that reader enough to install, use, configure, and troubleshoot gate-cache, and no more. Leave out how the code works inside: algorithms, thresholds, limits, file layouts, and the exact conditions under which gate-cache prints a message or takes an action. Leave out edge cases that the reader will not meet. Include such a detail only when the reader must act on it.
 - Use words that any developer knows. Never use colloquialisms, terms coined in a spec or a session, or names from the code, such as module, function, or internal concept names. When the reader must know a term that gate-cache prints, such as "gate" or "tree", explain it where it first appears.
 - Never assume which tools the reader has or knows. Assume only git, gate-cache, a shell, and major languages and operating systems, such as Python, Node, Ruby, macOS, and Linux. Any other tool, such as a task runner, a package manager like uv, or a hook manager like prek, is optional: show it as one of several choices, explain what it is, or leave it out. Never take the tools or setup of this repository or this computer as what readers use. This rule also applies to `src/gate_cache/agent/skill.md` and `prompt.md`, because agents follow them in repositories with other tools.
-- The site is not a record of changes. `CHANGELOG.md` is. Change a page only when a change alters something that the page tells the reader to do or expect. Then rewrite the affected text so the page reads as one whole. Do not add a sentence for each fix, tweak, new check, or supported edge case.
+- The site is not a record of changes. `CHANGELOG.md` is. Change a page only when a change alters something that the page tells the reader to do or expect. Then rewrite the affected text so the page reads as one whole. Do not add a sentence for each fix, tweak, new check, or supported edge case. A detail does not go on a page because the code has it, because a spec names it, or because a review flags that the page omits it.
 - `docs/reference/agent-guide.md` is generated from `src/gate_cache/agent/skill.md` and is not committed. Edit the source, not the page. The site links to `CHANGELOG.md` and `CONTRIBUTING.md` in the repository and does not copy them.
 - `docs/reference/marker-format.md` documents a public contract for tools that read markers. A core test runs its shell snippets.
+
+## Agent guides
+
+`gate-cache --skill` prints `src/gate_cache/agent/skill.md`. `gate-cache --prompt` prints `prompt.md`.
+
+- The skill is for an agent that sets up, configures, or troubleshoots gate-cache in a project, or that must learn the CLI. It holds the rules, pitfalls, and workflows for that work. An agent in a normal development session does not read it.
+- An agent in a normal session sees only the `gate-cache:` stderr lines and the exit codes. Each line must make sense with no guide.
+- Change the skill only when a change alters what an agent does to set up, configure, or troubleshoot gate-cache, or how it uses the CLI. The skill is not a list of every message, option, or behavior. A new message or behavior does not go in the skill only because the skill omits it.
+- `prompt.md` holds only a few steps and the questions for the user. The agent learns the rest from the skill.
 
 ## Conventions
 
 - A command that deletes data on request, such as `clear` and `stats clear`, calls `console.confirm_deletion` and offers `-y`/`--yes`. Automatic cleanup, such as marker pruning, archive retention, and temp files, deletes with no prompt.
-- `gate-cache --help` stays short and written for people. One line tells agents to run `--skill`. Agent guidance, such as rules, pitfalls, and workflows, goes in `src/gate_cache/agent/skill.md`. `prompt.md` holds only a few steps and the questions for the user. The agent learns the rest from the skill.
+- `gate-cache --help` stays short and written for people. One line tells agents to run `--skill`.
 
 ## Worktrees
 
@@ -51,7 +60,7 @@ Run linters and tests only through these duties, never directly, so every run sh
 
 ## Commits
 
-Before you open a pull request, fast-forward a branch onto `main`, or squash a branch into `main`, compare `src/gate_cache/agent/skill.md` (the `gate-cache --skill` guide) with the branch diff. If the branch adds or changes a feature, option, or message that the guide describes or omits, update the guide on the branch.
+Before you open a pull request, fast-forward a branch onto `main`, or squash a branch into `main`, compare `src/gate_cache/agent/skill.md` (the `gate-cache --skill` guide) with the branch diff. If the branch makes the guide wrong, or changes how an agent sets up, configures, or troubleshoots gate-cache, update the guide on the branch. [Agent guides](#agent-guides) sets the scope.
 
 Mark a commit as a breaking change (`!` in the subject and a `BREAKING CHANGE:` footer) only when it breaks the CLI: a removed or renamed command or flag, a changed exit code, or a change to the CLI's output. A change to the dashboard UI is never breaking, even when it removes a page.
 

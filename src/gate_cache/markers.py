@@ -175,17 +175,29 @@ def write_miss(  # noqa: PLR0913
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
-    """Write a timestamped JSON record via a temp file and rename, so readers never see half."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write a JSON record stamped with the current time."""
     timestamp = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-    payload = {**payload, "timestamp": timestamp}
+    write_json_atomic(path, {**payload, "timestamp": timestamp})
+
+
+def write_json_atomic(path: Path, value: object) -> None:
+    """Write JSON via a temp file and rename, so readers never see half a file.
+
+    Args:
+        path: The file to write; its directory is created when missing.
+        value: The JSON value to write.
+
+    Raises:
+        OSError: If the file cannot be written. Any temp file is removed.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp_name: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", dir=path.parent, prefix=TEMP_PREFIX, delete=False
         ) as tmp:
             tmp_name = tmp.name
-            json.dump(payload, tmp)
+            json.dump(value, tmp)
         Path(tmp_name).replace(path)
     except OSError:
         if tmp_name is not None:
@@ -221,15 +233,15 @@ def marker_exists(path: Path) -> bool:
         return False
 
 
-def read_record(path: Path) -> dict[str, Any] | None:
-    """Parse a JSON object from a small record file, refusing FIFOs and oversized files.
+def read_json(path: Path) -> object:
+    """Parse JSON from a small file, refusing FIFOs and oversized files.
 
     Args:
-        path: The record file to read.
+        path: The file to read.
 
     Returns:
-        The parsed object, or None when the file is missing, not a regular file, too
-        large, or not a JSON object.
+        The parsed value, or None when the file is missing, not a regular file, too
+        large, or not JSON.
     """
     try:
         # O_NONBLOCK keeps a FIFO from blocking the open; fstat on the open file then rejects it.
@@ -240,10 +252,39 @@ def read_record(path: Path) -> dict[str, Any] | None:
             raw = handle.read(MAX_RECORD_BYTES + 1)
         if len(raw) > MAX_RECORD_BYTES:
             return None
-        data = json.loads(raw.decode("utf-8"))
+        return json.loads(raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, ValueError, RecursionError):
         return None
+
+
+def read_record(path: Path) -> dict[str, Any] | None:
+    """Parse a JSON object from a small record file.
+
+    Args:
+        path: The record file to read.
+
+    Returns:
+        The parsed object, or None when `read_json` gives anything but a JSON object.
+    """
+    data = read_json(path)
     return data if isinstance(data, dict) else None
+
+
+def valid_duration(value: object) -> float | None:
+    """Return a stored run time as seconds, or None when it is not a plausible one.
+
+    Args:
+        value: A value read from JSON.
+
+    Returns:
+        The duration in seconds, or None for a non-number, a bool, or a value out of range.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    # The range check also rejects NaN, infinity, and ints too large for a float.
+    if not 0 <= value <= MAX_DURATION_SECONDS:
+        return None
+    return float(value)
 
 
 def marker_duration(path: Path) -> float | None:
@@ -259,13 +300,7 @@ def marker_duration(path: Path) -> float | None:
         The duration in seconds, or None when the marker has no usable value.
     """
     record = read_record(path)
-    value = record.get("duration") if record is not None else None
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    # The range check also rejects NaN, infinity, and ints too large for a float.
-    if not 0 <= value <= MAX_DURATION_SECONDS:
-        return None
-    return float(value)
+    return valid_duration(record.get("duration")) if record is not None else None
 
 
 @dataclass(frozen=True)

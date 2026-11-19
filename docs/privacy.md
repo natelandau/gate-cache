@@ -8,7 +8,7 @@ gate-cache sends nothing to any server. Stats recording is off until you turn it
 
 ## Records of passes
 
-To skip a gate, gate-cache stores a small file for each pass in the `.git` directory of the repository. The file holds the gate name, the command line, the hash of the files, the time, and the run time. It holds no file content and no command output. `gate-cache clear` deletes these files.
+To skip a gate, gate-cache stores a small file for each pass in the `.git` directory of the repository. The file holds the gate name, the command line, the hash of the files, the time, and the run time. It holds no file content and no command output. gate-cache also keeps the recent run times of each gate, with no other data. `gate-cache clear` deletes these files.
 
 ## Stats
 

@@ -11,6 +11,7 @@ gate-cache writes files in three places: the `.git` directory of each repository
 | Path | Holds | Deleted |
 | --- | --- | --- |
 | `.git/gate-cache/` | One small file for each pass of a gate, and a record of each failed run that `gate-cache status` shows. | After 30 days, or by `gate-cache clear`. |
+| `.git/gate-cache-durations/` | The recent run times of each gate, which gate-cache uses to show how long a gate usually takes. | After 30 days, or by `gate-cache clear`. |
 | `.git/gate-cache-locks/` | One lock file for each gate that runs, so that a second run of the same gate can wait. | When gate-cache deletes old records, at most once a day. |
 
 All worktrees of a repository use the `.git` directory of the main checkout, so they share these files. A fresh clone has none of them. `GATE_CACHE_MAX_AGE_DAYS` changes how long a record of a pass lasts. Read [Configuration](configuration.md).
