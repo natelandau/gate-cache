@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import shlex
+import shutil
 import sys
 import time
 from dataclasses import dataclass, replace
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from gate_cache import __version__
 from gate_cache.console import confirm_deletion, format_duration, kv, say, stdin_isatty
+from gate_cache.durations import durations_dir, durations_path, record_duration, usual_duration
 from gate_cache.env import CI_ENV, flag_on
 from gate_cache.gate_lock import (
     GateLock,
@@ -58,6 +60,9 @@ _NO_COMMON_DIR_REASON = "could not locate git directory"
 _FILES_CHANGED = "files changed during the run"
 FILES_CHANGED_NOTICE = f"{_FILES_CHANGED}, not recording pass"
 REPORTED_FAILURE_REASON = "failed in another run, not rerun"
+USUAL_DURATION_NOTICE = "running {name} (usually {duration})"
+# A fast gate's usual time tells no one anything, so its runs stay quiet.
+USUAL_DURATION_MIN_SECONDS = 1.0
 
 
 def disabled_reason(environ: Mapping[str, str] | None = None) -> str | None:
@@ -312,6 +317,11 @@ class _Attempt:
         """Return the gate lock file of the key and name."""
         return lock_path(self.common_dir, self.key, self.name)
 
+    @property
+    def durations(self) -> Path:
+        """Return the file of the gate's recent run times, shared across trees."""
+        return durations_path(self.common_dir, self.name)
+
     def record_pass(self, duration: float) -> None:
         """Write the marker and drop any earlier miss; a failure only warns.
 
@@ -354,9 +364,10 @@ class _Attempt:
             say(f"warning: could not record miss: {error}")
 
     def prune(self) -> None:
-        """Delete old markers, miss records, and free lock files; both prunes ignore errors."""
+        """Delete old markers, miss records, run times, and free lock files, ignoring errors."""
         max_age_days = marker_max_age_days()
         prune_markers(marker_dir(self.common_dir), max_age_days=max_age_days)
+        prune_markers(durations_dir(self.common_dir), max_age_days=max_age_days)
         prune_locks(self.common_dir, max_age_days=max_age_days)
 
     def record_if_unchanged(self, duration: float) -> bool:
@@ -629,6 +640,9 @@ class _GateRun:
 
     def _execute(self, attempt: _Attempt) -> int:
         """Run the command on the attempt's snapshot, then record its pass or miss."""
+        usual = usual_duration(attempt.durations)
+        if usual is not None and usual > USUAL_DURATION_MIN_SECONDS:
+            say(USUAL_DURATION_NOTICE.format(name=self.name, duration=format_duration(usual)))
         overhead = self._overhead()
         before = self.stats.usage()
         result = run_child(self.command)
@@ -641,6 +655,7 @@ class _GateRun:
             attempt.record_miss(exit_code=result.exit_code, reason=f"exit code {result.exit_code}")
         else:
             outcome = "pass_unrecorded"
+            record_duration(attempt.durations, result.duration)
             # Recording is best effort: nothing after a passing run may change its exit code.
             try:
                 if attempt.record_if_unchanged(result.duration):
@@ -1001,6 +1016,7 @@ def clear_cache(*, confirmed: bool = False) -> int:
     warning = [
         "this permanently deletes every recorded pass for this repository.",
         f"markers: {marker_dir(common_dir)}",
+        f"usual run times: {durations_dir(common_dir)}",
         "Every gate runs again in full, even on code that already passed.",
         "Recorded run stats are not affected.",
     ]
@@ -1011,5 +1027,6 @@ def clear_cache(*, confirmed: bool = False) -> int:
     except OSError as error:
         say(f"could not clear markers: {error}")
         return 1
+    shutil.rmtree(durations_dir(common_dir), ignore_errors=True)
     say(f"removed {count} marker{'' if count == 1 else 's'}")
     return 0

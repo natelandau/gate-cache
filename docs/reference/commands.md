@@ -35,7 +35,7 @@ Add the same `--path` options to look up a scoped gate. Add `--json` to print on
 
 ## `gate-cache clear`
 
-Permanently deletes every record of a pass for the repository, so every gate runs again in full. Use it after a change that gate-cache does not see, such as a tool upgrade. It asks you to type `yes` first. In a script, give `--yes`. It does not delete stats.
+Permanently deletes every record of a pass for the repository, and the run times that the `usually` estimate uses, so every gate runs again in full. Use it after a change that gate-cache does not see, such as a tool upgrade. It asks you to type `yes` first. In a script, give `--yes`. It does not delete stats.
 
 ## `gate-cache stats`
 
@@ -86,6 +86,7 @@ gate-cache writes its own lines to stderr, with the prefix `gate-cache:`. All ot
 
 | Message | Meaning |
 | --- | --- |
+| `running NAME (usually 2m 10s)` | The command is about to run. The time is the middle value of the run times of the last 5 runs that exited 0. |
 | `NAME already passed on tree HASH, skipping (saved 1m 34s)` | The gate passed before with the same hash, so the command did not run. The time is how long the command ran when it passed. |
 | `NAME already passed on paths HASH, skipping` | The same, for a gate scoped to paths. Nothing under its paths changed. |
 | `NAME is running in WORKTREE (started 1m 12s ago), waiting` | Another run of the gate with the same hash is in progress. This run waits for it. |

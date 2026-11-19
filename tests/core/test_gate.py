@@ -16,7 +16,15 @@ import pytest
 
 from gate_cache import gate as gate_module
 from gate_cache import scratch
-from gate_cache.gate import clear_cache, disabled_reason, gate_status, marker_max_age_days, run_gate
+from gate_cache.durations import DURATIONS_DIRNAME, durations_dir, durations_path, usual_duration
+from gate_cache.gate import (
+    USUAL_DURATION_NOTICE,
+    clear_cache,
+    disabled_reason,
+    gate_status,
+    marker_max_age_days,
+    run_gate,
+)
 from gate_cache.gate_lock import HELD_ENV, LOCK_DIRNAME, GateLock, Holder, lock_path, read_holder
 from gate_cache.markers import marker_dir, marker_path, miss_path, write_marker, write_miss
 from gate_cache.runner import ChildResult
@@ -301,6 +309,7 @@ def test_command_that_edits_tracked_file_records_nothing(
     assert (
         "gate-cache: files changed during the run, not recording pass\n" in capfd.readouterr().err
     )
+    assert usual_duration(durations_path(git_repo / ".git", NAME)) is not None
 
 
 def test_command_that_creates_untracked_file_records_nothing(
@@ -334,8 +343,13 @@ def test_prune_runs_after_write(git_repo: Path, counter: Counter) -> None:
     old.write_text("{}")
     stale = time.time() - 31 * 86400
     os.utime(old, (stale, stale))
+    old_durations = durations_dir(git_repo / ".git") / "old.json"
+    old_durations.parent.mkdir()
+    old_durations.write_text("[1]")
+    os.utime(old_durations, (stale, stale))
     run_gate(NAME, counter.argv())
     assert not old.exists()
+    assert not old_durations.exists()
     assert len(markers(git_repo)) == 1
 
 
@@ -446,6 +460,7 @@ def test_clear_removes_markers(
     run_gate(NAME, counter.argv())
     assert clear_cache(confirmed=True) == 0
     assert "gate-cache: removed 1 marker\n" in capfd.readouterr().err
+    assert not durations_dir(git_repo / ".git").exists()
     run_gate(NAME, counter.argv())
     assert counter.count == 2
 
@@ -1092,6 +1107,67 @@ def test_skip_without_usable_duration_has_no_suffix(
 
     assert counter.count == 1
     assert capfd.readouterr().err.endswith(", skipping\n")
+
+
+def _seed_durations(repo: Path, values: list[float]) -> Path:
+    """Store recent run times for the NAME gate."""
+    path = durations_path(repo / ".git", NAME)
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(values))
+    return path
+
+
+def test_run_announces_usual_duration(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a run prints the median of recent passes before the command runs."""
+    _seed_durations(git_repo, [120, 130, 140])
+
+    assert run_gate(NAME, counter.argv()) == 0
+
+    notice = USUAL_DURATION_NOTICE.format(name=NAME, duration="2m 10s")
+    assert f"gate-cache: {notice}\n" in capfd.readouterr().err
+
+
+@pytest.mark.parametrize("seed", [None, [1.0], [0.2, 0.4]])
+def test_run_without_slow_history_is_quiet(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str], seed: list[float] | None
+) -> None:
+    """Verify no estimate prints without history or at a median of 1s or less."""
+    if seed is not None:
+        _seed_durations(git_repo, seed)
+
+    assert run_gate(NAME, counter.argv()) == 0
+
+    assert f"running {NAME}" not in capfd.readouterr().err
+
+
+def test_exit_zero_run_records_duration(git_repo: Path, counter: Counter) -> None:
+    """Verify a passing run adds its run time to the gate's recent ones."""
+    run_gate(NAME, counter.argv())
+
+    assert usual_duration(durations_path(git_repo / ".git", NAME)) is not None
+
+
+def test_failed_run_records_no_duration(git_repo: Path, counter: Counter) -> None:
+    """Verify a failing run leaves the recent run times unchanged."""
+    path = _seed_durations(git_repo, [120])
+
+    run_gate(NAME, counter.argv(exit_code=5))
+
+    assert json.loads(path.read_text()) == [120]
+
+
+def test_unwritable_durations_keep_exit_code(
+    git_repo: Path, counter: Counter, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Verify a durations store that cannot be written changes nothing about the run."""
+    (git_repo / ".git" / DURATIONS_DIRNAME).write_text("a file, not a directory")
+
+    assert run_gate(NAME, counter.argv()) == 0
+
+    assert "warning" not in capfd.readouterr().err
+    assert len(markers(git_repo)) == 1
 
 
 def test_miss_record_has_no_duration(git_repo: Path, counter: Counter) -> None:
