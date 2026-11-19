@@ -29,6 +29,7 @@ To run every command in full while you find the cause, set `GATE_CACHE_DISABLE=1
 
     - `caching disabled in CI`: the `CI` variable is on. Read [CI](guides/ci.md).
     - `--path ... matches no files`: correct the path.
+    - `file differs from its git checkout form: FILE` or `executable bit differs from the index: FILE`: git converts this file when it stores it, for example its line endings, and the file on disk is not what git writes at checkout. Save the file with the line endings that git checks out, or restore its executable bit. If the file has no uncommitted changes, `git checkout -- FILE` writes it again.
     - A merge conflict, a sparse checkout, or a submodule that is not checked out or has local changes: gate-cache cannot hash the files until you fix the state of the repository.
 
 ??? question "Someone runs the tool directly"

@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from gate_cache import scratch
+from gate_cache import scratch, snapshot
 from gate_cache.git import GitFailedError, GitResult, git_common_dir
 from gate_cache.scratch import SCRATCH_PREFIX, runtime_area
 from gate_cache.snapshot import take_snapshot
@@ -914,3 +914,127 @@ def test_case_only_rename_of_force_added_ignored_file_is_unknown(git_repo: Path)
     git("commit", "-q", "-m", "force-add log", cwd=git_repo)
     (git_repo / "debug.log").rename(git_repo / "Debug.log")
     assert take_snapshot().reason == "path differs from the index only by case: debug.log"
+
+
+def _set_up_conversion(repo: Path, attributes: str, config: dict[str, str], content: bytes) -> None:
+    """Commit a.txt under ATTRIBUTES and CONFIG, then write every file back as a clone would."""
+    for key, value in config.items():
+        git("config", key, value, cwd=repo)
+    (repo / ".gitattributes").write_text(attributes)
+    (repo / "a.txt").write_bytes(content)
+    _commit_in(repo, "conversion")
+    for name in git("ls-files", cwd=repo).splitlines():
+        (repo / name).unlink()
+    git("checkout-index", "-f", "-a", cwd=repo)
+
+
+@pytest.mark.parametrize(
+    ("attributes", "config", "content", "edit", "reason"),
+    [
+        pytest.param(
+            "* text=auto\n", {}, b"a\nb\n", b"a\r\nb\r\n",
+            "file differs from its git checkout form: a.txt", id="text-auto-crlf",
+        ),
+        pytest.param(
+            "", {"core.autocrlf": "input"}, b"a\nb\n", b"a\r\nb\r\n",
+            "file differs from its git checkout form: a.txt", id="autocrlf-input-crlf",
+        ),
+        pytest.param(
+            "* ident\n", {}, b"x $Id$\n", b"x $Id: deadbeef $\n",
+            "file differs from its git checkout form: a.txt", id="ident-literal",
+        ),
+        pytest.param(
+            "*.txt filter=strip\n",
+            {"filter.strip.clean": "tr -d X", "filter.strip.smudge": "cat"},
+            b"abc\n", b"aXbc\n",
+            "file differs from its git checkout form: a.txt", id="lossy-clean-filter",
+        ),
+        pytest.param(
+            "* text eol=crlf\n", {}, b"a\nb\n", None, None, id="checked-out-crlf-is-known",
+        ),
+        pytest.param(
+            "* text eol=crlf\n", {}, b"a\nb\n", b"a\nb\n",
+            "file differs from its git checkout form: a.txt", id="lf-under-eol-crlf",
+        ),
+        pytest.param(
+            "", {"core.autocrlf": "true"}, b"a\nb\n", b"a\nb\n",
+            "file differs from its git checkout form: a.txt", id="lf-under-autocrlf-true",
+        ),
+        pytest.param(
+            "* text=auto\n", {}, b"a\nb\n", b"a\nc\n", None, id="plain-edit-is-known",
+        ),
+    ],
+)  # fmt: skip
+def test_change_hidden_by_git_conversion_is_unknown(
+    git_repo: Path,
+    attributes: str,
+    config: dict[str, str],
+    content: bytes,
+    edit: bytes | None,
+    reason: str | None,
+) -> None:
+    """A file that differs from its git checkout form keys on content the command never reads."""
+    _set_up_conversion(git_repo, attributes=attributes, config=config, content=content)
+    if edit is not None:
+        (git_repo / "a.txt").write_bytes(edit)
+    assert take_snapshot().reason == reason
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs a filesystem with executable bits")
+@pytest.mark.parametrize("file_mode", ["false", "true"])
+def test_exec_bit_hidden_by_file_mode_is_unknown(git_repo: Path, file_mode: str) -> None:
+    """With core.fileMode=false, git keeps the index mode, so a flipped bit needs its own check."""
+    git("config", "core.fileMode", file_mode, cwd=git_repo)
+    path = git_repo / "a.txt"
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    expected = "executable bit differs from the index: a.txt" if file_mode == "false" else None
+    assert take_snapshot().reason == expected
+
+
+def test_lfs_file_is_not_smudged(git_repo: Path) -> None:
+    """An LFS pointer names its file's hash, so checking it must not run a download."""
+    _set_up_conversion(
+        git_repo,
+        attributes="*.txt filter=lfs -text\n",
+        config={"filter.lfs.clean": "cat", "filter.lfs.smudge": "cat"},
+        content=b"big\n",
+    )
+    git("config", "filter.lfs.smudge", "false", cwd=git_repo)
+    assert take_snapshot().reason is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs a filesystem with executable bits")
+def test_exec_bit_hidden_in_submodule_is_unknown(git_repo: Path, tmp_path: Path) -> None:
+    """A submodule's status ignores the bit under core.fileMode=false, so it needs the check too."""
+    sub = add_submodule(git_repo, tmp_path)
+    (sub / "a.txt").write_text("a\n")
+    _commit_in(sub, "file")
+    git("add", "sub", cwd=git_repo)
+    git("commit", "-q", "-m", "bump sub", cwd=git_repo)
+    git("config", "core.fileMode", "false", cwd=sub)
+    path = sub / "a.txt"
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    assert take_snapshot().reason == "executable bit differs from the index: sub/a.txt"
+
+
+@pytest.mark.parametrize("name", ['"quoted.txt', "cr\r"])
+def test_path_hash_object_would_misread_is_compared_by_checkout(git_repo: Path, name: str) -> None:
+    """A path that `hash-object --stdin-paths` would unquote or trim still gets checked."""
+    _set_up_conversion(git_repo, attributes="* text=auto\n", config={}, content=b"a\n")
+    (git_repo / name).write_bytes(b"x\n")
+    git("add", "-A", cwd=git_repo)
+    git("commit", "-q", "-m", "odd name", cwd=git_repo)
+    assert take_snapshot().reason is None
+    (git_repo / name).write_bytes(b"x\r\n")
+    assert take_snapshot().reason == f"file differs from its git checkout form: {name}"
+
+
+def test_exec_bit_on_filesystem_without_one_is_known(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mount that reports one fixed bit for every file must not turn the cache off for good."""
+    monkeypatch.setattr(snapshot, "_stores_exec_bit", lambda _directory: False)
+    git("config", "core.fileMode", "false", cwd=git_repo)
+    path = git_repo / "a.txt"
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    assert take_snapshot().reason is None

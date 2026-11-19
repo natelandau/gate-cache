@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import filecmp
 import hashlib
 import os
 import re
 import shutil
+import stat
+import sys
+import tempfile
 import unicodedata
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gate_cache import scratch
-from gate_cache.git import GitError, GitNotFoundError, absolute_common_dir, git_common_dir, run_git
+from gate_cache.git import (
+    GitError,
+    GitNotFoundError,
+    absolute_common_dir,
+    git_common_dir,
+    run_git,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -155,6 +165,17 @@ class _IndexListing:
         """Yield every indexed path."""
         return (path for _, path in self._records())
 
+    def files(self) -> dict[str, str]:
+        """Return the staged object of every regular file by path, the entries git converts."""
+        return {
+            path: info.split(" ")[2]
+            for info, path in self._records()
+            if info[2:8] in _REGULAR_FILE_MODES
+        }
+
+
+_REGULAR_FILE_MODES = ("100644", "100755")
+
 
 @dataclass(frozen=True)
 class _State:
@@ -212,11 +233,17 @@ def _status(directory: Path, env: dict[str, str] | None) -> list[_StatusRecord]:
     return found
 
 
-def _gitlink_reason(directory: Path, label: str, env: dict[str, str]) -> str | None:
+def _gitlink_reason(directory: Path, label: str, env: dict[str, str], checkout: Path) -> str | None:
     """Return why a submodule's checkout may hold content its recorded commit does not.
 
     The superproject's status runs the submodule's own status, which obeys the submodule's
     config and index flags, so each checkout is probed directly, recursively.
+
+    Args:
+        directory: The submodule's checkout.
+        label: The submodule's path from the top of the superproject, for reasons.
+        env: Environment for git, free of the superproject's repository variables.
+        checkout: The directory under which each conversion check checks out files.
     """
     try:
         # An uninitialized submodule is an empty directory. `git submodule update --init`
@@ -234,12 +261,22 @@ def _gitlink_reason(directory: Path, label: str, env: dict[str, str]) -> str | N
         return hidden
     if _status(directory, env):
         return f"submodule not at its index state: {label}"
-    if _ignores_case(directory, env):
-        mismatch = _case_mismatch_reason(root=directory, paths=listing.paths(), label=f"{label}/")
-        if mismatch:
-            return mismatch
+    mismatch = (
+        _case_mismatch_reason(root=directory, paths=listing.paths(), label=f"{label}/")
+        if _ignores_case(directory, env)
+        else None
+    )
+    # Status reads a change that git's conversions erase as clean, as it does at the top.
+    reason = mismatch or _ConversionCheck(
+        root=directory, env=env, files=listing.files(), label=f"{label}/"
+    ).reason(checkout / label)
+    if reason:
+        return reason
     nested = (
-        _gitlink_reason(directory / path, f"{label}/{path}", env) for path in listing.gitlinks()
+        _gitlink_reason(
+            directory=directory / path, label=f"{label}/{path}", env=env, checkout=checkout
+        )
+        for path in listing.gitlinks()
     )
     return next((reason for reason in nested if reason), None)
 
@@ -343,7 +380,189 @@ def _submodule_env(env: dict[str, str]) -> dict[str, str]:
     return {key: value for key, value in env.items() if key not in local}
 
 
-def _staged_reason(root: Path, env: dict[str, str]) -> str | None:
+_CONVERTING_ATTRIBUTES = frozenset(
+    ("text", "eol", "crlf", "ident", "filter", "working-tree-encoding")
+)
+
+
+@dataclass(frozen=True)
+class _ConversionCheck:
+    """Find a file whose bytes differ from what git would check out for its staged object.
+
+    `git add` stores each file after its clean conversions (line endings, ident, filters),
+    and keeps the index's executable bit under core.fileMode=false. A change those erase
+    leaves the tree unchanged while the command reads different bytes. Requiring every file
+    to match its checkout form leaves one content per tree.
+    """
+
+    root: Path
+    env: dict[str, str]
+    files: dict[str, str]
+    label: str = ""
+
+    def reason(self, checkout: Path) -> str | None:
+        """Return the first file that the tree does not describe, or None when it describes all.
+
+        Args:
+            checkout: An absent directory to check out the converted files into.
+        """
+        path = self._unlike_checkout(checkout)
+        if path is not None:
+            return f"file differs from its git checkout form: {self.label}{path}"
+        path = self._mode_changed()
+        if path is not None:
+            return f"executable bit differs from the index: {self.label}{path}"
+        return None
+
+    def _unlike_checkout(self, checkout: Path) -> str | None:
+        kept, rewritten = self._converted()
+        if kept:
+            output = run_git(
+                "hash-object", "--no-filters", "--stdin-paths",
+                cwd=self.root, env=self.env, stdin="".join(f"{path}\n" for path in kept).encode(),
+            ).stdout  # fmt: skip
+            for path, oid in zip(kept, output.splitlines(), strict=True):
+                if oid != self.files[path]:
+                    return path
+        if rewritten:
+            run_git(
+                "checkout-index", "-z", "--stdin", f"--prefix={checkout.as_posix()}/",
+                cwd=self.root, env=self.env, stdin=_nul_joined(rewritten),
+            )  # fmt: skip
+            for path in rewritten:
+                if not filecmp.cmp(f1=self.root / path, f2=checkout / path, shallow=False):
+                    return path
+        return None
+
+    def _converted(self) -> tuple[list[str], list[str]]:
+        """Split the files that git converts into those checkout keeps as staged and the rest.
+
+        A file that checkout keeps as staged matches when its raw hash equals the staged
+        object. Every other converted file is compared with a real checkout, which costs a
+        copy of the file.
+        """
+        autocrlf = self._config("core.autocrlf")
+        all_text = autocrlf is not None and autocrlf not in _FALSE
+        writes_lf = _checkout_writes_lf(autocrlf=autocrlf, eol=self._config("core.eol"))
+        attributes = self._attributes()
+        kept: list[str] = []
+        rewritten: list[str] = []
+        for path in self.files:
+            specified = attributes.get(path, {})
+            # Git LFS stores a pointer that names the SHA-256 of the file, so no change hides
+            # in it, and its smudge filter can download every large file. Matched by name only.
+            if specified.get("filter") == "lfs":
+                continue
+            active = {name: value for name, value in specified.items() if value != "unset"}
+            text_off = specified.get("text") == "unset"
+            if not active and (text_off or not all_text):
+                continue
+            if (
+                active.keys() <= {"text", "eol"}
+                and _stdin_paths_safe(path)
+                and (text_off or active.get("eol", "lf" if writes_lf else "crlf") == "lf")
+            ):
+                kept.append(path)
+            else:
+                rewritten.append(path)
+        return kept, rewritten
+
+    def _config(self, key: str) -> str | None:
+        """Return KEY's lowercase value, an empty string for a valueless key, or None when unset."""
+        result = run_git("config", "--get", key, cwd=self.root, env=self.env, check=False)
+        return result.stdout.strip().lower() if result.returncode == 0 else None
+
+    def _attributes(self) -> dict[str, dict[str, str]]:
+        """Return the conversion attributes each file sets or unsets, leaving out unspecified ones."""
+        output = run_git(
+            "check-attr", "-z", "--stdin", "--all",
+            cwd=self.root, env=self.env, stdin=_nul_joined(self.files),
+        ).stdout  # fmt: skip
+        fields = output.split("\0")
+        attributes: dict[str, dict[str, str]] = {}
+        for path, name, value in zip(fields[0::3], fields[1::3], fields[2::3], strict=False):
+            if name in _CONVERTING_ATTRIBUTES:
+                attributes.setdefault(path, {})[name] = value
+        return attributes
+
+    def _mode_changed(self) -> str | None:
+        """Return a file whose executable bit git ignores because core.fileMode is false."""
+        # Windows filesystems have no executable bit to compare.
+        if self._config("core.fileMode") not in _FALSE or sys.platform == "win32":
+            return None
+        output = run_git(
+            "-c", "core.fileMode=true", "diff-files", "-z", "--ignore-submodules",
+            cwd=self.root, env=self.env,
+        ).stdout  # fmt: skip
+        fields = output.split("\0")
+        changed = [
+            path
+            for info, path in zip(fields[0::2], fields[1::2], strict=False)
+            if _modes_differ(info)
+        ]
+        if not changed:
+            return None
+        git_dir = run_git("rev-parse", "--absolute-git-dir", cwd=self.root, env=self.env).stdout
+        return changed[0] if _stores_exec_bit(Path(git_dir)) else None
+
+
+_FALSE = ("false", "no", "off", "0")
+
+
+def _modes_differ(info: str) -> bool:
+    """Return True when a `git diff-files` raw record shows a mode change."""
+    old_mode, new_mode = info.lstrip(":").split(" ")[:2]
+    return old_mode != new_mode
+
+
+def _stores_exec_bit(directory: Path) -> bool:
+    """Return True when the filesystem of DIRECTORY keeps the executable bit that chmod sets.
+
+    Mounts such as VFAT or a Windows drive under WSL report one fixed bit for every file, so
+    git turns core.fileMode off there and the bit on disk says nothing about the index. A
+    probe that cannot run counts as a filesystem that keeps the bit, which runs the command.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(dir=directory, prefix="gate-cache-probe-") as probe:
+            path = Path(probe.name)
+            path.chmod(0o700)
+            set_bit = bool(path.stat().st_mode & stat.S_IXUSR)
+            path.chmod(0o600)
+            return set_bit and not path.stat().st_mode & stat.S_IXUSR
+    except OSError:
+        return True
+
+
+def _checkout_writes_lf(autocrlf: str | None, eol: str | None) -> bool:
+    """Return True when checkout writes LF for a text file with no `eol` attribute.
+
+    A valueless `autocrlf` key means true. Anything not known to write LF counts as CRLF,
+    which only sends the file to the slower, exact comparison.
+    """
+    if autocrlf == "input":
+        return True
+    if autocrlf is not None and autocrlf not in _FALSE:
+        return False
+    if eol in (None, "native"):
+        return sys.platform != "win32"
+    return eol == "lf"
+
+
+def _stdin_paths_safe(path: str) -> bool:
+    """Return True when `hash-object --stdin-paths` reads PATH back unchanged.
+
+    It reads one path per line, drops a CR before the newline, and C-unquotes a line that
+    starts with a double quote.
+    """
+    return "\n" not in path and not path.endswith("\r") and not path.startswith('"')
+
+
+def _nul_joined(paths: Iterable[str]) -> bytes:
+    """Encode PATHS as the NUL-terminated list that git's `--stdin -z` options read."""
+    return "".join(f"{path}\0" for path in paths).encode()
+
+
+def _staged_reason(root: Path, env: dict[str, str], private: Path) -> str | None:
     """Return why the staged private index may not describe what the command reads."""
     listing = _IndexListing.read(directory=root, env=env)
     links = listing.gitlinks()
@@ -354,12 +573,17 @@ def _staged_reason(root: Path, env: dict[str, str]) -> str | None:
                 return f"submodule not at its index state: {record.path}"
         submodule_env = _submodule_env(env)
         for path in links:
-            reason = _gitlink_reason(root / path, path, submodule_env)
+            reason = _gitlink_reason(
+                directory=root / path, label=path, env=submodule_env, checkout=private / "modules"
+            )
             if reason:
                 return reason
     if _ignores_case(root, env):
-        return _case_mismatch_reason(root=root, paths=listing.paths())
-    return None
+        reason = _case_mismatch_reason(root=root, paths=listing.paths())
+        if reason:
+            return reason
+    # Last, because it can read every converted file.
+    return _ConversionCheck(root=root, env=env, files=listing.files()).reason(private / "checkout")
 
 
 def _case_mismatch_reason(root: Path, paths: Iterable[str], label: str = "") -> str | None:
@@ -479,7 +703,7 @@ def _private_snapshots(
             detail = _git_complaint(added.stderr)
             reason = "could not stage working copy"
             return _unknown(path_sets=path_sets, reason=f"{reason}: {detail}" if detail else reason)
-        reason = _staged_reason(root, private_env)
+        reason = _staged_reason(root=root, env=private_env, private=private)
         if reason:
             return _unknown(path_sets=path_sets, reason=reason)
         tree = run_git(*no_split, "write-tree", cwd=root, env=private_env).stdout

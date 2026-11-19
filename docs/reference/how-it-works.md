@@ -60,6 +60,7 @@ gate-cache runs the command and records nothing in these cases:
 - The directory is not in a git repository.
 - gate-cache cannot hash the files, such as during a merge conflict, in a sparse checkout, or when a submodule is not checked out or has local changes.
 - A `--path` matches no file.
+- A file differs from the copy that git writes when it checks out the file. Examples are CRLF line endings where `.gitattributes` or `core.autocrlf` makes git check out LF, and an executable bit that git ignores because `core.fileMode` is `false`.
 
 gate-cache prints the reason.
 
