@@ -69,6 +69,11 @@ jobs:
               shell: bash
               run: uv run duty frontend_build
 
-            - name: Confirm the build output
+            - name: Build the package
               shell: bash
-              run: test -f src/gate_cache/dashboard/static/index.html
+              run: uv build
+
+            # The frontend bundle is most of the wheel, so its size limit is checked here, not only at release
+            - name: Check the wheel and sdist ship the dashboard UI and fit the size limit
+              shell: bash
+              run: uv run duty dist_check dist/*.whl dist/*.tar.gz
