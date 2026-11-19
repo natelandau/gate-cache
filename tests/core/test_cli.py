@@ -1,5 +1,6 @@
 """Tests for the command line interface."""
 
+import os
 import re
 import shlex
 import sys
@@ -734,3 +735,42 @@ def test_skill_timeout_line_matches_default_timeout_format() -> None:
     assert f"after {format_duration(DEFAULT_WAIT_TIMEOUT)}, running anyway" in cli.agent_text(
         "skill.md"
     )
+
+
+def test_hook_flag_puts_the_users_path_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run as the prek or pre-commit hook, the command sees the user's PATH before the hook's."""
+    hook_env = tmp_path / "hook-env"
+    monkeypatch.setattr(sys, "prefix", str(hook_env))
+    monkeypatch.setenv("PATH", f"{hook_env / 'bin'}{os.pathsep}/usr/bin")
+    monkeypatch.setenv("VIRTUAL_ENV", str(hook_env))
+    seen: dict[str, str | None] = {}
+
+    def run_gate(name: str, command: list[str], paths: list[str]) -> int:
+        seen.update(PATH=os.environ.get("PATH"), VIRTUAL_ENV=os.environ.get("VIRTUAL_ENV"))
+        return 0
+
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, "--hook", "--name", "x", "--", "pytest") == 0
+    assert seen == {"PATH": f"/usr/bin{os.pathsep}{hook_env / 'bin'}", "VIRTUAL_ENV": None}
+
+
+def test_hook_flag_leaves_a_shared_python_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outside a virtual environment, --hook never moves a shared bin/ such as /usr/bin."""
+    shared = tmp_path / "usr"
+    monkeypatch.setattr(sys, "prefix", str(shared))
+    monkeypatch.setattr(sys, "base_prefix", str(shared))
+    path = f"{shared / 'bin'}{os.pathsep}/opt/bin"
+    monkeypatch.setenv("PATH", path)
+    seen: dict[str, str | None] = {}
+
+    def run_gate(name: str, command: list[str], paths: list[str]) -> int:
+        seen["PATH"] = os.environ.get("PATH")
+        return 0
+
+    monkeypatch.setattr(cli, "run_gate", run_gate)
+    assert invoke(monkeypatch, "--hook", "--name", "x", "--", "pytest") == 0
+    assert seen == {"PATH": path}

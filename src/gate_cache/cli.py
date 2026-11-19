@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shlex
 import sys
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING
 from gate_cache import __version__
 from gate_cache import config as core_config
 from gate_cache.console import kv, say
+from gate_cache.env import hook_environment
 from gate_cache.gate import (
     DEFAULT_MAX_AGE_DAYS,
     FILES_CHANGED_NOTICE,
@@ -28,6 +30,8 @@ if TYPE_CHECKING:
 _USAGE_ERROR = 2
 _INTERRUPTED = 130
 _INFO_FLAGS = {"-h", "--help", "--version", "--skill", "--prompt"}
+# Hidden: the prek and pre-commit hook manifest passes it in `entry`.
+_HOOK_FLAG = "--hook"
 _NAME_NEEDS_VALUE = "--name needs a value, e.g. gate-cache --name pytest -- uv run pytest"
 _NEEDS_SEPARATOR = "put -- before the command, e.g. gate-cache -- uv run pytest"
 _NEEDS_VALUE = {
@@ -599,12 +603,26 @@ def _run_command(tokens: list[str]) -> int:
     return run_gate(name, run.command, paths=run.paths, wait=wait)
 
 
+def _enter_hook_environment() -> None:
+    """Give the wrapped command the user's PATH when gate-cache runs as a prek or pre-commit hook."""
+    if sys.prefix == sys.base_prefix:
+        # Not a virtual environment, so sys.prefix/bin is a shared directory such as /usr/bin.
+        return
+    adjusted = hook_environment(environ=os.environ, prefix=sys.prefix)
+    for removed in os.environ.keys() - adjusted.keys():
+        del os.environ[removed]
+    os.environ.update(adjusted)
+
+
 def _dispatch(tokens: list[str]) -> int:
     """Run the invocation in tokens and return its exit code.
 
     Raises:
         _UsageError: When a run invocation is malformed.
     """
+    if tokens and tokens[0] == _HOOK_FLAG:
+        _enter_hook_environment()
+        tokens = tokens[1:]
     if tokens and tokens[0] in _INFO_FLAGS:
         # --help and --version print and exit inside parse_args
         args = _main_parser().parse_args(tokens)
