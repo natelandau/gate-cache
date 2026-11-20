@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.12.0 (2026-11-19)
+
+### Feat
+
+- **cli**: scope clear and stats clear, and preview what they delete (#37)
+
+### Fix
+
+- **security**: harden state files, terminal output, and releases (#42)
+- **gate**: run uncached when a file differs from its checkout form (#41)
+- **clear**: stop clear and pruning from deleting through a symlink (#40)
+- **gate**: stop skipping on markers older than the max age (#39)
+- **snapshot**: catch case-only renames inside submodules (#38)
+
 ## v0.11.0 (2026-11-19)
 
 ### Feat

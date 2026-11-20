@@ -132,7 +132,7 @@ If your project uses [prek](https://github.com/j178/prek) or [pre-commit](https:
 ```yaml
 repos:
   - repo: https://github.com/natelandau/gate-cache
-    rev: v0.11.0
+    rev: v0.12.0
     hooks:
       - id: gate-cache
         name: test

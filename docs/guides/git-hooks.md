@@ -38,7 +38,7 @@ Use the same gate name in the hook as in your terminal, so that a pass in one ma
     ```yaml title=".pre-commit-config.yaml"
     repos:
       - repo: https://github.com/natelandau/gate-cache
-        rev: v0.11.0
+        rev: v0.12.0
         hooks:
           - id: gate-cache
             name: test
