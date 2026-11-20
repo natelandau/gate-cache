@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { sparkDomain, sparkPath } from "./sparkline";
 
-const ys = (path: string) => [...path.matchAll(/[ML]\s*[\d.]+\s+([\d.]+)/g)].map((m) => Number(m[1]));
+// The y of each plotted day: a move's point, or a curve's end point.
+const ys = (path: string) =>
+  [...path.matchAll(/(?:M|C(?:\s*[\d.]+\s+[\d.]+){2})\s*[\d.]+\s+([\d.]+)/g)].map((m) => Number(m[1]));
 
 describe("sparkPath", () => {
   it("draws nothing broken for an empty series", () => {
@@ -26,7 +28,7 @@ describe("sparkPath", () => {
   it("draws a known day with no known neighbors, instead of a bare move", () => {
     const { line } = sparkPath([1, null, 3], 200, 34);
     // Every subpath must draw after its move, or the browser paints nothing for it.
-    expect(line.split("M").slice(1).every((sub) => /[LHVlhv]/.test(sub))).toBe(true);
+    expect(line.split("M").slice(1).every((sub) => /[LCHVlchv]/.test(sub))).toBe(true);
   });
 
   it("keeps negative values inside the box, with zero above the lowest point", () => {
@@ -37,6 +39,24 @@ describe("sparkPath", () => {
     }
     expect(points[0]).toBeGreaterThan(points[1]!);
     expect(points[1]).toBeGreaterThan(points[2]!);
+  });
+
+  it.each([
+    [[0, 0, 0, 10, 0]],
+    [[0, 10, 9, 10, 0, 0]],
+    [[5, 0, 10, 2, 8]],
+  ])("curves %j without passing its neighbors' values", (values) => {
+    const { line } = sparkPath(values, 200, 34);
+    const days = ys(line);
+    const curves = [...line.matchAll(/C\s*([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+)/g)];
+    curves.forEach((c, i) => {
+      // A Bezier stays inside its control points, so they bound the curve between two days.
+      const [lo, hi] = [Math.min(days[i]!, days[i + 1]!), Math.max(days[i]!, days[i + 1]!)];
+      for (const y of [Number(c[2]), Number(c[4])]) {
+        expect(y).toBeGreaterThanOrEqual(lo - 0.1);
+        expect(y).toBeLessThanOrEqual(hi + 0.1);
+      }
+    });
   });
 
   it("puts the largest value at the top", () => {

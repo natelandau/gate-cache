@@ -34,9 +34,18 @@ export function sparkPath(
     if (!current) runs.push((current = []));
     current.push([round(i * step), round(y(v))]);
   });
-  // A lone known day gets a zero-length segment: with a round line cap it draws as a dot.
-  const segment = (points: [number, number][]) =>
-    points.map(([x, py], i) => `${i ? "L" : "M"}${x} ${py}`).join(" ") + (points.length === 1 ? " h0" : "");
+  const segment = (points: [number, number][]) => {
+    const [x0, y0] = points[0]!;
+    // A lone known day gets a zero-length segment: with a round line cap it draws as a dot.
+    if (points.length === 1) return `M${x0} ${y0} h0`;
+    const slopes = monotoneSlopes(points);
+    const curves = points.slice(1).map(([x, py], i) => {
+      const [px, pyPrev] = points[i]!;
+      const dx = (x - px) / 3;
+      return `C${round(px + dx)} ${round(pyPrev + dx * slopes[i]!)} ${round(x - dx)} ${round(py - dx * slopes[i + 1]!)} ${x} ${py}`;
+    });
+    return `M${x0} ${y0} ${curves.join(" ")}`;
+  };
   const line = runs.map(segment).join(" ");
   const area = runs
     .map((points) => {
@@ -56,6 +65,30 @@ export function sparkPath(
 export function sparkDomain(series: (number | null)[][]): [min: number, max: number] {
   const known = series.flat().filter((v): v is number => v !== null);
   return [Math.min(0, ...known), Math.max(0, ...known)];
+}
+
+/**
+ * Return the tangent slope at each point for a monotone cubic curve (Fritsch-Carlson, as in
+ * d3's curveMonotoneX). The curve never overshoots a point, so it stays between zero and the
+ * peak and never invents a dip or spike the data does not have.
+ */
+function monotoneSlopes(points: [number, number][]): number[] {
+  const secants = points.slice(1).map(([x, y], i) => {
+    const [px, py] = points[i]!;
+    return x === px ? 0 : (y - py) / (x - px);
+  });
+  if (secants.length === 1) return [secants[0]!, secants[0]!];
+  const inner = secants.slice(1).map((s1, i) => {
+    const s0 = secants[i]!;
+    if (s0 * s1 <= 0) return 0;
+    const h0 = points[i + 1]![0] - points[i]![0];
+    const h1 = points[i + 2]![0] - points[i + 1]![0];
+    const mean = (s0 * h1 + s1 * h0) / (h0 + h1);
+    return Math.sign(s0) * Math.min(2 * Math.abs(s0), 2 * Math.abs(s1), Math.abs(mean));
+  });
+  // An end tangent bends toward its neighbor's, so the curve leaves the end smoothly.
+  const end = (secant: number, neighbor: number) => (3 * secant - neighbor) / 2;
+  return [end(secants[0]!, inner[0]!), ...inner, end(secants[secants.length - 1]!, inner[inner.length - 1]!)];
 }
 
 function round(n: number): number {
