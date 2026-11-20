@@ -14,7 +14,7 @@ from gate_cache import scratch, snapshot
 from gate_cache.git import GitFailedError, GitResult, git_common_dir
 from gate_cache.safe_files import ensure_private_dir
 from gate_cache.scratch import SCRATCH_PREFIX, runtime_area
-from gate_cache.snapshot import take_snapshot
+from gate_cache.snapshot import OUTSIDE_WORK_TREE, take_snapshot
 from tests.conftest import add_submodule, expected_tree, git, intercept_run_git
 
 
@@ -398,6 +398,20 @@ def test_explicit_git_work_tree_is_respected(
     monkeypatch.setenv("GIT_WORK_TREE", str(git_repo))
     monkeypatch.chdir(module)
     assert take_snapshot().tree == expected
+
+
+def test_working_directory_outside_git_work_tree_is_unknown(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a run from outside an inherited GIT_WORK_TREE is never keyed on that tree."""
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    monkeypatch.setenv("GIT_DIR", str(git_repo / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(git_repo))
+    monkeypatch.chdir(outside)
+    snap = take_snapshot()
+    assert snap.known is False
+    assert snap.reason == OUTSIDE_WORK_TREE
 
 
 def test_core_worktree_config_is_left_to_git(
