@@ -19,15 +19,16 @@ runs:
   using: composite
   steps:
     - name: Setup uv with cache
-      uses: astral-sh/setup-uv@v10.0.1
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
-        version: "latest"
+        # uv.lock pins uv, so Dependabot updates it with the other dependencies.
+        version-file: "uv.lock"
         enable-cache: true
         python-version: ${{ inputs.python-version }}
 
     - name: Install the project
       shell: bash
-      run: uv sync ${{ inputs.install-groups }}
+      run: uv sync --locked ${{ inputs.install-groups }}
 
     - name: Show the Python version
       shell: bash
