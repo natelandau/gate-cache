@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { TriageReason } from "./api";
 import {
   activityHref,
   href,
@@ -118,6 +119,10 @@ describe("href", () => {
       { page: "overview", span: { from: "2026-11-03", to: "2026-11-05" } },
     ];
     for (const route of routes) expect(parseHash(href(route))).toEqual(route);
+  });
+
+  it("encodes the triage reason", () => {
+    expect(href({ page: "triage", reason: "a&b#c" as TriageReason })).toBe("#/triage?reason=a%26b%23c");
   });
 
   it("encodes the activity filters", () => {

@@ -41,6 +41,9 @@ _NO_HARD_LINK_ERRNOS = frozenset({errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, 
 
 _REF_PREFIX = "ref: "
 _BRANCH_PREFIX = "refs/heads/"
+# What `git check-ref-format --branch` rejects anywhere in a name: control characters, space,
+# `~^:?*[\`, `..`, `@{`, and `//`.
+_BAD_IN_BRANCH = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]|\.\.|@\{|//")
 _GITDIR_PREFIX = "gitdir:"
 # SHA-1 and SHA-256 object names.
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
@@ -155,15 +158,26 @@ def read_head(git_dir: Path | None) -> str | None:
 
 
 def branch_from_head(head: str | None) -> str | None:
-    """Return the branch a HEAD value points at, or None when detached or not a branch."""
+    """Return the branch a HEAD value points at, or None when detached or not a branch.
+
+    The HEAD file is read without git, so its value is checked against git's own branch
+    name rules before it is stored or shown.
+    """
     if head is None or not head.startswith(_REF_PREFIX + _BRANCH_PREFIX):
         return None
     branch = head.removeprefix(_REF_PREFIX + _BRANCH_PREFIX)
-    # A reftable repository's HEAD file holds the placeholder `refs/heads/.invalid`, and no
-    # valid ref has a component that starts with a dot.
-    if not branch or any(part.startswith(".") for part in branch.split("/")):
-        return None
-    return branch
+    return branch if _valid_branch(branch) else None
+
+
+def _valid_branch(branch: str) -> bool:
+    """Return whether git accepts a name as a branch, per `git check-ref-format --branch`."""
+    if not branch or branch == "@" or branch.startswith(("-", "/")):
+        return False
+    if branch.endswith(("/", ".")) or _BAD_IN_BRANCH.search(branch):
+        return False
+    # A reftable repository's HEAD file holds the placeholder `refs/heads/.invalid`, which the
+    # leading-dot rule rejects.
+    return not any(part.startswith(".") or part.endswith(".lock") for part in branch.split("/"))
 
 
 def _commit(value: str) -> str | None:
