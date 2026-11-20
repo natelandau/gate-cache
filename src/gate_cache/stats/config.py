@@ -28,8 +28,7 @@ _ENABLED_KEY = re.compile(r"^\s*stats_enabled\s*=")
 # A header ends in `]`, so a row of a multi-line array such as `[1, 2],` is not one.
 _TABLE_HEADER = re.compile(r"^\s*\[.*\]\s*(#.*)?$")
 _NEW_FILE_MODE = 0o644
-# The stats data holds paths and host names, so only the user may read it.
-STATE_DIR_MODE = 0o700
+DASHBOARD_HOST = "127.0.0.1"
 DASHBOARD_PORT = 7878
 
 

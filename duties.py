@@ -57,6 +57,7 @@ SUITES: dict[str, tuple[str, ...]] = {
         "src/gate_cache/git.py",
         "src/gate_cache/__init__.py",
         "src/gate_cache/remote.py",
+        "src/gate_cache/safe_files.py",
         "src/gate_cache/spot_check.py",
         "src/gate_cache/wait_settings.py",
         "tests/server/",

@@ -30,7 +30,7 @@ from gate_cache.stats.queries import Filters
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-HOST = "127.0.0.1"
+HOST = config.DASHBOARD_HOST
 UNKNOWN_REPO = "-"
 
 _MAX_LIMIT = 500

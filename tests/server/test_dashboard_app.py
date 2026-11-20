@@ -282,17 +282,27 @@ def test_run_dashboard_accepts_the_cli_arguments() -> None:
     inspect.signature(app.run_dashboard).bind(port=9000, open_browser=False, on_start=print)
 
 
-def test_corrupt_running_url_reports_no_port(lock: InstanceLock) -> None:
-    """A published address with an invalid port still reports the dashboard as running."""
-    lock.write_url("http://127.0.0.1:notaport")
+@pytest.mark.parametrize(
+    "published",
+    [
+        "http://127.0.0.1:notaport",
+        "http://127.0.0.1:99999/",
+        "file:///etc/passwd",
+        "http://example.com:7878/",
+    ],
+)
+def test_published_url_other_than_loopback_is_never_opened(
+    stats_dirs: tuple[Path, Path], lock: InstanceLock, opener: MagicMock, published: str
+) -> None:
+    """Only a loopback HTTP address in the URL file reaches the browser."""
+    (stats_dirs[1] / "dashboard.url").write_text(published, encoding="utf-8")
     starts: list[DashboardStart] = []
     try:
-        app.run_dashboard(port=0, open_browser=False, on_start=starts.append)
+        app.run_dashboard(port=0, open_browser=True, on_start=starts.append)
     finally:
         lock.release()
-    assert [(s.url, s.port, s.already_running) for s in starts] == [
-        ("http://127.0.0.1:notaport", None, True)
-    ]
+    assert [(s.url, s.port, s.busy) for s in starts] == [(None, None, True)]
+    opener.assert_not_called()
 
 
 def test_the_dashboard_command_contract() -> None:

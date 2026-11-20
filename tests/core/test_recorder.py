@@ -171,6 +171,28 @@ def test_passed_environ_moves_the_inbox(tmp_path: Path, isolate_user_dirs: Path)
     assert not (isolate_user_dirs / "events.jsonl").exists()
 
 
+@pytest.mark.parametrize("unsafe", ["symlinked_inbox", "group_writable_dir"])
+def test_unsafe_data_dir_receives_no_event(tmp_path: Path, unsafe: str) -> None:
+    """No event is written through a planted inbox link or into a folder others can write."""
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    victim = tmp_path / "victim"
+    victim.write_text("", encoding="utf-8")
+    if unsafe == "symlinked_inbox":
+        (state / "events.jsonl").symlink_to(victim)
+    else:
+        state.chmod(0o770)
+    event = Event(
+        ts=1.0, repo=None, name="n", tree=None, paths=(), outcome="skip",
+        duration=None, saved=0.5, exit_code=None, reason=None,
+    )  # fmt: skip
+
+    record_event(event, {STATS_ENV: "1", DATA_DIR_ENV: str(state)})
+
+    assert victim.read_text(encoding="utf-8") == ""
+    assert [entry.name for entry in state.iterdir() if not entry.is_symlink()] == []
+
+
 def test_inbox_mode_0600(git_repo: Path, stats_dirs: tuple[Path, Path], stats_on: None) -> None:
     """The inbox is private to the user."""
     run_gate("t", ["true"])

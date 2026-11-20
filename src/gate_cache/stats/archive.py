@@ -11,6 +11,7 @@ import sqlite3
 import time
 from typing import TYPE_CHECKING, Any, Self
 
+from gate_cache.safe_files import ensure_private_dir
 from gate_cache.stats import config
 from gate_cache.stats.gates import GATE_WHITESPACE as _GATE_WHITESPACE
 from gate_cache.stats.junit import TESTS_DIR_NAME
@@ -405,7 +406,7 @@ class Archive:
         Returns:
             The open archive.
         """
-        path.parent.mkdir(mode=config.STATE_DIR_MODE, parents=True, exist_ok=True)
+        ensure_private_dir(path.parent)
         connection = sqlite3.connect(path)
         try:
             # Check the version before WAL or schema changes so a newer archive is left untouched.

@@ -31,6 +31,7 @@ To run every command in full while you find the cause, set `GATE_CACHE_DISABLE=1
     - `--path ... matches no files`: correct the path.
     - `file differs from its git checkout form: FILE` or `executable bit differs from the index: FILE`: git converts this file when it stores it, for example its line endings, and the file on disk is not what git writes at checkout. Save the file with the line endings that git checks out, or restore its executable bit. If the file has no uncommitted changes, `git checkout -- FILE` writes it again.
     - A merge conflict, a sparse checkout, or a submodule that is not checked out or has local changes: gate-cache cannot hash the files until you fix the state of the repository.
+    - `could not use DIRECTORY`: another user owns the temporary directory of gate-cache, or other users can write to it. If you own the directory, run `chmod go-w DIRECTORY`. Otherwise, set `XDG_RUNTIME_DIR` to a directory that only you can write to.
 
 ??? question "Someone runs the tool directly"
 
@@ -77,6 +78,8 @@ To run every command in full while you find the cause, set `GATE_CACHE_DISABLE=1
 ??? question "The dashboard shows no runs"
 
     Run `gate-cache stats` and make sure that recording is on. gate-cache records only runs that start after you turn recording on, and it records nothing in CI. Also check the time range and the repository filter at the top of the dashboard.
+
+    If you set the data directory, make sure that you own it and that other users cannot write to it. [Configuration](reference/configuration.md#stats) gives the rule.
 
 ??? question "The dashboard opens on a port other than 7878"
 

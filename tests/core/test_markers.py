@@ -312,14 +312,28 @@ def test_write_marker_cleans_up_when_replace_fails(tmp_path, monkeypatch):
     """Verify a failed rename removes the temp file and surfaces the OSError."""
     path = marker_path(tmp_path, TREE, "pytest")
 
-    def fail(_self: Path, _target: Path) -> Path:
+    def fail(*_args: object, **_kwargs: object) -> None:
         raise OSError(18, "Cross-device link")
 
-    monkeypatch.setattr(Path, "replace", fail)
+    monkeypatch.setattr(os, "replace", fail)
 
     with pytest.raises(OSError, match="Cross-device link"):
         write_marker(path, tree=TREE, name="pytest", command=["pytest"])
     assert list(path.parent.iterdir()) == []
+
+
+def test_write_marker_never_writes_through_a_symlinked_directory(tmp_path: Path) -> None:
+    """Verify a symlink planted at the marker directory cannot redirect a marker write."""
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    common = tmp_path / "common"
+    common.mkdir()
+    marker_dir(common).symlink_to(victim)
+
+    with pytest.raises(OSError):  # noqa: PT011
+        write_marker(marker_path(common, TREE, "pytest"), tree=TREE, name="pytest", command=["x"])
+
+    assert list(victim.iterdir()) == []
 
 
 OTHER_TREE = "aaff74984cccd156a469afa7d9ab10e4777beb24"

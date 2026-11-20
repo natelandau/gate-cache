@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import stat
 import tempfile
 import time
 import xml.etree.ElementTree as ET
@@ -12,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from gate_cache.stats import config
+from gate_cache.safe_files import PRIVATE_DIR_MODE, ensure_private_dir, open_regular
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -83,18 +82,10 @@ def parse_report(path: Path) -> list[TestResult]:
     """
     results: list[TestResult] = []
     try:
-        info = path.stat()
-        # A FIFO or device passes the size cap and can block the read forever.
-        if not stat.S_ISREG(info.st_mode):
-            msg = "report is not a regular file"
-            raise ReportError(msg)
-        if info.st_size > MAX_REPORT_BYTES:
-            msg = f"report is larger than {MAX_REPORT_BYTES} bytes"
-            raise ReportError(msg)
-        open_elems: list[ET.Element] = []
         # Close the file ourselves: an iterparse iterator left unexhausted on an error
         # keeps its own file open.
-        with path.open("rb") as handle:
+        with open_regular(path, max_bytes=MAX_REPORT_BYTES) as handle:
+            open_elems: list[ET.Element] = []
             for event, elem in ET.iterparse(handle, events=("start", "end")):  # noqa: S314
                 if event == "start":
                     open_elems.append(elem)
@@ -276,7 +267,8 @@ def write_results(event_id: str, results: Sequence[TestResult], *, state: Path) 
         raise ValueError(msg)
     kept = list(results[:MAX_TESTS])
     folder = state / TESTS_DIR_NAME
-    folder.mkdir(mode=config.STATE_DIR_MODE, parents=True, exist_ok=True)
+    ensure_private_dir(state)
+    folder.mkdir(mode=PRIVATE_DIR_MODE, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         "w", dir=folder, prefix=f".{event_id}.", suffix=".tmp", delete=False, encoding="utf-8"
     ) as tmp:

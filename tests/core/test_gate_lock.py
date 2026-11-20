@@ -76,13 +76,13 @@ def test_acquire_retries_when_file_replaced(path: Path, monkeypatch: pytest.Monk
     real_open = os.open
     replaced = False
 
-    def replacing_open(p: str | Path, flags: int, mode: int = 0o777) -> int:
-        fd = real_open(p, flags, mode)
+    def replacing_open(p: str | Path, flags: int, mode: int = 0o777, **kw: int) -> int:
+        fd = real_open(p, flags, mode, **kw)
         nonlocal replaced
-        if not replaced:
+        if not replaced and not flags & os.O_DIRECTORY:
             replaced = True
-            Path(p).unlink()
-            Path(p).touch()
+            path.unlink()
+            path.touch()
         return fd
 
     monkeypatch.setattr(os, "open", replacing_open)
@@ -103,12 +103,14 @@ def test_acquire_raises_when_file_keeps_being_replaced(
     real_open = os.open
     opened = 0
 
-    def replacing_open(p: str | Path, flags: int, mode: int = 0o777) -> int:
+    def replacing_open(p: str | Path, flags: int, mode: int = 0o777, **kw: int) -> int:
+        fd = real_open(p, flags, mode, **kw)
+        if flags & os.O_DIRECTORY:
+            return fd
         nonlocal opened
         opened += 1
-        fd = real_open(p, flags, mode)
-        Path(p).unlink()
-        os.close(real_open(p, os.O_CREAT | os.O_WRONLY, 0o644))
+        path.unlink()
+        os.close(real_open(path, os.O_CREAT | os.O_WRONLY, 0o644))
         return fd
 
     monkeypatch.setattr(os, "open", replacing_open)
@@ -214,6 +216,47 @@ def test_prune_leaves_symlinked_lock_dir_alone(tmp_path: Path) -> None:
     assert planted.exists()
 
 
+@pytest.mark.parametrize("planted", ["file", "dir"])
+def test_acquire_never_writes_through_a_planted_symlink(tmp_path: Path, planted: str) -> None:
+    """A symlink at the lock file or lock directory cannot redirect the lock's create or write."""
+    victim_dir = tmp_path / "victim"
+    victim_dir.mkdir()
+    victim = victim_dir / "precious"
+    victim.write_text("keep", encoding="utf-8")
+    common = tmp_path / "common"
+    path = lock_path(common, "t", "n")
+    if planted == "file":
+        path.parent.mkdir(parents=True)
+        path.symlink_to(victim)
+    else:
+        common.mkdir()
+        path.parent.symlink_to(victim_dir)
+
+    with pytest.raises(OSError):  # noqa: PT011
+        GateLock.try_acquire(path)
+
+    assert victim.read_text(encoding="utf-8") == "keep"
+    assert sorted(p.name for p in victim_dir.iterdir()) == ["precious"]
+
+
+def test_prune_never_touches_a_symlinked_stamp(tmp_path: Path) -> None:
+    """A symlink planted at the prune stamp is replaced, never followed to update its target."""
+    victim = tmp_path / "victim"
+    victim.write_text("", encoding="utf-8")
+    old = time.time() - 40 * _DAY
+    os.utime(victim, (old, old))
+    lock_dir = tmp_path / "common" / "gate-cache-locks"
+    lock_dir.mkdir(parents=True)
+    (lock_dir / ".pruned").symlink_to(victim)
+    os.utime(lock_dir / ".pruned", (old, old), follow_symlinks=False)
+
+    prune_locks(tmp_path / "common", max_age_days=30)
+
+    assert victim.stat().st_mtime == pytest.approx(old)
+    assert not (lock_dir / ".pruned").is_symlink()
+    assert (lock_dir / ".pruned").is_file()
+
+
 def test_prune_without_lock_dir_is_noop(tmp_path: Path) -> None:
     """Pruning a common dir with no lock directory does nothing."""
     prune_locks(tmp_path, max_age_days=30)
@@ -245,10 +288,10 @@ def test_wait_keeps_one_file_open_while_polling(
     real_open = os.open
     opened = 0
 
-    def counting_open(p: str | Path, flags: int, mode: int = 0o777) -> int:
+    def counting_open(p: str | Path, flags: int, mode: int = 0o777, **kw: int) -> int:
         nonlocal opened
-        opened += 1
-        return real_open(p, flags, mode)
+        opened += not flags & os.O_DIRECTORY
+        return real_open(p, flags, mode, **kw)
 
     monkeypatch.setattr(os, "open", counting_open)
     assert GateLock.wait(path, timeout=0.1) is None

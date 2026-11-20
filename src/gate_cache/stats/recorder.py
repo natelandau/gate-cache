@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
+from gate_cache.safe_files import ensure_private_dir
 from gate_cache.stats import config
 
 if TYPE_CHECKING:
@@ -261,8 +262,8 @@ def record_event(
         if not setting.enabled:
             return
         path = inbox_path(environ)
-        path.parent.mkdir(mode=config.STATE_DIR_MODE, parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _INBOX_MODE)
+        ensure_private_dir(path.parent)
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, _INBOX_MODE)
         try:
             # One write keeps concurrent appends from interleaving.
             os.write(fd, event.to_line())

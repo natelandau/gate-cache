@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from gate_cache.env import CI_ENV, flag_on
-from gate_cache.stats.config import STATE_DIR_MODE
+from gate_cache.safe_files import ensure_private_dir
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -332,7 +332,7 @@ def machine_id(state_dir: Path) -> str | None:
         try:
             return _read_machine_id(path)
         except FileNotFoundError:
-            state_dir.mkdir(mode=STATE_DIR_MODE, parents=True, exist_ok=True)
+            ensure_private_dir(state_dir)
             return _create_machine_id(path)
     except (OSError, UnicodeDecodeError):
         return None
