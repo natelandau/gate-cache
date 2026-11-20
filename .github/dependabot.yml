@@ -3,7 +3,10 @@ version: 2
 
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # "/" covers only .github/workflows, not the composite actions.
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: monthly
     commit-message:
@@ -25,6 +28,8 @@ updates:
     versioning-strategy: increase
     allow:
       - dependency-type: production
+      # uv.lock pins the uv that CI installs.
+      - dependency-name: uv
     groups:
       runtime-deps:
         patterns:

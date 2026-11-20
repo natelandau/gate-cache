@@ -30,8 +30,11 @@ from gate_cache.stats.queries import Filters
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-HOST = "127.0.0.1"
+HOST = config.DASHBOARD_HOST
 UNKNOWN_REPO = "-"
+INTERNAL_ERROR = "internal error"
+ARCHIVE_UNAVAILABLE = "archive unavailable"
+INVALID_PARAMETER = "invalid query parameter"
 
 _MAX_LIMIT = 500
 _OK = 200
@@ -62,7 +65,7 @@ _PAGE_HEADERS = (
 
 
 class _BadRequestError(ValueError):
-    """A query parameter is missing or malformed."""
+    """A query parameter is missing or malformed; the message names only the parameter."""
 
 
 def _is_api(path: str) -> bool:
@@ -230,21 +233,24 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             with contextlib.suppress(OSError):
                 if is_api:
-                    self._json(_SERVER_ERROR, {"error": "internal error"})
+                    self._json(_SERVER_ERROR, {"error": INTERNAL_ERROR})
                 else:
-                    self._send(_SERVER_ERROR, b"internal error", "text/plain; charset=utf-8")
+                    self._send(_SERVER_ERROR, INTERNAL_ERROR.encode(), "text/plain; charset=utf-8")
 
     def _api(self, path: str, params: dict[str, list[str]]) -> None:
         route = path.removeprefix("/api/v1/") if path.startswith("/api/v1/") else None
+        # Error bodies never repeat the request or a database error back to the client.
         if route is None or route not in _ROUTES:
-            self._json(_NOT_FOUND, {"error": f"unknown endpoint: {path}"})
+            self._json(_NOT_FOUND, {"error": "unknown endpoint"})
             return
         try:
             body = _ROUTES[route](self.server, params)
-        except (ValueError, OverflowError) as error:
+        except _BadRequestError as error:
             self._json(_BAD_REQUEST, {"error": str(error)})
-        except sqlite3.Error as error:
-            self._json(_SERVER_ERROR, {"error": f"archive unavailable: {error}"})
+        except (ValueError, OverflowError):
+            self._json(_BAD_REQUEST, {"error": INVALID_PARAMETER})
+        except sqlite3.Error:
+            self._json(_SERVER_ERROR, {"error": ARCHIVE_UNAVAILABLE})
         else:
             self._json(_OK, body)
 

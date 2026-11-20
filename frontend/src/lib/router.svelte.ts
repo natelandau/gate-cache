@@ -180,7 +180,7 @@ export function href(route: Route): string {
   if (route.page === "overview" && route.span) {
     return `#/overview?from=${route.span.from}&to=${route.span.to}`;
   }
-  if (route.page === "triage" && route.reason) return `#/triage?reason=${route.reason}`;
+  if (route.page === "triage" && route.reason) return `#/triage?reason=${encodeURIComponent(route.reason)}`;
   return `#/${route.page}`;
 }
 

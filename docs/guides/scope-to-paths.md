@@ -44,6 +44,8 @@ List every file that the command reads and that git tracks:
 - Shared fixtures, schemas, or generated files from other parts of the repository.
 - The script, package file, or task-runner file that defines the gate.
 
+A symlink under a path covers only the target path that it stores, not the files at that target. If the command reads files through a symlink, add the target to the list. A target outside the repository is not in the hash at all.
+
 Do not scope a gate whose command reads the whole repository, such as a spell check of every file.
 
 ## Path syntax

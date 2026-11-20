@@ -48,6 +48,7 @@ A record of a pass covers the gate name and the content of the files that git do
 - The versions of the tools that are installed on the computer.
 - External services.
 - The working directory.
+- The files that a symlink points to. The hash covers only the target path that the symlink stores.
 - The commit message, the branch, or a remote.
 
 After a change to one of these, a gate can skip when a new run would give a different result. Put such an input in the gate name, as [Write a gate](../guides/write-a-gate.md#cover-inputs-that-git-does-not-see) shows. After a tool upgrade, you can also run `gate-cache clear`.
@@ -58,6 +59,7 @@ gate-cache runs the command and records nothing in these cases:
 
 - `CI` or `GATE_CACHE_DISABLE` turns the cache off.
 - The directory is not in a git repository.
+- The directory is outside the files of the repository, such as when the `GIT_WORK_TREE` variable points to another directory.
 - gate-cache cannot hash the files, such as during a merge conflict, in a sparse checkout, or when a submodule is not checked out or has local changes.
 - A `--path` matches no file.
 - A file differs from the copy that git writes when it checks out the file. Examples are CRLF line endings where `.gitattributes` or `core.autocrlf` makes git check out LF, and an executable bit that git ignores because `core.fileMode` is `false`.

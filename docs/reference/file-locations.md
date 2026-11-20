@@ -54,6 +54,8 @@ To compute the hash of your files, gate-cache writes a private copy of the git i
 
 If a run is killed, the next run deletes the leftover directory after one hour.
 
+You must own this directory, and other users must not have write access to it. If another user owns it or can write to it, gate-cache runs each command without the cache and prints the directory.
+
 ## Remove everything
 
 To remove all the files of gate-cache:

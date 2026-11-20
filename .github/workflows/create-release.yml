@@ -22,23 +22,22 @@ jobs:
     # A release runs every suite and lint, with no condition and no path filter
     test-core:
         uses: ./.github/workflows/tests-core.yml
-        secrets: inherit
+        secrets:
+            CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
     test-server:
         uses: ./.github/workflows/tests-server.yml
-        secrets: inherit
+        secrets:
+            CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
     test-frontend:
         uses: ./.github/workflows/tests-frontend.yml
-        secrets: inherit
 
     test-tooling:
         uses: ./.github/workflows/tests-tooling.yml
-        secrets: inherit
 
     lint:
         uses: ./.github/workflows/lint.yml
-        secrets: inherit
 
     autorelease:
         name: Create Release
@@ -48,8 +47,9 @@ jobs:
             contents: write
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v7
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
+                  persist-credentials: false
                   fetch-depth: 0
 
             - name: Setup Python, uv, and the package
@@ -69,7 +69,7 @@ jobs:
                   echo "PROJECT_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
 
             - name: Setup Node
-              uses: actions/setup-node@v7
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .node-version
                   cache: npm
@@ -92,36 +92,68 @@ jobs:
 
             # The publish job uploads exactly these files rather than rebuilding.
             - name: Upload the built package
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
                   name: dist
                   path: dist/
                   if-no-files-found: error
 
             - name: Create Release
-              uses: softprops/action-gh-release@v3
+              uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
               with:
                   body_path: release-notes.md
                   files: dist/*
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    publish-to-pypi:
+    # A job of its own, so the signing token never shares a runner with npm ci or the build.
+    attest:
+        name: Attest the build provenance
         runs-on: ubuntu-latest
         needs: autorelease
+        permissions:
+            id-token: write
+            attestations: write
+        steps:
+            - name: Download the built package
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+              with:
+                  name: dist
+                  path: dist/
+
+            - name: Attest the build provenance of the package
+              uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+              with:
+                  subject-path: dist/*
+
+    publish-to-pypi:
+        runs-on: ubuntu-latest
+        needs: [autorelease, attest]
         environment: pypi
         # id-token lets PyPI verify the run through OIDC in place of a stored password.
         permissions:
+            contents: read
             id-token: write
         steps:
+            # Only uv.lock, which pins the uv that uploads the package. Checkout cleans the
+            # workspace, so it runs before the download.
+            - name: Checkout the lockfile
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+                  sparse-checkout: uv.lock
+                  sparse-checkout-cone-mode: false
+
             - name: Download the built package
-              uses: actions/download-artifact@v8
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                   name: dist
                   path: dist/
 
             - name: Setup uv
-              uses: astral-sh/setup-uv@v10.3.3
+              uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+              with:
+                  version-file: uv.lock
 
             - name: Upload to PyPI
               run: uv publish --trusted-publishing always dist/*
@@ -132,7 +164,7 @@ jobs:
         needs: autorelease
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v7
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   persist-credentials: false
 
@@ -143,7 +175,7 @@ jobs:
               run: uv run duty docs_check
 
             - name: Upload the site
-              uses: actions/upload-pages-artifact@v5
+              uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
               with:
                   path: _site
 
@@ -162,4 +194,4 @@ jobs:
         steps:
             - name: Deploy to GitHub Pages
               id: deployment
-              uses: actions/deploy-pages@v5
+              uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

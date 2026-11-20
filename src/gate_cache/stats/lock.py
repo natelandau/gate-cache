@@ -5,15 +5,19 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import os
+import re
 from typing import TYPE_CHECKING, Self
 
-from gate_cache.stats.config import STATE_DIR_MODE
+from gate_cache.safe_files import ensure_private_dir
+from gate_cache.stats.config import DASHBOARD_HOST
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 _LOCK_NAME = "dashboard.lock"
 _URL_NAME = "dashboard.url"
+_LOOPBACK_URL = re.compile(rf"http://{re.escape(DASHBOARD_HOST)}:(?P<port>[0-9]{{1,5}})/?")
+_MAX_PORT = 65535
 
 
 class InstanceLock:
@@ -38,8 +42,8 @@ class InstanceLock:
         Raises:
             OSError: When the state directory or lock file cannot be used.
         """
-        state.mkdir(mode=STATE_DIR_MODE, parents=True, exist_ok=True)
-        fd = os.open(state / _LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
+        ensure_private_dir(state)
+        fd = os.open(state / _LOCK_NAME, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -55,7 +59,12 @@ class InstanceLock:
 
     def write_url(self, url: str) -> None:
         """Publish the URL of the running dashboard."""
-        (self._state / _URL_NAME).write_text(url, encoding="utf-8")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+        fd = os.open(self._state / _URL_NAME, flags, 0o600)
+        try:
+            os.write(fd, url.encode())
+        finally:
+            os.close(fd)
         self._wrote_url = True
 
     def release(self) -> None:
@@ -70,8 +79,16 @@ class InstanceLock:
 
 
 def running_url(state: Path) -> str | None:
-    """Return the URL published by the running dashboard, or None when unknown."""
+    """Return the URL published by the running dashboard, or None when unknown.
+
+    Only a loopback HTTP address counts, since the URL is opened in a browser and anything
+    with write access to the file could put another kind of address there.
+    """
     try:
-        return (state / _URL_NAME).read_text(encoding="utf-8").strip() or None
-    except OSError:
+        url = (state / _URL_NAME).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
         return None
+    match = _LOOPBACK_URL.fullmatch(url)
+    if match is None or not 1 <= int(match["port"]) <= _MAX_PORT:
+        return None
+    return url

@@ -4,6 +4,7 @@ import http.client
 import json
 import os
 import socket
+import sqlite3
 import threading
 import time
 from collections.abc import Iterator
@@ -145,10 +146,11 @@ def test_localhost_host_ok(server: DashboardServer) -> None:
 
 def test_unknown_api_404_json(server: DashboardServer) -> None:
     """An unknown API path is a JSON 404."""
-    status, headers, body = fetch(server, "/api/v1/nope")
+    status, headers, body = fetch(server, "/api/v1/nope-secret")
     assert status == 404
     assert headers["Cache-Control"] == "no-store"
     assert "error" in json.loads(body)
+    assert b"secret" not in body
     assert get(server, "/api/other")[0] == 404
 
 
@@ -592,21 +594,32 @@ def test_ingest_failure_is_reported_and_recovers(
     assert capsys.readouterr().err.count("dashboard ingest failed: disk on fire") == 1
 
 
-def test_route_exception_is_internal_error(
-    server: DashboardServer, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("error", "status", "message"),
+    [
+        (RuntimeError, 500, server_module.INTERNAL_ERROR),
+        (sqlite3.OperationalError, 500, server_module.ARCHIVE_UNAVAILABLE),
+        (ValueError, 400, server_module.INVALID_PARAMETER),
+    ],
+)
+def test_route_failure_returns_a_fixed_message(
+    server: DashboardServer,
+    monkeypatch: pytest.MonkeyPatch,
+    error: type[Exception],
+    status: int,
+    message: str,
 ) -> None:
-    """An unexpected route failure returns a generic 500 without detail."""
+    """A route failure returns a fixed message, never the error's own text."""
 
     def boom(*_args: object) -> dict:
         msg = "secret detail"
-        raise RuntimeError(msg)
+        raise error(msg)
 
     monkeypatch.setitem(server_module._ROUTES, "summary", boom)
-    status, headers, body = fetch(server, "/api/v1/summary")
-    assert status == 500
+    got, headers, body = fetch(server, "/api/v1/summary")
+    assert got == status
     assert headers["Cache-Control"] == "no-store"
-    assert json.loads(body) == {"error": "internal error"}
-    assert b"secret" not in body
+    assert json.loads(body) == {"error": message}
 
 
 def test_static_read_failure_is_500_text(server: DashboardServer, tmp_path: Path) -> None:
@@ -615,7 +628,7 @@ def test_static_read_failure_is_500_text(server: DashboardServer, tmp_path: Path
     server.static_dir = tmp_path / "ui"
     status, headers, body = fetch(server, "/")
     assert status == 500
-    assert body == b"internal error"
+    assert body == server_module.INTERNAL_ERROR.encode()
     assert headers["Content-Type"].startswith("text/plain")
     assert headers["Cache-Control"] == "no-store"
 

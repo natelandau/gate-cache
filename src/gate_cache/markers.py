@@ -7,19 +7,19 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
-import stat
-import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gate_cache.safe_files import open_regular
 from gate_cache.stats.gates import gate_of
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
+    from pathlib import Path
 
 MARKER_DIRNAME = "gate-cache"
 TEMP_PREFIX = ".tmp-"
@@ -200,6 +200,9 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 def write_json_atomic(path: Path, value: object) -> None:
     """Write JSON via a temp file and rename, so readers never see half a file.
 
+    Neither the directory nor the temp file is opened through a symlink, so a link planted in
+    the git directory cannot redirect the write.
+
     Args:
         path: The file to write; its directory is created when missing.
         value: The JSON value to write.
@@ -208,19 +211,22 @@ def write_json_atomic(path: Path, value: object) -> None:
         OSError: If the file cannot be written. Any temp file is removed.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_name: str | None = None
+    data = json.dumps(value).encode()
+    fd = open_own_dir(path.parent)
     try:
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=path.parent, prefix=TEMP_PREFIX, delete=False
-        ) as tmp:
-            tmp_name = tmp.name
-            json.dump(value, tmp)
-        Path(tmp_name).replace(path)
-    except OSError:
-        if tmp_name is not None:
+        tmp_name = f"{TEMP_PREFIX}{secrets.token_hex(8)}"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        tmp = os.open(tmp_name, flags, 0o600, dir_fd=fd)
+        try:
+            with open(tmp, "wb") as handle:  # noqa: PTH123
+                handle.write(data)
+            os.replace(tmp_name, path.name, src_dir_fd=fd, dst_dir_fd=fd)
+        except OSError:
             with contextlib.suppress(OSError):
-                Path(tmp_name).unlink()
-        raise
+                os.unlink(tmp_name, dir_fd=fd)
+            raise
+    finally:
+        os.close(fd)
 
 
 def miss_record(common_dir: Path, tree: str, name: str) -> dict[str, Any] | None:
@@ -279,11 +285,7 @@ def read_json(path: Path) -> object:
         large, or not JSON.
     """
     try:
-        # O_NONBLOCK keeps a FIFO from blocking the open; fstat on the open file then rejects it.
-        with open(os.open(path, os.O_RDONLY | os.O_NONBLOCK), "rb") as handle:  # noqa: PTH123
-            info = os.fstat(handle.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_RECORD_BYTES:
-                return None
+        with open_regular(path, max_bytes=MAX_RECORD_BYTES) as handle:
             raw = handle.read(MAX_RECORD_BYTES + 1)
         if len(raw) > MAX_RECORD_BYTES:
             return None
@@ -472,7 +474,7 @@ def missed_records(common_dir: Path, *trees: str, max_age_days: int) -> list[dic
     return RecordIndex.load(common_dir, max_age_days=max_age_days).missed_records(*trees)
 
 
-def _open_own_dir(directory: Path) -> int:
+def open_own_dir(directory: Path) -> int:
     """Open a directory gate-cache owns, refusing a symlink so a planted link cannot redirect deletes.
 
     Args:
@@ -484,11 +486,11 @@ def _open_own_dir(directory: Path) -> int:
     return os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 
 
-def _owned_files(fd: int, names: re.Pattern[str]) -> list[os.DirEntry[str]]:
+def owned_files(fd: int, names: re.Pattern[str]) -> list[os.DirEntry[str]]:
     """List the regular files in an open directory whose name gate-cache writes.
 
     Args:
-        fd: The open directory, from `_open_own_dir`.
+        fd: The open directory, from `open_own_dir`.
         names: The pattern a record name matches in full. Temp files always match.
 
     Returns:
@@ -520,11 +522,11 @@ def prune_markers(
         now: Current epoch time; defaults to the system clock.
     """
     try:
-        fd = _open_own_dir(directory)
+        fd = open_own_dir(directory)
     except OSError:
         return
     try:
-        for entry in _owned_files(fd, names):
+        for entry in owned_files(fd, names):
             with contextlib.suppress(OSError):
                 mtime = entry.stat(follow_symlinks=False).st_mtime
                 if _expired(mtime, max_age_days=max_age_days, now=now):
@@ -568,12 +570,12 @@ def select_markers(common_dir: Path, *, gate: str | None = None) -> MarkerSelect
     """
     directory = marker_dir(common_dir)
     try:
-        fd = _open_own_dir(directory)
+        fd = open_own_dir(directory)
     except OSError:
         entries = []
     else:
         try:
-            entries = [directory / e.name for e in _owned_files(fd, RECORD_NAME)]
+            entries = [directory / e.name for e in owned_files(fd, RECORD_NAME)]
         except OSError:
             entries = []
         finally:
@@ -658,12 +660,12 @@ def clear_markers(common_dir: Path) -> int:
         directory.unlink()
         return 0
     try:
-        fd = _open_own_dir(directory)
+        fd = open_own_dir(directory)
     except (FileNotFoundError, NotADirectoryError):
         return 0
     count = 0
     try:
-        for entry in _owned_files(fd, RECORD_NAME):
+        for entry in owned_files(fd, RECORD_NAME):
             try:
                 os.unlink(entry.name, dir_fd=fd)
             except FileNotFoundError:

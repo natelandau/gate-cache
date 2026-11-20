@@ -59,3 +59,24 @@ def test_release_keeps_a_url_it_did_not_write(tmp_path: Path) -> None:
     (tmp_path / "dashboard.url").write_text("http://127.0.0.1:2")
     lock.release()
     assert running_url(tmp_path) == "http://127.0.0.1:2"
+
+
+@pytest.mark.parametrize("name", ["dashboard.lock", "dashboard.url"])
+def test_lock_files_are_never_written_through_a_symlink(tmp_path: Path, name: str) -> None:
+    """A link planted at the lock or URL file cannot redirect the dashboard's writes."""
+    victim = tmp_path / "victim"
+    victim.write_text("keep", encoding="utf-8")
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    if name == "dashboard.lock":
+        (state / name).symlink_to(victim)
+        with pytest.raises(OSError):  # noqa: PT011
+            InstanceLock.acquire(state)
+    else:
+        lock = InstanceLock.acquire(state)
+        assert lock is not None
+        (state / name).symlink_to(victim)
+        with pytest.raises(OSError):  # noqa: PT011
+            lock.write_url("http://127.0.0.1:1")
+        lock.release()
+    assert victim.read_text(encoding="utf-8") == "keep"

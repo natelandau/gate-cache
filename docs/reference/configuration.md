@@ -92,6 +92,8 @@ The data directory comes from the first of these that applies:
 
 A leading `~` expands to your home directory.
 
+You must own the data directory, and other users and your group must not have write access to it. If gate-cache creates the directory, it sets these permissions. If another user owns the directory or other users can write to it, gate-cache records no runs. To correct the permissions of a directory that you own, run `chmod go-w DIRECTORY`.
+
 If a `[projects]` table sets `stats_data_dir`, the runs of those repositories go to that directory. The dashboard and the `gate-cache stats` commands read the directory that applies in the folder where you start them.
 
 ### Wait for a run in progress

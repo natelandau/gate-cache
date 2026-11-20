@@ -23,6 +23,7 @@ from gate_cache.git import (
     git_common_dir,
     run_git,
 )
+from gate_cache.safe_files import UnsafeDirectoryError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -111,6 +112,7 @@ def _work_tree_root(cwd: Path | None, env: dict[str, str] | None) -> Path | None
 
 
 _GITLINK_MODE = "160000"
+OUTSIDE_WORK_TREE = "working directory is outside the work tree"
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +351,11 @@ def _inspect(cwd: Path | None, env: dict[str, str] | None) -> _State:
     root = locations.root if locations is not None else _work_tree_root(cwd, env)
     if root is None:
         return _State(root=None, reason="could not locate work tree")
+    # The key does not hash the directory a gate runs in. Inside the work tree that directory is
+    # part of the tree; outside it, as with an inherited GIT_WORK_TREE, nothing vouches for it.
+    here = (Path(cwd) if cwd is not None else Path.cwd()).resolve()
+    if not here.is_relative_to(root.resolve()):
+        return _State(root=root, reason=OUTSIDE_WORK_TREE, locations=locations)
     reason = _IndexListing.read(directory=root, env=env).blocking_reason()
     return _State(root=root, reason=reason, locations=locations)
 
@@ -797,6 +804,13 @@ def take_snapshots(path_sets: Iterable[Iterable[str]], cwd: Path | None = None) 
             index, objects = _git_path("index", cwd, env), _git_path("objects", cwd, env)
         snapshots = _private_snapshots(
             root=state.root, env=env, path_sets=normalized, index=index, objects=objects
+        )
+    except UnsafeDirectoryError as error:
+        return _unknown(
+            path_sets=normalized,
+            reason=f"could not use {error.filename}: {error.strerror}",
+            root=state.root,
+            common_dir=common_dir,
         )
     except (GitError, OSError, UnicodeDecodeError):
         return _unknown(

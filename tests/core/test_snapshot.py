@@ -12,8 +12,9 @@ import pytest
 
 from gate_cache import scratch, snapshot
 from gate_cache.git import GitFailedError, GitResult, git_common_dir
+from gate_cache.safe_files import ensure_private_dir
 from gate_cache.scratch import SCRATCH_PREFIX, runtime_area
-from gate_cache.snapshot import take_snapshot
+from gate_cache.snapshot import OUTSIDE_WORK_TREE, take_snapshot
 from tests.conftest import add_submodule, expected_tree, git, intercept_run_git
 
 
@@ -399,6 +400,20 @@ def test_explicit_git_work_tree_is_respected(
     assert take_snapshot().tree == expected
 
 
+def test_working_directory_outside_git_work_tree_is_unknown(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify a run from outside an inherited GIT_WORK_TREE is never keyed on that tree."""
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    monkeypatch.setenv("GIT_DIR", str(git_repo / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(git_repo))
+    monkeypatch.chdir(outside)
+    snap = take_snapshot()
+    assert snap.known is False
+    assert snap.reason == OUTSIDE_WORK_TREE
+
+
 def test_core_worktree_config_is_left_to_git(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -658,6 +673,26 @@ def test_unusable_scratch_area_is_unknown(git_repo: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr(scratch, "runtime_area", denied)
     (git_repo / "a.txt").write_text("unstaged\n")
     assert take_snapshot().reason == "could not hash working copy"
+
+
+def test_shared_scratch_area_names_the_directory(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scratch area others can write to runs uncached with a reason that names it."""
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o700)
+    shared.chmod(0o770)
+
+    def shared_area() -> Path:
+        ensure_private_dir(shared)
+        return shared
+
+    monkeypatch.setattr(scratch, "runtime_area", shared_area)
+    (git_repo / "a.txt").write_text("unstaged\n")
+    reason = take_snapshot().reason
+    assert reason is not None
+    assert str(shared) in reason
+    assert "chmod go-w" in reason
 
 
 def test_racy_clean_edit_is_hashed(git_repo: Path) -> None:

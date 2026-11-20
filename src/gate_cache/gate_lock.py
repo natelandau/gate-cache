@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import fcntl
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
-from gate_cache.markers import DAY_SECONDS, marker_key, read_record
+from gate_cache.markers import DAY_SECONDS, marker_key, open_own_dir, owned_files, read_record
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
@@ -23,6 +25,7 @@ _LOCK_SUFFIX = ".lock"
 _MAX_ATTEMPTS = 5
 POLL_INTERVAL = 0.2
 _PRUNE_STAMP = ".pruned"
+_LOCK_NAME = re.compile(rf"[0-9a-f]{{64}}{re.escape(_LOCK_SUFFIX)}")
 
 
 def lock_path(common_dir: Path, tree: str, name: str) -> Path:
@@ -49,13 +52,26 @@ class Holder:
 
 
 def _open(path: Path) -> int:
-    """Open the lock file for locking, creating it and its directory when missing."""
-    flags = os.O_RDWR | os.O_CREAT
+    """Open the lock file for locking, creating it and its directory when missing.
+
+    Neither the file nor its directory is opened through a symlink, so a link planted in the
+    git directory cannot make gate-cache create or truncate a file elsewhere.
+    """
     try:
-        return os.open(path, flags, 0o644)
+        dir_fd = open_own_dir(path.parent)
     except FileNotFoundError:
         path.parent.mkdir(parents=True, exist_ok=True)
-        return os.open(path, flags, 0o644)
+        dir_fd = open_own_dir(path.parent)
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+    try:
+        for _ in range(_MAX_ATTEMPTS - 1):
+            # macOS can fail a create relative to a directory descriptor with ENOENT while
+            # another process creates the same file; the file exists on the next try.
+            with contextlib.suppress(FileNotFoundError):
+                return os.open(path.name, flags, 0o644, dir_fd=dir_fd)
+        return os.open(path.name, flags, 0o644, dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def _try_lock(fd: int) -> bool:
@@ -71,7 +87,7 @@ def _still_at(fd: int, path: Path) -> bool:
     """Return whether the open file is still the file at path."""
     # Pruning unlinks free files, so a lock on a replaced file guards nothing.
     try:
-        return os.fstat(fd).st_ino == path.stat().st_ino
+        return os.fstat(fd).st_ino == path.lstat().st_ino
     except FileNotFoundError:
         return False
 
@@ -255,6 +271,7 @@ def prune_locks(common_dir: Path, *, max_age_days: int, now: float | None = None
     """Delete lock files older than the cutoff that no process holds, at most once a day.
 
     A stamp file in the lock directory records the last prune, so most runs skip the scan.
+    A symlinked lock directory is left alone.
 
     Args:
         common_dir: Absolute path to the git common directory.
@@ -263,24 +280,55 @@ def prune_locks(common_dir: Path, *, max_age_days: int, now: float | None = None
     """
     now = time.time() if now is None else now
     lock_dir = common_dir / LOCK_DIRNAME
-    if lock_dir.is_symlink():
+    try:
+        fd = open_own_dir(lock_dir)
+    except OSError:
         return
-    stamp = lock_dir / _PRUNE_STAMP
-    with contextlib.suppress(OSError):
-        if now - stamp.stat().st_mtime < DAY_SECONDS:
+    try:
+        if _pruned_since(fd, now - DAY_SECONDS):
             return
-    cutoff = now - max_age_days * DAY_SECONDS
-    with contextlib.suppress(OSError):
-        for entry in lock_dir.glob(f"*{_LOCK_SUFFIX}"):
-            with contextlib.suppress(OSError):
-                if entry.stat().st_mtime >= cutoff:
-                    continue
-                lock = GateLock.try_acquire(entry)
-                if lock is None:
-                    continue
-                try:
-                    entry.unlink(missing_ok=True)
-                finally:
-                    lock.release()
-        stamp.touch()
+        with contextlib.suppress(OSError):
+            _delete_free_locks(fd, lock_dir, cutoff=now - max_age_days * DAY_SECONDS)
+            _stamp(fd, now)
+    finally:
+        os.close(fd)
+
+
+def _pruned_since(fd: int, moment: float) -> bool:
+    """Return whether the stamp in the open lock directory is newer than moment."""
+    try:
+        return os.stat(_PRUNE_STAMP, dir_fd=fd, follow_symlinks=False).st_mtime > moment
+    except OSError:
+        return False
+
+
+def _delete_free_locks(fd: int, lock_dir: Path, *, cutoff: float) -> None:
+    """Delete each lock file in the open directory last written before cutoff that is free."""
+    for entry in owned_files(fd, _LOCK_NAME):
+        with contextlib.suppress(OSError):
+            if entry.stat(follow_symlinks=False).st_mtime >= cutoff:
+                continue
+            lock = GateLock.try_acquire(lock_dir / entry.name)
+            if lock is None:
+                continue
+            try:
+                os.unlink(entry.name, dir_fd=fd)
+            finally:
+                lock.release()
+
+
+def _stamp(fd: int, now: float) -> None:
+    """Record a prune at now in the open lock directory, never through a symlink."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
+    try:
+        stamp = os.open(_PRUNE_STAMP, flags, 0o644, dir_fd=fd)
+    except OSError as error:
+        if error.errno != errno.ELOOP:
+            raise
+        # Replace a symlink at the stamp, or every later run would scan the directory again.
+        os.unlink(_PRUNE_STAMP, dir_fd=fd)
+        stamp = os.open(_PRUNE_STAMP, flags, 0o644, dir_fd=fd)
+    try:
         os.utime(stamp, (now, now))
+    finally:
+        os.close(stamp)

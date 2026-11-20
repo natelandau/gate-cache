@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 import platformdirs
 
+from gate_cache.safe_files import ensure_private_dir
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -33,7 +35,7 @@ def runtime_area() -> Path:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", platformdirs.RuntimeDirWarning)
         area = platformdirs.user_runtime_path("gate-cache", appauthor=False)
-    area.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ensure_private_dir(area)
     return area
 
 

@@ -2,10 +2,30 @@
 
 from __future__ import annotations
 
+import re
 import sys
 
 _MINUTE = 60
 _HOUR = 3600
+# C0 and C1 control characters and DEL, except tab and newline.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+CONTROL_STAND_IN = "\N{REPLACEMENT CHARACTER}"
+
+
+def printable(text: str) -> str:
+    """Replace control characters, so names read from disk cannot drive the terminal.
+
+    Gate, test, and branch names and holder paths come from files anyone with write access to
+    the repository or stats folder can edit, and an escape sequence in one would run in the
+    terminal that prints it.
+
+    Args:
+        text: Text about to be printed.
+
+    Returns:
+        The text with each control character other than tab and newline replaced.
+    """
+    return _CONTROL.sub(CONTROL_STAND_IN, text)
 
 
 def say(message: str, *, end: str = "\n") -> None:
@@ -15,7 +35,7 @@ def say(message: str, *, end: str = "\n") -> None:
         message: Text to print after the `gate-cache: ` prefix.
         end: Text printed after the message; empty for a prompt that waits on the same line.
     """
-    print(f"gate-cache: {message}", end=end, file=sys.stderr, flush=True)  # noqa: T201
+    print(f"gate-cache: {printable(message)}", end=end, file=sys.stderr, flush=True)  # noqa: T201
 
 
 def stdin_isatty() -> bool:
