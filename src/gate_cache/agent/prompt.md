@@ -1,6 +1,6 @@
 # Set up gate-cache in this repository
 
-1. Run `gate-cache --skill` and read the guide. Not on `PATH`: `pipx run gate-cache --skill` or `uvx gate-cache --skill`, whichever exists.
+1. Run `gate-cache --skill` and read the guide. Not on `PATH`: `pipx run gate-cache --skill` or `uvx gate-cache --skill`, whichever exists. The guide is long enough that agent tools often cut it short: redirect each `--skill` command in this prompt to a temporary file, then read the whole file.
 2. Search the repository for `gate-cache` and `gate_cache`: scripts, package files, task-runner files, hook config, dependency manifests, agent instruction file. Found: follow "Review an existing setup". Not found: follow "Add gate-cache".
 
 ## Add gate-cache
