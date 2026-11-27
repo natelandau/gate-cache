@@ -134,6 +134,8 @@ gate-cache --name "integration@$(git hash-object .env)" -- pytest tests/integrat
 
 Wrap commands whose result depends only on the name and git-visible files: lint, format check, type check, spell check, tests.
 
+Commands that finish in about a second (many linters, format checks, type checkers): leave unwrapped by default. A skip saves almost nothing, and an input git does not see can still make the gate skip wrongly. Wrap one when the user asks. A fast command already wrapped is not a defect.
+
 Never wrap:
 
 - Commands that write files (formatters, linters with a fix option). No marker is ever written. Wrap the check-only form: `prettier --check .`, not `prettier --write .`.

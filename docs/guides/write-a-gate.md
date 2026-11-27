@@ -86,6 +86,8 @@ The shell expands `$(...)` before gate-cache starts. The hook configuration of p
 
 Wrap a command whose result depends only on the files that git sees: lint, format check, type check, spell check, and test commands.
 
+We recommend that you run a command that finishes in about a second without gate-cache. A skip of such a command saves almost no time. The gate can still skip by mistake when an [input that git does not see](#cover-inputs-that-git-does-not-see) changes. You can wrap a fast command if you want it in `gate-cache status` and the dashboard.
+
 Do not wrap these commands:
 
 - **A command that changes files**, such as a formatter or a linter with a fix option. gate-cache never records a pass for a command that changed files. Wrap the form that only checks, such as `prettier --check .` in place of `prettier --write .`.

@@ -76,6 +76,7 @@ Headless screenshots, to see a dashboard change without a person:
 ## Commits
 
 - Before opening a pull request, or fast-forwarding or squashing a branch onto `main`: compare `skill.md` with the branch diff. Branch makes the guide wrong, or changes how an agent sets up, configures, or troubleshoots gate-cache: update the guide on the branch, scoped by [Agent guides](#agent-guides).
+- Change to `skill.md` or `prompt.md`: type `feat` or `fix`, never `docs`. The guides ship in the package, and commitizen leaves `docs` commits out of the changelog and the version bump.
 - Breaking change (`!` in the subject plus a `BREAKING CHANGE:` footer) only when the CLI breaks: a removed or renamed command or flag, a changed exit code, or changed CLI output. A dashboard UI change is never breaking, even when it removes a page.
 
 ## Gates
