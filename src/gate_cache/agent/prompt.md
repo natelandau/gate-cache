@@ -6,7 +6,7 @@
 ## Add gate-cache
 
 1. Find the repository's lint, format check, type check, and test commands. Before changing anything, ask the user:
-   - Which of these commands should gate-cache wrap? Show the list found.
+   - Which of these commands should gate-cache wrap? Show the list found. Recommend leaving out commands that finish in about a second.
    - How to install gate-cache: project dev dependency, a tool the project or user already uses, or a CLI installer such as pipx or uv? Offer only choices that fit this repository and computer.
    - Scope any gate to the paths it reads, so changes elsewhere do not rerun it? Show proposed paths per gate.
    - Does any command depend on input git does not track: an ignored `.env`, an installed tool version, an external service?
